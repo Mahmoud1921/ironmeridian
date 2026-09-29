@@ -36,9 +36,14 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 - It clicks army cards, tabs, order buttons, provinces and counters, and counts every click that needed a second try.
 - It declares a war and orders an attack.
 - It runs 20 seconds at top speed while panning and zooming, and measures frame times.
+- It checks that 3D troop figures show, glide while moving, get painted in the background, and draw fast on a crowded map.
 - It checks state invariants and script errors.
 - It repeats the key taps on a phone-sized screen.
 
 Options: `--quick`, `--seed N`, `--browser firefox` (where Firefox is installed). It exits non-zero on any failure, writes `tests/last-report.json`, and saves screenshots to `tests/shots/`.
 
 Run it after every change and every phase. Fix what fails, then run it again until it is clean. Try a few seeds (`--seed 3`, `--seed 11`) before calling it done.
+
+## Troop figures
+
+`js/figures.js` defines small low-poly 3D models: a squad of soldiers, a truck, a halftrack, a tank, a towed gun, an armoured car, and a transport plane for airborne troops on the move. A tiny flat-shaded rasterizer renders them once per nation into a sprite atlas, with 8 headings and 4 animation frames, in the nation's colours. The map only blits sprites. The atlases are painted a row at a time in the background, and at most 28 are kept.

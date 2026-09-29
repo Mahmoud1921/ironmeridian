@@ -318,7 +318,7 @@ const Render = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
-    if (G) { drawPaths(z); drawArmies(z, vx0, vy0, vx1, vy1); drawBattles(z); }
+    if (G) { drawPaths(z); drawArmies(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
   }
 
   function drawLabels(z) {
@@ -439,20 +439,49 @@ const Render = (function () {
     return Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x])[0] || 'infantry';
   }
 
+  // smoothed on-screen positions and headings, so figures glide between hourly simulation steps
+  const disp = new Map();
+  let lastDisp = 0, figCount = 0;
+  function dispPos(a, k) {
+    const [tx, ty] = armyPos(a);
+    let d = disp.get(a.id);
+    if (!d || Math.abs(d.x - tx) + Math.abs(d.y - ty) > 6) { d = { x: tx, y: ty, h: d ? d.h : Math.PI * 1.5, seen: 0 }; disp.set(a.id, d); }
+    d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.seen = lastDisp;
+    if (a.path.length) { const p = MAP.provs[a.prov], n = MAP.provs[a.path[0]]; d.h = Math.atan2(-(n.y - p.y), n.x - p.x); }
+    else if (a.battle) { const b = Sim.G.battles.find(x => x.id === a.battle); if (b && b.prov !== a.prov) { const p = MAP.provs[a.prov], n = MAP.provs[b.prov]; d.h = Math.atan2(-(n.y - p.y), n.x - p.x); } }
+    return d;
+  }
+  // the unit types an army shows as figures: its main type first, then the next most common
+  function figureTypes(grp) {
+    const cnt = {};
+    for (const a of grp) for (const u of a.units) cnt[u.type] = (cnt[u.type] || 0) + (u.type === 'tanks' ? 2.5 : u.type === 'artillery' ? 0.6 : 1);
+    return Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x]);
+  }
+
   function drawArmies(z, vx0, vy0, vx1, vy1) {
     const G = Sim.G;
+    const now = performance.now();
+    const k = lastDisp ? 1 - Math.exp(-(now - lastDisp) / 1000 * 9) : 1;
+    lastDisp = now;
     counterHits = [];
+    figCount = 0;
+    const rel = z / minZoom();
     const byProv = new Map();
     for (const a of G.armies) {
       const [x, y] = armyPos(a);
       if (x < vx0 - 2 || x > vx1 + 2 || y < vy0 - 2 || y > vy1 + 2) continue;
       // zoomed out, only armies that matter to the player are drawn
-      if (z < 4.5 && a.owner !== G.player && !Sim.atWar(a.owner, G.player) && !Sim.allied(a.owner, G.player)) continue;
-      const k = a.prov;
-      if (!byProv.has(k)) byProv.set(k, []); byProv.get(k).push(a);
+      if (rel < 1.8 && a.owner !== G.player && !Sim.atWar(a.owner, G.player) && !Sim.allied(a.owner, G.player)) continue;
+      const key = a.prov + ':' + (a.path.length ? a.path[0] : '');
+      if (!byProv.has(key)) byProv.set(key, []); byProv.get(key).push(a);
     }
-    const small = z < 3.2;
+    if (disp.size > G.armies.length * 2 + 50) for (const [id, d] of disp) if (now - d.seen > 5000) disp.delete(id);
+    // world view: figures with a division count only; closer in, full counters for the armies that
+    // concern the player, while neutral nations keep the light look until zoomed right in
+    const small = rel < 1.8;
+    const fig = small ? 20 : Math.max(24, Math.min(46, z * 1.7));   // figure cell size in px
     const symbols = [];
+    const t = G.paused ? 0 : now;
     for (const [, list] of byProv) {
       // one counter per owner in each province; the stack shows total divisions
       const groups = new Map();
@@ -460,22 +489,50 @@ const Render = (function () {
       const stacks = [...groups.values()].sort((a, b) => (a[0].owner === G.player) - (b[0].owner === G.player));
       stacks.forEach((grp, i) => {
         const a = grp[0];
-        const [wx, wy] = armyPos(a);
-        let [sx, sy] = worldToScreen(wx, wy);
+        const d = dispPos(a, k);
+        for (let q = 1; q < grp.length; q++) dispPos(grp[q], k);
+        let [sx, sy] = worldToScreen(d.x, d.y);
+        sx += (i - (stacks.length - 1) / 2) * fig * 0.8;           // several nations in one province stand side by side
         const c = COUNTRY_BY_TAG[a.owner];
         const mine = a.owner === G.player;
         const hostile = Sim.atWar(a.owner, G.player);
-        if (small) {
-          ctx.beginPath(); ctx.arc(sx, sy - i * 4, mine ? 3.4 : 2.6, 0, Math.PI * 2);
-          ctx.fillStyle = c.color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : '#111'; ctx.stroke();
-          counterHits.push({ x: sx - 6, y: sy - i * 4 - 6, w: 12, h: 12, army: a, group: grp });
+        const compact = small || (!mine && !hostile && !Sim.allied(a.owner, G.player) && z < 16);
+        let divs = 0; for (const g of grp) divs += g.units.length;
+        const moving = grp.some(g => g.path.length) && !G.paused;
+        const fighting = grp.some(g => g.battle);
+        // --- 3D figures: 1 to 3 depending on size, in a small column behind the leader ---
+        const types = figureTypes(grp);
+        const nFig = compact ? 1 : divs >= 10 ? 3 : divs >= 4 ? 2 : 1;
+        const hx = Math.cos(d.h), hy = -Math.sin(d.h);
+        const slots = [[0, 0], [-0.42, -0.36], [-0.42, 0.36]];
+        const figs = [];
+        for (let f = 0; f < nFig; f++) {
+          const [bk, sd] = slots[f];
+          figs.push([sx + (hx * bk - hy * sd) * fig, sy + 4 + (hy * bk + hx * sd) * fig * 0.7, types[f % types.length] || 'infantry', f]);
+        }
+        figs.sort((p, q) => p[1] - q[1]);
+        // nation-coloured ground ring so ownership reads at a glance
+        ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.46, fig * 0.2, 0, 0, Math.PI * 2);
+        ctx.fillStyle = c.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.2; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : 'rgba(0,0,0,0.6)'; ctx.stroke();
+        for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
+        if (fighting && !G.paused && Math.random() < 0.35) {     // muzzle flashes
+          ctx.fillStyle = '#ffd36a';
+          ctx.beginPath(); ctx.arc(sx + hx * fig * 0.45 + (Math.random() - 0.5) * 6, sy + hy * fig * 0.3 - fig * 0.15, 1.6 + Math.random() * 1.6, 0, 7); ctx.fill();
+        }
+        const figTop = sy + 4 - fig * 0.62;
+        if (compact) {
+          if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
+          counterHits.push({ x: sx - fig * 0.4, y: figTop, w: fig * 0.8, h: fig * 0.75, army: a, group: grp });
+          ctx.font = '700 10px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(String(divs), sx + fig * 0.42, figTop + 3); ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(divs), sx + fig * 0.42, figTop + 3);
           return;
         }
         const w = 44, h = 20;
-        const x = sx - w / 2, y = sy - h / 2 - 8 - i * (h + 3);
+        const x = sx - w / 2, y = figTop - h - 1;
         const sel = grp.some(g => state.selArmies.has(g.id));
-        let divs = 0, str = 0, org = 0, lowSup = false, defend = false;
-        for (const g of grp) { const st = Sim.armyStats(g); const n = g.units.length; divs += n; str += st.str * n; org += st.org * n; if (g.supply < 0.5) lowSup = true; if (g.order === 'defend') defend = true; }
+        let str = 0, org = 0, lowSup = false, defend = false;
+        for (const g of grp) { const st = Sim.armyStats(g); const n = g.units.length; str += st.str * n; org += st.org * n; if (g.supply < 0.5) lowSup = true; if (g.order === 'defend') defend = true; }
         str /= divs || 1; org /= divs || 1;
         // shadow, plus a second card behind when several armies share the spot
         ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 1.5, y + 2, w, h);
@@ -490,9 +547,12 @@ const Render = (function () {
         ctx.fillStyle = '#d8b44a'; ctx.fillRect(x + 2, y + h - 2.6, (w - 4) * org, 1.6);
         ctx.lineWidth = sel ? 2.2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : hostile ? '#c2493d' : mine ? '#8fa368' : '#555';
         ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        if (sel) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
         if (defend && mine) { ctx.fillStyle = '#d6b052'; ctx.fillRect(x + w - 6, y + 2, 4, 4); }
         if (lowSup) { ctx.fillStyle = '#e0503c'; ctx.beginPath(); ctx.arc(x + w - 4, y + h - 8, 2.2, 0, 7); ctx.fill(); }
-        counterHits.push({ x, y: y - (grp.length > 1 ? 3 : 0), w: w + (grp.length > 1 ? 3 : 0), h: h + (grp.length > 1 ? 3 : 0), army: a, group: grp });
+        // the card and the figures below it are one click target
+        const top = y - (grp.length > 1 ? 3 : 0);
+        counterHits.push({ x: Math.min(x, sx - fig * 0.5), y: top, w: Math.max(w + 3, fig), h: sy + 4 + fig * 0.25 - top, army: a, group: grp });
       });
     }
     if (symbols.length) {
@@ -535,5 +595,5 @@ const Render = (function () {
     state.frontEdges = path;
   }
 
-  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, get size() { return [W, H]; } };
+  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

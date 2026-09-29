@@ -223,6 +223,30 @@ async function desktopRun(browser) {
   }
   const perf = await page.evaluate(() => { const f = window.__ft.slice(5).sort((a, b) => a - b); return { n: f.length, p50: f[Math.floor(f.length * 0.5)], p95: f[Math.floor(f.length * 0.95)], max: f[f.length - 1], over250: f.filter(x => x > 250).length }; });
   const days = (await page.evaluate(() => Sim.G.hour) - hStart) / 24;
+
+  // --- 3D troop figures: visible, animated, and cheap to draw even over a crowded front ---
+  {
+    const figs = await page.evaluate(async () => {
+      const G = Sim.G, cap = Sim.MAP.provs[G.countries[G.player].capital];
+      Render.flyTo(cap.x, cap.y, Render.minZoom() * 2.6);
+      await new Promise(r => setTimeout(r, 1200));
+      for (let w = 0; w < 40 && Figures.pending(); w++) await new Promise(r => setTimeout(r, 100));
+      const times = [];
+      for (let i = 0; i < 40; i++) { const t = performance.now(); Render.draw(); times.push(performance.now() - t); }
+      times.sort((a, b) => a - b);
+      return { n: Render._figs(), p50: times[20], p95: times[38], pending: Figures.pending() };
+    });
+    check('figures: troops show as 3D figures on the map', figs.n > 0, figs.n + ' figures on screen');
+    check('figures: every nation\'s troops painted in the background', figs.pending === 0, figs.pending + ' still queued');
+    check('figures: a crowded map still draws fast', figs.p50 < 30, `draw p50 ${figs.p50.toFixed(1)} ms, p95 ${figs.p95.toFixed(1)} ms with ${figs.n} figures`);
+    const moved = await page.evaluate(async () => {
+      const a = Sim.G.armies.find(x => x.path.length && !x.battle && Render.dispPos(x) && performance.now() - Render.dispPos(x).seen < 300);
+      if (!a) return null;
+      const p0 = { ...Render.dispPos(a) }; await new Promise(r => setTimeout(r, 400)); const p1 = Render.dispPos(a);
+      return Math.hypot(p1.x - p0.x, p1.y - p0.y) > 0;
+    });
+    if (moved !== null) check('figures: moving troops glide between provinces', moved);
+  }
   check('run: simulation keeps pace at top speed', days > runMs / 1000 * 0.5, days.toFixed(1) + ' days in ' + runMs / 1000 + ' s');
   check('run: frame pacing', perf.over250 <= 3, `p50 ${perf.p50?.toFixed(0)} ms, p95 ${perf.p95?.toFixed(0)} ms, max ${perf.max?.toFixed(0)} ms, ${perf.over250} frames over 250 ms (headless software rendering is several times slower than a real GPU)`);
 

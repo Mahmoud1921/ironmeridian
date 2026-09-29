@@ -143,6 +143,8 @@ const UI = (function () {
     const cap = MAP.provs[Sim.G.countries[tag].capital];
     Render.flyTo(cap.x, cap.y, 9);
     sel.armies = []; sel.prov = -1;
+    // paint the player's troops first, then everyone they border; others are painted when they first come into view
+    { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
     sel.collapsed = innerWidth <= 820; // small screens start with the map clear
     renderTrays(); renderRight(); refreshTop(); renderLeft();
     toast('You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap.id, 'info');
