@@ -4,7 +4,7 @@ const UI = (function () {
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let MAP;
-  const sel = { prov: -1, armies: [], battle: 0, tab: 'army' };
+  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1 };
   let pending = null; // {kind, armies}
   let startPick = 'GER';
   const HPS = [0, 3, 8, 18, 36, 72]; // game hours per real second by speed level
@@ -94,6 +94,7 @@ const UI = (function () {
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
     $('#mc-trade').onclick = () => setMode(Render.state.mode === 'trade' ? 'political' : 'trade');
+    $('#mc-sea').onclick = () => setMode(Render.state.mode === 'sea' ? 'political' : 'sea');
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
@@ -123,7 +124,7 @@ const UI = (function () {
   }
   function setMode(m) {
     Render.state.mode = m; Render.state.dirtyOwners = true;
-    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain'); $('#mc-trade').classList.toggle('active', m === 'trade');
+    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain'); $('#mc-trade').classList.toggle('active', m === 'trade'); $('#mc-sea').classList.toggle('active', m === 'sea');
   }
 
   // ---------- start screen ----------
@@ -199,7 +200,8 @@ const UI = (function () {
     Render.state.dirtyOwners = true;
     const cap = MAP.provs[Sim.G.countries[tag].capital];
     Render.flyTo(cap.x, cap.y, 9);
-    sel.armies = []; sel.prov = -1;
+    sel.armies = []; sel.prov = -1; sel.fleet = 0; sel.wing = 0; sel.zone = -1;
+    Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     // paint the player's troops first, then everyone they border; others are painted when they first come into view
     { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
     sel.collapsed = innerWidth <= 820; // small screens start with the map clear
@@ -259,12 +261,14 @@ const UI = (function () {
   }
   function selectProvince(id, fly) {
     sel.prov = id; Render.state.selProv = id;
+    if (id >= 0) { sel.zone = -1; Render.state.selZone = -1; }
     if (fly && id >= 0) { const p = MAP.provs[id]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 8)); }
     renderLeft();
   }
   function renderLeft() {
     const el = $('#leftpanel');
     const G = Sim.G;
+    if (G && sel.prov < 0 && sel.zone >= 0) { renderZone(el); return; }
     if (sel.prov < 0 || !G) { el.hidden = true; return; }
     el.hidden = false;
     const p = MAP.provs[sel.prov];
@@ -273,8 +277,15 @@ const UI = (function () {
     const indList = Economy.KIND_KEYS.filter(k => I[k]).map(k => esc(Economy.kindName(k)) + (I[k] > 1 ? ' ×' + I[k] : '')).join(', ') || 'None';
     const deps = Economy.GOODS.filter(k => Economy.dep(p.id, k)).map(k => goodDot(k) + esc(Economy.goodName(k))).join(', ') || 'None';
     const res = `<dt>Industry</dt><dd>${indList}</dd><dt>Slots</dt><dd>${Economy.freeSlots(p.id)} free of ${Economy.slots(p)}${Economy.built(p.id) > Economy.slots(p) ? ' (' + Economy.built(p.id) + ' built)' : ''}</dd><dt>Deposits</dt><dd>${deps}</dd>`;
-    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>` : '';
-    const armies = G.armies.filter(a => a.prov === p.id);
+    const INF = Economy.infraKinds().filter(k => Economy.infra(p.id, k));
+    const works = `<dt>Military</dt><dd>${INF.map(k => esc(Economy.kindName(k)) + (Economy.INFRA[k].max > 1 ? ' ' + Economy.infra(p.id, k) : '')).join(', ') || 'None'}</dd>`
+      + (Seas.isCoastal(p.id) ? `<dt>Coast</dt><dd>${Seas.zonesOf(p.id).map(z => `<a href="#" class="lnk" data-zone="${z}">${esc(Seas.zone(z).name)}</a>`).join(', ')}</dd>` : '')
+      + (Air.bombDamage(p.id) > 0.01 ? `<dt>Bomb damage</dt><dd class="bad">${pct(Air.bombDamage(p.id))} of output lost</dd>` : '');
+    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}"><span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
+    const wingsHere = G.wings.filter(w => w.base === p.id);
+    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>` : '';
+    const armies = G.armies.filter(a => a.prov === p.id && !(a.sea && a.sea.phase !== 'prep'));
     const armyRows = armies.map(a => {
       const comp = compStr(a);
       return `<div class="row click" data-army="${a.id}">${flagSVG(a.owner)}<div class="grow"><div>${esc(G.countries[a.owner].name)} ${esc(a.name)}</div><div class="sub">${comp}</div></div></div>`;
@@ -289,9 +300,10 @@ const UI = (function () {
       <div class="owner">${flagSVG(owner)}<div><div>${esc(oc.name)}</div>${relationPill(owner)}</div></div>
       ${p.core !== owner ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
-      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}
+      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}${works}
       <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
       <div class="list">${armyRows}</div>
+      ${wingsHere.length ? '<div class="label" style="margin-top:6px">Air wings based here</div><div class="list">' + wingsHere.map(w => `<div class="row click" data-wing="${w.id}">${flagSVG(w.owner)}<div class="grow"><div>${esc(w.name)}</div><div class="sub">${esc(Air.typeName(w.type))} · ${esc(Air.MISSIONS[w.mission].name)}</div></div></div>`).join('') + '</div>' : ''}
       <hr class="sep">
       <div class="label">Nation</div>
       <dl class="kv"><dt>Government</dt><dd>${oc.gov}</dd><dt>Capital</dt><dd>${oc.capital >= 0 ? esc(MAP.provs[oc.capital].name) : '—'}</dd>
@@ -300,6 +312,8 @@ const UI = (function () {
       ${owner !== G.player ? `<div style="display:flex;gap:6px"><button class="btn" id="lp-dip" style="flex:1">Diplomacy</button>${canDeclare ? `<button class="btn danger" id="lp-war" style="flex:1" ${G.countries[G.player].pp < warCost(owner) ? 'disabled' : ''}>Declare war${warCost(owner) ? ' · ' + warCost(owner) + ' PP' : ''}</button>` : ''}</div>` : ''}`)) return;
     $('#lp-close').onclick = () => { selectProvince(-1); };
     el.querySelectorAll('[data-army]').forEach(r => r.onclick = () => selectArmies([+r.dataset.army], false));
+    el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
+    el.querySelectorAll('[data-wing]').forEach(r => r.onclick = () => selectWing(+r.dataset.wing));
     el.querySelectorAll('[data-pbuild]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.pbuild, p.id); toast(r.ok ? r.text : r.why, p.id, 'info'); renderLeft(); renderRight(); refreshTop(); });
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
@@ -308,6 +322,146 @@ const UI = (function () {
     const cnt = {};
     for (const u of a.units) cnt[u.type] = (cnt[u.type] || 0) + 1;
     return Object.keys(cnt).map(t => cnt[t] + ' ' + UNIT_TYPES[t].name).join(', ');
+  }
+
+  const INFRA_TIP = {
+    port: 'Ships repair here, troops embark faster, and it feeds armies by sea while your navy keeps the route open.',
+    dock: 'Builds warships: each level works on one hull at a time. Also speeds up repairs.',
+    air: 'Bases 4 air wings per level.',
+    hub: 'A supply source inland: armies nearby are supplied as if at home.',
+    fort: 'Defenders here fight 15% better per level.',
+    radar: 'Your fighters within 600 km fight 30% better, and your ships spot enemies off this coast more easily.'
+  };
+  function selectFleet(id) {
+    sel.fleet = id; sel.wing = 0; Render.state.selFleet = id; Render.state.selWing = 0;
+    if (id) { sel.armies = []; Render.state.selArmies = new Set(); sel.tab = 'navy'; sel.collapsed = false; }
+    pending = null; showHint();
+    renderRight(); renderTrays();
+  }
+  function selectWing(id) {
+    sel.wing = id; sel.fleet = 0; Render.state.selWing = id; Render.state.selFleet = 0;
+    if (id) { sel.armies = []; Render.state.selArmies = new Set(); sel.tab = 'navy'; sel.collapsed = false; }
+    pending = null; showHint();
+    renderRight(); renderTrays();
+  }
+  function selectZone(z, fly) {
+    sel.zone = z; Render.state.selZone = z;
+    if (z >= 0) { sel.prov = -1; Render.state.selProv = -1; if (fly) { const zz = Seas.zone(z); Render.flyTo(zz.x, zz.y, Math.max(Render.cam.z, 5)); } }
+    renderLeft();
+  }
+  function renderZone(el) {
+    const G = Sim.G, z = Seas.zone(sel.zone), me = G.player;
+    el.hidden = false;
+    const ctl = Navy.control(z.id), tot = Object.values(ctl).reduce((s, v) => s + v, 0);
+    const ctlRows = Object.entries(ctl).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, v]) => `<div class="row">${flagSVG(t)}<div class="grow"><div>${esc(G.countries[t].name)}</div><div class="bar sup"><i style="width:${Math.round(v / tot * 100)}%"></i></div></div><span class="sub">${pct(v / tot)}</span></div>`).join('');
+    const war = Sim.isAtWar(me);
+    const fleets = G.fleets.filter(f => f.zone === z.id);
+    const straits = Seas.straits.filter(s => s.a === z.id || s.b === z.id);
+    const ports = z.coast.filter(pid => Navy.isPort(pid));
+    const loss = war ? Navy.lossIn(me, z.id) : 0;
+    const invs = G.armies.filter(a => a.sea && a.sea.zone === z.id);
+    if (!setHTML(el, `<button class="close" aria-label="Close" id="lp-close">×</button>
+      <div class="label">Sea zone</div>
+      <h2 class="display" style="font-size:24px;margin:2px 0 6px">${esc(z.name)}</h2>
+      <dl class="kv"><dt>Ports</dt><dd>${ports.length} on ${z.coast.length} coastal provinces</dd>
+      ${war ? `<dt>Your sea control</dt><dd class="${Navy.superiority(me, z.id) < 0.4 ? 'bad' : ''}">${pct(Navy.superiority(me, z.id))}</dd><dt>Convoy losses</dt><dd class="${loss > 0.05 ? 'bad' : ''}">${loss > 0.005 ? pct(loss) + ' of your shipping sunk here' : 'None'}</dd>` : ''}
+      <dt>Borders</dt><dd>${Seas.neighbours(z.id, me).map(([n]) => `<a href="#" class="lnk" data-zone="${n}">${esc(Seas.zone(n).name)}</a>`).join(', ')}</dd></dl>
+      ${straits.map(st => `<div class="note">${esc(st.name)}: held by ${esc(G.countries[G.owner[st.prov]]?.name || 'nobody')}${st.year && new Date(Sim.dateTime()).getUTCFullYear() < st.year ? ', not yet built' : Seas.straitOpen(st, me) ? ', open to you' : ', closed to you'}.</div>`).join('')}
+      <div class="label" style="margin-top:8px">Naval power here</div><div class="list">${ctlRows || '<div class="note">No warships here.</div>'}</div>
+      ${fleets.length ? '<div class="label" style="margin-top:8px">Fleets</div><div class="list">' + fleets.map(f => fleetRow(f)).join('') + '</div>' : ''}
+      ${invs.length ? '<div class="label" style="margin-top:8px">Landings</div><div class="list">' + invs.map(a => `<div class="row">${flagSVG(a.owner)}<div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(Navy.phaseText(a))}</div></div></div>`).join('') + '</div>' : ''}
+      ${sel.fleet && Sim.G.fleets.some(f => f.id === sel.fleet && f.owner === me) ? `<button class="btn" id="lp-sail" style="width:100%;margin-top:8px">Send the selected fleet here</button>` : ''}`)) return;
+    $('#lp-close').onclick = () => selectZone(-1);
+    el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
+    el.querySelectorAll('[data-fleet]').forEach(r => r.onclick = () => selectFleet(+r.dataset.fleet));
+    const sail = $('#lp-sail'); if (sail) sail.onclick = () => sendFleet(sel.zone);
+  }
+  function sendFleet(z) {
+    const f = Navy.fleet(sel.fleet); if (!f || z < 0) return;
+    if (f.battle) { toast('The ' + f.name + ' is in battle and cannot break off.', -1, 'info'); return; }
+    if (z === f.zone && !f.path.length) { f.area = z; toast('The ' + f.name + ' is already in the ' + Seas.zone(z).name + '.', -1, 'info'); return; }
+    if (Navy.orderMove(f, z)) toast('The ' + f.name + ' sails for the ' + Seas.zone(z).name + (f.mission !== 'hold' ? ' to ' + Navy.MISSIONS[f.mission].name.toLowerCase() : '') + '.', -1, 'info');
+    else toast('No sea route to the ' + Seas.zone(z).name + ': a strait may be closed to you.', -1, 'info');
+    renderRight(); renderLeft();
+  }
+  function hullIcon(color, sub) {
+    return `<svg viewBox="0 0 34 22" style="width:34px;height:22px;flex:none"><rect x="0.5" y="0.5" width="33" height="21" rx="2" fill="${color}" stroke="rgba(0,0,0,.6)"/>${sub ? '<ellipse cx="17" cy="14" rx="12" ry="3.5" fill="#10161a"/><rect x="15" y="6" width="4" height="6" fill="#10161a"/>' : '<path d="M4 11 H30 L26 17 H8 Z M13 6 H20 V11 H13 Z" fill="#10161a"/>'}</svg>`;
+  }
+  function planeIcon(color) {
+    return `<svg viewBox="0 0 34 22" style="width:34px;height:22px;flex:none"><rect x="0.5" y="0.5" width="33" height="21" rx="2" fill="${color}" stroke="rgba(0,0,0,.6)"/><path d="M17 3 L18.5 9 L28 11 L18.5 12.5 L18 17 L21 19 H13 L16 17 L15.5 12.5 L6 11 L15.5 9 Z" fill="#10161a"/></svg>`;
+  }
+  function fleetRow(f) {
+    const G = Sim.G, st = Navy.fleetStats(f);
+    const where = f.battle ? '⚔ In battle' : f.path.length ? 'Sailing to ' + Seas.zone(f.path[f.path.length - 1]).name : Seas.zone(f.zone).name;
+    return `<div class="row click ${f.id === sel.fleet ? 'on' : ''}" data-fleet="${f.id}">${hullIcon(COUNTRY_BY_TAG[f.owner].color, f.ships.every(s => s.type === 'submarine'))}<div class="grow"><div>${f.owner !== G.player ? esc(G.countries[f.owner].name) + ' ' : ''}${esc(f.name)}</div>
+      <div class="sub">${esc(Navy.comp(f))} · ${esc(where)} · ${esc(Navy.MISSIONS[f.mission].name)}</div><div class="bar str"><i style="width:${st.str * 100}%"></i></div><div class="bar org"><i style="width:${st.org * 100}%"></i></div></div></div>`;
+  }
+  function wingRow(w) {
+    return `<div class="row click ${w.id === sel.wing ? 'on' : ''}" data-wing="${w.id}">${planeIcon(COUNTRY_BY_TAG[w.owner].color)}<div class="grow"><div>${esc(w.name)}</div>
+      <div class="sub">${esc(Air.typeName(w.type))} · ${esc(MAP.provs[w.base].name)} · ${esc(Air.MISSIONS[w.mission].name)}${w.mission !== 'idle' && w.target >= 0 ? ' over ' + esc(w.sea ? Seas.zone(w.target).name : MAP.provs[w.target].name) : ''}</div><div class="bar str"><i style="width:${w.str * 100}%"></i></div><div class="bar org"><i style="width:${w.org * 100}%"></i></div></div></div>`;
+  }
+  function fleetCard(f) {
+    const G = Sim.G, st = Navy.fleetStats(f), mine = f.owner === G.player;
+    let status = f.battle ? 'In battle' : f.path.length ? 'Sailing to ' + Seas.zone(f.path[f.path.length - 1]).name : 'At sea';
+    if (f.path.length && !f.battle) { const km = Seas.routeKm(f.zone, f.path) - f.progress; status += ' · ~' + Math.max(1, Math.round(km / Math.max(1, Navy.fleetSpeed(f)) / 24)) + ' days'; }
+    const here = G.fleets.filter(x => x !== f && x.owner === G.player && x.zone === f.zone && !x.battle);
+    let html = `<div class="owner">${flagSVG(f.owner)}<div><h2 class="display" style="font-size:21px">${esc(f.name)}</h2><div class="sub label">${esc(G.countries[f.owner].name)}</div></div></div>
+      <dl class="kv"><dt>Location</dt><dd><a href="#" class="lnk" data-zone="${f.zone}">${esc(Seas.zone(f.zone).name)}</a></dd><dt>Status</dt><dd>${esc(status)}</dd>
+      <dt>Mission</dt><dd>${esc(Navy.MISSIONS[f.mission].name)}${f.mission !== 'hold' && f.area >= 0 ? ' in the ' + esc(Seas.zone(f.area).name) : ''}</dd>
+      <dt>Speed</dt><dd>${Math.round(Navy.fleetSpeed(f))} km/h</dd><dt>Power</dt><dd>${Math.round(Navy.power(f))}</dd></dl>
+      ${meter('Strength', st.str, 'str')}${meter('Organisation', st.org, 'org')}
+      <div class="unitgrid" style="margin-top:8px">${Navy.compLong(f).map(x => `<span>${esc(Navy.typeName(x.type))}</span><span>× ${x.n}</span>`).join('')}</div>`;
+    if (!mine) return html + '<p class="note">Foreign fleet.</p>';
+    html += `<div class="label" style="margin-top:8px">Mission</div><div class="orders">${['patrol', 'hunt', 'escort', 'raid', 'support', 'hold'].map(m => `<button class="btn sm ${f.mission === m ? 'active' : ''}" data-fm="${m}" title="${esc(Navy.MISSIONS[m].desc)}">${esc(Navy.MISSIONS[m].name)}</button>`).join('')}</div>
+      <div class="orders" style="margin-top:6px"><button class="btn sm ${pending?.kind === 'fleet' ? 'active' : ''}" data-fo="move" title="Pick a sea zone">Move</button>
+      <button class="btn sm" data-fo="repair" title="${esc(Navy.MISSIONS.repair.desc)}">Return to port</button>
+      <button class="btn sm" data-fo="split" ${f.ships.length > 1 && !f.battle ? '' : 'disabled'}>Split</button>
+      <button class="btn sm" data-fo="merge" ${here.length && !f.battle ? '' : 'disabled'} title="Joins your other fleets in this zone">Merge</button>
+      <button class="btn sm" data-fo="back">All fleets</button></div>
+      <p class="note">The mission is carried out where the fleet is headed. Right-click a sea zone (or pick one with Move) to send it elsewhere.</p>`;
+    return html;
+  }
+  function wingCard(w) {
+    const G = Sim.G, mine = w.owner === G.player;
+    let html = `<div class="owner">${flagSVG(w.owner)}<div><h2 class="display" style="font-size:21px">${esc(w.name)}</h2><div class="sub label">${esc(G.countries[w.owner].name)} · ${esc(Air.typeName(w.type))}</div></div></div>
+      <dl class="kv"><dt>Base</dt><dd>${esc(MAP.provs[w.base].name)}</dd><dt>Mission</dt><dd>${esc(Air.MISSIONS[w.mission].name)}${w.mission !== 'idle' && w.target >= 0 ? ' over ' + esc(w.sea ? Seas.zone(w.target).name : MAP.provs[w.target].name) : ''}</dd>
+      <dt>Range</dt><dd>${Math.round(Air.range(w.type, w.owner))} km</dd>${w.kills ? `<dt>Ships sunk</dt><dd>${w.kills}</dd>` : ''}</dl>
+      ${meter('Strength', w.str, 'str')}${meter('Readiness', w.org, 'org')}`;
+    if (w.mission !== 'idle' && w.target >= 0) { const pt = Air.point(w); html += `<div class="note">Your side holds ${pct(Air.superiority(w.owner, pt))} of the sky there.</div>`; }
+    if (!mine) return html;
+    html += `<div class="label" style="margin-top:8px">Mission · pick a target on the map</div><div class="orders">${['superiority', 'cas', 'bomb', 'naval'].map(m => `<button class="btn sm ${pending?.kind === 'wing' && pending.mission === m ? 'active' : w.mission === m ? 'active' : ''}" data-wm="${m}" title="${esc(Air.MISSIONS[m].desc)}">${esc(Air.MISSIONS[m].name)}</button>`).join('')}</div>
+      <div class="orders" style="margin-top:6px"><button class="btn sm" data-wo="idle">Stand down</button><button class="btn sm ${pending?.kind === 'rebase' ? 'active' : ''}" data-wo="rebase" title="Pick a friendly airbase">Rebase</button><button class="btn sm" data-wo="back">All wings</button></div>`;
+    return html;
+  }
+  function navyPanel() {
+    const G = Sim.G, c = G.countries[G.player], me = G.player;
+    const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
+    if (sel.fleet && !f) sel.fleet = 0;
+    if (f) return fleetCard(f);
+    const w = sel.wing ? Air.wing(sel.wing) : null;
+    if (sel.wing && !w) sel.wing = 0;
+    if (w) return wingCard(w);
+    const nv = Navy.nav(c);
+    const mine = G.fleets.filter(x => x.owner === me);
+    const ships = mine.reduce((s, x) => s + x.ships.length, 0);
+    let html = `<div class="label">Fleets · ${ships} ships</div>`;
+    html += mine.length ? '<div class="list" style="margin-top:6px">' + mine.map(fleetRow).join('') + '</div>' : '<div class="note">You have no warships.</div>';
+    html += `<dl class="kv" style="margin-top:6px"><dt>${esc(Navy.typeName('transport'))}s</dt><dd>${Navy.freeTransports(me)} free of ${nv.transports} · each carries one division</dd>
+      <dt>Enemy ships sunk</dt><dd>${nv.sunk}</dd><dt>Ships lost</dt><dd>${nv.lost}</dd>${nv.convoysLost > 0.5 || nv.convoysSunk > 0.5 ? `<dt>Convoys</dt><dd>${f1(nv.convoysLost)} goods lost, ${f1(nv.convoysSunk)} sunk by us</dd>` : ''}</dl>`;
+    const docks = Navy.docks(me);
+    html += `<hr class="sep"><div class="label">Shipyards · ${docks} dockyard level${docks === 1 ? '' : 's'}</div>`;
+    if (nv.queue.length) html += '<div class="list" style="margin:6px 0">' + nv.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Navy.typeName(q.type))}</div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < Math.max(1, docks) ? Math.ceil(q.left) + ' d' : 'waiting'}</span><button class="btn sm" data-unship="${i}" aria-label="Cancel ship" title="Cancel (half the ${esc(Economy.goodName('arms').toLowerCase())} back)">×</button></div>`).join('') + '</div>';
+    html += `<div class="builds">${Navy.roles().map(r => { const chk = Navy.canBuild(me, r); return `<button class="btn sm" data-ship="${r}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? Navy.stat(r, 'days') + ' days on one dockyard line' : chk.why)}"><span>${esc(Navy.typeName(r))}</span><small>${fmtN(Navy.stat(r, 'eq'))} ${esc(Economy.goodName('arms').toLowerCase())}</small></button>`; }).join('')}</div>`;
+    if (!docks) html += `<div class="note">Build a ${esc(Economy.kindName('dock').toLowerCase())} in a coastal province with a ${esc(Economy.kindName('port').toLowerCase())} to lay down ships.</div>`;
+    if (Air.available()) {
+      const wings = G.wings.filter(x => x.owner === me);
+      html += `<hr class="sep"><div class="label">Air wings · ${wings.length}</div>`;
+      html += wings.length ? '<div class="list" style="margin-top:6px">' + wings.map(wingRow).join('') + '</div>' : '<div class="note">You have no aircraft.</div>';
+      const q = c.airQueue || [];
+      if (q.length) html += '<div class="list" style="margin:6px 0">' + q.map((x, i) => `<div class="row"><div class="grow"><div>${esc(Air.typeName(x.type))}</div><div class="bar prog"><i style="width:${Math.round((1 - x.left / x.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(x.left)} d</span><button class="btn sm" data-unplane="${i}" aria-label="Cancel aircraft">×</button></div>`).join('') + '</div>';
+      html += `<div class="builds">${Air.types().map(t => { const chk = Air.canBuild(me, t); return `<button class="btn sm" data-plane="${t}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? Air.MISSIONS[t === 'fighter' ? 'superiority' : t === 'navbomber' ? 'naval' : t === 'bomber' ? 'bomb' : 'cas'].desc : chk.why)}"><span>${esc(Air.typeName(t))}</span><small>${fmtN(Air.TYPES[t].eq)} ${esc(Economy.goodName('arms').toLowerCase())}</small></button>`; }).join('')}</div>`;
+    } else html += '<hr class="sep"><div class="note">No aircraft fly in this era.</div>';
+    return html;
   }
 
   function warCost(tag) { const G = Sim.G; return G.dip.claims[G.player + '>' + tag] > G.hour ? 0 : DECLARE_COST; }
@@ -342,7 +496,7 @@ const UI = (function () {
     // only own armies can be multi-selected
     if (sel.armies.length > 1) sel.armies = sel.armies.filter(id => { const a = Sim.army(id); return a && a.owner === G.player; });
     Render.state.selArmies = new Set(sel.armies);
-    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; }
+    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; sel.fleet = 0; sel.wing = 0; Render.state.selFleet = 0; Render.state.selWing = 0; }
     renderRight(); renderTrays();
   }
   function selectedArmies() { return sel.armies.map(Sim.army).filter(Boolean); }
@@ -357,14 +511,15 @@ const UI = (function () {
     const body = $('#rp-body');
     body.hidden = !!sel.collapsed;
     $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
-    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
+    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'navy' ? navyPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
     if (setHTML(body, html)) bindRight();
   }
   function meter(label, v, cls) { return `<div class="meter"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`; }
   const ORDER_TEXT = { hold: 'Holding position', move: 'Moving', attack: 'Offensive', defend: 'Defending front', retreat: 'Retreating', redeploy: 'Strategic redeployment' };
   function orderText(a) {
     const G = Sim.G;
-    if (a.battle) { const b = G.battles.find(x => x.id === a.battle); return 'Attacking ' + (b ? MAP.provs[b.prov].name : ''); }
+    if (a.sea) return Navy.phaseText(a);
+    if (a.battle) { const b = G.battles.find(x => x.id === a.battle); return (a.landing ? 'Landing at ' : 'Attacking ') + (b ? MAP.provs[b.prov].name : ''); }
     if (a.retreating) return 'Retreating to ' + MAP.provs[a.path[a.path.length - 1]]?.name;
     let t = ORDER_TEXT[a.order] || a.order;
     if (a.order === 'defend') t += a.frontTag ? ' vs ' + G.countries[a.frontTag].name : ' (all enemies)';
@@ -406,7 +561,14 @@ const UI = (function () {
       <button class="btn sm ${pending?.kind === 'redeploy' ? 'active' : ''}" data-o="redeploy" title="Fast move through friendly land; organisation drops">Redeploy</button>
       <button class="btn sm" data-o="split" ${one && list[0].units.length > 1 ? '' : 'disabled'}>Split</button>
       <button class="btn sm" data-o="merge" ${list.length > 1 && sameProv ? '' : 'disabled'} title="Armies must share a province">Merge</button>
-      <button class="btn sm" data-o="recruit" ${one ? '' : 'disabled'}>Reinforce</button></div>`;
+      <button class="btn sm" data-o="recruit" ${one ? '' : 'disabled'}>Reinforce</button>
+      <button class="btn sm ${pending?.kind === 'invade' ? 'active' : ''}" data-o="invade" ${one && !list[0].sea ? '' : 'disabled'} title="Ship this army across the sea: pick a coastal province">Invade by sea</button></div>`;
+    if (one && list[0].sea) {
+      const a = list[0];
+      html += `<div class="label" style="margin-top:8px">${a.sea.hostile ? 'Naval invasion' : 'Sea transport'}</div><div class="bar prog" style="height:8px"><i style="width:${Math.round(Navy.progress(a) * 100)}%"></i></div>
+        <div class="note">${esc(Navy.phaseText(a))}. Uses ${a.sea.ships} ${esc(Navy.typeName('transport').toLowerCase())}${a.sea.ships > 1 ? 's' : ''}.${a.sea.hostile ? ' Landing needs 40% sea control in the ' + esc(Seas.zone(a.sea.zone).name) + ' (now ' + pct(Navy.superiority(a.owner, a.sea.zone)) + '). Fleets on Invasion support there help.' : ''}</div>
+        <button class="btn sm" data-o="cancelsea">${a.sea.phase === 'prep' ? 'Call off' : 'Turn back'}</button>`;
+    } else if (one && Seas.isCoastal(list[0].prov)) html += `<div class="note">Coastal province: ${Navy.freeTransports(G.player)} ${esc(Navy.typeName('transport').toLowerCase())}s free for an invasion.</div>`;
     if (list.length > 1 && !sameProv) html += '<p class="note">Merging needs all selected armies in the same province.</p>';
     return html;
   }
@@ -548,7 +710,7 @@ const UI = (function () {
     const G = Sim.G, c = G.countries[G.player], e = c.eco;
     if (!e || !e.need) return '<p class="note">No economy.</p>';
     const inc = e.income || {};
-    const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Army upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
+    const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Military upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
     let html = `<div class="goldline"><div><div class="label">Gold · ${esc(Economy.coin())}</div><div class="big num ${e.gold < 0 ? 'neg' : ''}">${fmtN(e.gold)}</div></div>
       <div class="num ${e.goldDelta < 0 ? 'neg' : 'pos'}">${sgn(e.goldDelta || 0)} a day</div></div>
       <div class="mods">${parts.map(x => `<span>${x[0]}</span><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span>`).join('')}</div>
@@ -568,6 +730,8 @@ const UI = (function () {
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
     if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
     html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:8px">Military works</div>
+      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
     const deals = Economy.dealsOf(G.player);
     html += `<hr class="sep"><div class="label">Trade deals · ${deals.length} of ${Economy.tradeSlots(G.player)} slots</div>`;
@@ -717,6 +881,33 @@ const UI = (function () {
     body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
     body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-tech]').forEach(b => b.onclick = () => pickTech(b.dataset.tech));
+    body.querySelectorAll('[data-fleet]').forEach(b => b.onclick = () => { selectFleet(+b.dataset.fleet); const f = Navy.fleet(+b.dataset.fleet); if (f) { const [x, y] = Render.fleetPos(f); Render.flyTo(x, y, Math.max(Render.cam.z, 5)); } });
+    body.querySelectorAll('[data-wing]').forEach(b => b.onclick = () => { selectWing(+b.dataset.wing); const w = Air.wing(+b.dataset.wing); if (w) { const p = MAP.provs[w.base]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } });
+    body.querySelectorAll('[data-zone]').forEach(b => b.onclick = e => { e.preventDefault(); selectZone(+b.dataset.zone, true); });
+    body.querySelectorAll('[data-fm]').forEach(b => b.onclick = () => { const f = Navy.fleet(sel.fleet); if (!f) return; if (!Navy.setMission(f, b.dataset.fm)) toast('The fleet cannot take that mission from here.', -1, 'info'); renderRight(); });
+    body.querySelectorAll('[data-fo]').forEach(b => b.onclick = () => {
+      const f = Navy.fleet(sel.fleet), k = b.dataset.fo;
+      if (k === 'back') { selectFleet(0); return; }
+      if (!f) return;
+      if (k === 'move') { pending = pending && pending.kind === 'fleet' ? null : { kind: 'fleet' }; showHint(); }
+      if (k === 'repair') { if (!Navy.setMission(f, 'repair')) toast('No friendly port within reach.', -1, 'info'); }
+      if (k === 'split') { const n = Navy.splitFleet(f); if (n) toast('Split off the ' + n.name + '.', -1, 'info'); }
+      if (k === 'merge') { const m = Navy.mergeFleets([f, ...G.fleets.filter(x => x !== f && x.owner === G.player && x.zone === f.zone && !x.battle)]); if (m) toast('Fleets merged into the ' + m.name + '.', -1, 'info'); }
+      renderRight();
+    });
+    body.querySelectorAll('[data-wm]').forEach(b => b.onclick = () => { pending = pending && pending.kind === 'wing' && pending.mission === b.dataset.wm ? null : { kind: 'wing', mission: b.dataset.wm }; showHint(); renderRight(); });
+    body.querySelectorAll('[data-wo]').forEach(b => b.onclick = () => {
+      const w = Air.wing(sel.wing), k = b.dataset.wo;
+      if (k === 'back') { selectWing(0); return; }
+      if (!w) return;
+      if (k === 'idle') { Air.setMission(w, 'idle'); pending = null; showHint(); }
+      if (k === 'rebase') { pending = pending && pending.kind === 'rebase' ? null : { kind: 'rebase' }; showHint(); }
+      renderRight();
+    });
+    body.querySelectorAll('[data-ship]').forEach(b => b.onclick = () => { const r = Navy.build(G.player, b.dataset.ship); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-unship]').forEach(b => b.onclick = () => { Navy.cancelBuild(G.player, +b.dataset.unship); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-plane]').forEach(b => b.onclick = () => { const r = Air.build(G.player, b.dataset.plane); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-unplane]').forEach(b => b.onclick = () => { Air.cancelBuild(G.player, +b.dataset.unplane); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-stopr]').forEach(b => b.onclick = () => { Tech.stop(G.player, +b.dataset.stopr); renderRight(); renderTree(); });
     body.querySelectorAll('[data-opentree]').forEach(b => b.onclick = () => { treeOpen = true; renderTree(); });
     const s = $('#dp-search');
@@ -726,7 +917,8 @@ const UI = (function () {
   function armyOrder(kind) {
     const list = myArmiesSel();
     if (!list.length) return;
-    if (kind === 'move' || kind === 'attack' || kind === 'redeploy' || kind === 'front') {
+    if (kind === 'cancelsea') { list.forEach(a => Navy.cancelInvasion(a)); renderRight(); return; }
+    if (kind === 'move' || kind === 'attack' || kind === 'redeploy' || kind === 'front' || kind === 'invade') {
       pending = pending && pending.kind === kind ? null : { kind };
       showHint(); renderRight(); return;
     }
@@ -740,14 +932,31 @@ const UI = (function () {
   }
   function showHint() {
     const h = $('#hint');
-    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against' };
+    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
+      invade: 'Choose a coastal province to land in', fleet: 'Choose a sea zone to sail to', rebase: 'Choose a province with a friendly airbase',
+      wing: pending && pending.mission === 'naval' ? 'Choose a sea zone to strike' : pending && pending.mission === 'bomb' ? 'Choose an enemy province to bomb' : 'Choose where the wing should fly' };
     if (!pending) { h.hidden = true; $('#map').classList.remove('targeting'); return; }
     h.hidden = false; h.textContent = txt[pending.kind] + ' · Esc to cancel';
     $('#map').classList.add('targeting');
   }
-  function resolvePending(prov) {
+  function resolvePending(prov, zone) {
     const G = Sim.G, list = myArmiesSel();
-    const kind = pending.kind; pending = null; showHint();
+    const kind = pending.kind, mission = pending.mission; pending = null; showHint();
+    if (kind === 'fleet') { sendFleet(zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1); renderRight(); return; }
+    if (kind === 'wing' || kind === 'rebase') {
+      const w = Air.wing(sel.wing); if (!w) return;
+      let r;
+      if (kind === 'rebase') r = prov >= 0 ? Air.rebase(w, prov) : { ok: false, why: 'Pick a province with an airbase.' };
+      else if (mission === 'naval' || (mission === 'superiority' && prov < 0)) r = zone >= 0 ? Air.setMission(w, mission, zone, true) : prov >= 0 && mission === 'naval' && Seas.isCoastal(prov) ? Air.setMission(w, mission, Seas.zonesOf(prov)[0], true) : mission === 'superiority' && prov >= 0 ? Air.setMission(w, mission, prov) : { ok: false, why: 'Pick a sea zone.' };
+      else r = prov >= 0 ? Air.setMission(w, mission, prov) : { ok: false, why: 'Pick a land province.' };
+      toast(r.ok ? (kind === 'rebase' ? w.name + ' moved to ' + MAP.provs[w.base].name + '.' : w.name + ': ' + Air.MISSIONS[w.mission].name.toLowerCase() + '.') : r.why, -1, 'info');
+      renderRight(); return;
+    }
+    if (kind === 'invade') {
+      if (prov < 0 || list.length !== 1) { toast('Pick a coastal province on land.', -1, 'info'); return; }
+      const r = Navy.invade(list[0], prov);
+      toast(r.ok ? r.text : r.why, prov, 'info'); renderRight(); renderTrays(); return;
+    }
     if (prov < 0 || !list.length) return;
     if (kind === 'front') {
       const tag = G.owner[prov];
@@ -768,7 +977,7 @@ const UI = (function () {
     }
     if (failed) {
       const o = G.owner[prov];
-      const why = o !== G.player && !Sim.allied(o, G.player) && !Sim.atWar(o, G.player) ? 'You need to be at war with ' + G.countries[o].name + ' or allied to enter.' : kind === 'redeploy' ? 'Redeployment only uses friendly land.' : 'No land route (sea crossings arrive with the navy).';
+      const why = o !== G.player && !Sim.allied(o, G.player) && !Sim.atWar(o, G.player) ? 'You need to be at war with ' + G.countries[o].name + ' or allied to enter.' : kind === 'redeploy' ? 'Redeployment only uses friendly land.' : 'No land route: use Invade by sea to cross water.';
       toast('No route to ' + MAP.provs[prov].name + '. ' + why, prov, 'info');
     }
     renderRight();
@@ -778,7 +987,7 @@ const UI = (function () {
   function renderTrays() {
     const G = Sim.G; if (!G) return;
     const mine = G.armies.filter(a => a.owner === G.player);
-    const status = a => a.battle ? '⚔ In battle' : a.retreating ? 'Retreating' : a.path.length ? (a.order === 'attack' ? 'Advancing' : 'Moving') : a.order === 'defend' ? 'Defending front' : 'Holding';
+    const status = a => a.sea ? (a.sea.phase === 'prep' ? 'Embarking' : 'At sea') : a.battle ? '⚔ In battle' : a.retreating ? 'Retreating' : a.path.length ? (a.order === 'attack' ? 'Advancing' : 'Moving') : a.order === 'defend' ? 'Defending front' : 'Holding';
     const trayHTML = mine.map(a => {
       const st = Sim.armyStats(a);
       return `<button class="acard ${sel.armies.includes(a.id) ? 'sel' : ''}" data-a="${a.id}"><div class="t"><span>${esc(a.name)}</span><span class="num">${a.units.length}</span></div>
@@ -849,7 +1058,8 @@ const UI = (function () {
       x => { if (x === 'yes') backToStart(); });
   }
   function backToStart() {
-    Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; pending = null; showHint();
+    Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true;
     showStart();
@@ -907,14 +1117,27 @@ const UI = (function () {
     const G = Sim.G;
     const [wx, wy] = Render.screenToWorld(sx, sy);
     const prov = Render.provinceAt(wx, wy);
+    const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
-    if (pending && button === 0) { resolvePending(prov); return; }
+    if (pending && button === 0) { resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
+      const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
+      if (f && f.owner === G.player) { const z = zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1; if (z >= 0) sendFleet(z); return; }
       const list = myArmiesSel();
       if (list.length && prov >= 0) issueMove(list, prov, 'auto');
       return;
     }
+    const fl = Render.fleetAt(sx, sy);
+    if (fl) {
+      // clicking the same counter again steps through the fleets in it
+      const ids = fl.map(x => x.id), k = ids.indexOf(sel.fleet);
+      selectFleet(ids[(k + 1) % ids.length]);
+      selectZone(fl[0].path.length ? -1 : fl[0].zone);
+      return;
+    }
+    const wl = Render.wingAt(sx, sy);
+    if (wl) { const ids = wl.map(x => x.id), k = ids.indexOf(sel.wing); selectWing(ids[(k + 1) % ids.length]); selectProvince(wl[0].base); return; }
     const b = Render.battleAtScreen(sx, sy);
     if (b) { openBattle(b); return; }
     const stack = Render.stackAt(sx, sy);
@@ -935,6 +1158,7 @@ const UI = (function () {
       return;
     }
     if (!add) selectArmies([], false);
+    if (prov < 0 && zone >= 0) { selectProvince(-1); selectZone(zone); return; }
     selectProvince(prov);
   }
   function bindKeys() {
@@ -949,7 +1173,7 @@ const UI = (function () {
         if (pending) { pending = null; showHint(); renderRight(); }
         else if (!$('#modal').hidden) $('#modal').hidden = true;
         else if (sel.battle) { sel.battle = 0; $('#battle').hidden = true; }
-        else { selectArmies([], false); selectProvince(-1); }
+        else { selectArmies([], false); selectProvince(-1); selectZone(-1); if (sel.fleet) selectFleet(0); if (sel.wing) selectWing(0); }
       }
     });
   }
@@ -962,6 +1186,8 @@ const UI = (function () {
       lastRefresh = now;
       sel.armies = sel.armies.filter(id => Sim.army(id));
       Render.state.selArmies = new Set(sel.armies);
+      if (sel.fleet && !Navy.fleet(sel.fleet)) { sel.fleet = 0; Render.state.selFleet = 0; }
+      if (sel.wing && !Air.wing(sel.wing)) { sel.wing = 0; Render.state.selWing = 0; }
       if (now > lockUntil) {
         // a panel under the mouse refreshes slowly, so its buttons don't shift while you aim at them
         // (and not at all while the pointer rests on one of its buttons)
@@ -990,5 +1216,6 @@ const UI = (function () {
     }
   }
 
-  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice() };
+  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice(),
+    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }) };
 })();

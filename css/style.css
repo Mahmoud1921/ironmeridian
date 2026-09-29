@@ -90,7 +90,7 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 #leftpanel { position: absolute; left: 10px; top: 62px; width: 300px; max-height: calc(100% - 200px); overflow-y: auto; z-index: 15; padding: 12px 14px; }
 #rightpanel { position: absolute; right: 10px; top: 62px; width: 360px; max-height: calc(100% - 200px); z-index: 15; display: flex; flex-direction: column; }
 #rp-tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tab { flex: 1 1 auto; padding: 8px 3px; background: none; border: 0; border-right: 1px solid var(--line-soft); cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; white-space: nowrap; position: relative; }
+.tab { flex: 1 1 auto; padding: 8px 2px; background: none; border: 0; border-right: 1px solid var(--line-soft); cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .02em; text-transform: uppercase; font-weight: 600; white-space: nowrap; position: relative; }
 .tab .dot { position: absolute; top: 5px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
 .tab:last-child { border-right: 0; }
 .tab.on { color: var(--paper); background: var(--panel-3); box-shadow: inset 0 -2px 0 var(--brass); }
@@ -321,3 +321,8 @@ table.goods .tr { font-size: 10px; opacity: .8; }
   .tcols { grid-template-columns: repeat(5, 200px); }
 }
 #leftpanel .builds { grid-template-columns: 1fr; }
+
+/* ---------- sea and air ---------- */
+.row.on { border-color: var(--brass); background: rgba(214,176,82,0.08); }
+a.lnk { color: var(--info); text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.lnk:hover { color: var(--brass); }

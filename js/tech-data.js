@@ -381,7 +381,7 @@ const TECH_DATA = {
       ] },
       GBR: { name: 'United Kingdom', techs: [
         { id: 'gbr1', name: 'Industrial Revolution', desc: 'Workshops and arsenals +20%.', fx: [{ mod: 'workshops', value: 0.20 }, { mod: 'arsenals', value: 0.20 }] },
-        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'From Phase 5: cuts enemy sea deals; until then, enemy sea deals -50% (in game: trade bonus +10%, coastal defence +10%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.10, where: 'coast' }] },
+        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] },
         { id: 'gbr3', name: 'Subsidies', desc: 'Gold to allies raises their manpower (in game: relations grow 30% faster, +0.5 gold per day per faction member).', fx: [{ mod: 'relGrowth', value: 0.30 }, { mod: 'factionGold', value: 0.5 }] },
         { id: 'gbr4', name: 'Baker Rifles', desc: 'Light infantry +15%.', fx: [{ mod: 'attack', value: 0.15, unit: ['light'] }] }
       ] },
@@ -481,7 +481,7 @@ const TECH_DATA = {
         { id: 'trade1', name: 'Telegraph Cables', desc: '+1 trade slot.', fx: [{ mod: 'tradeSlots', value: 1 }] },
         { id: 'trade2', name: 'Gold Standard', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
         [
-          { id: 'trade3a', name: 'Convoys', desc: 'Sea deals keep 50% of their volume when blockaded (in game: stockpiles hold 30 more days, +5% trade bonus at war).', fx: [{ mod: 'stockDays', value: 30 }, { mod: 'tradeBonus', value: 0.05, when: 'war' }] },
+          { id: 'trade3a', name: 'Convoys', desc: 'Convoy losses to raiders halved, stockpiles hold 30 more days.', fx: [{ mod: 'convoyLoss', value: -0.5 }, { mod: 'stockDays', value: 30 }] },
           { id: 'trade3b', name: 'Neutral Shipping', desc: '+15% trade bonus while you are at peace.', fx: [{ mod: 'tradeBonus', value: 0.15, when: 'peace' }] }
         ],
         { id: 'trade4', name: 'Refrigerated Ships', desc: 'Food deals deliver 20% more (in game: food need -10%).', fx: [{ mod: 'foodNeed', value: -0.10 }] }
@@ -523,7 +523,7 @@ const TECH_DATA = {
       ] },
       GBR: { name: 'United Kingdom', techs: [
         { id: 'gbr1', name: 'Empire Grain', desc: 'Food deals with your dominions and colonies are free of the trade slot limit (in game: +1 trade slot).', fx: [{ mod: 'tradeSlots', value: 1 }] },
-        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Enemy sea deals -50%, full blockade in Phase 5 (in game: trade bonus +10%, coastal defence +10%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.10, where: 'coast' }] },
+        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] },
         { id: 'gbr3', name: 'Ministry of Munitions', desc: 'Available from 1915: arsenals +25%.', fx: [{ mod: 'arsenals', value: 0.25 }], from: [1915, 6, 9] },
         { id: 'gbr4', name: 'Landships Committee', desc: 'Landships 20% cheaper.', fx: [{ mod: 'recruitCost', value: -0.20, unit: ['landships'] }] }
       ] },
@@ -653,7 +653,7 @@ const TECH_DATA = {
         { id: 'eng1', name: 'Imperial Preference', desc: 'Deals with dominions and colonies +25% trade bonus (in game: +15% trade bonus).', fx: [{ mod: 'tradeBonus', value: 0.15 }] },
         { id: 'eng2', name: 'Shadow Factories', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
         { id: 'eng3', name: 'Radar Chain', desc: 'Coastal defence +20%.', fx: [{ mod: 'defence', value: 0.20, where: 'coast' }] },
-        { id: 'eng4', name: 'Royal Navy Blockade', desc: 'Enemy sea deals -50%, full blockade in Phase 5 (in game: trade bonus +10%, war support +5%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'warSupport', value: 0.05 }] }
+        { id: 'eng4', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] }
       ] },
       ITA: { name: 'Italy', techs: [
         { id: 'ita1', name: 'Autarchia', desc: 'Farms and mines +15%.', fx: [{ mod: 'farms', value: 0.15 }, { mod: 'mines', value: 0.15 }] },

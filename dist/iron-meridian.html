@@ -99,7 +99,7 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 #leftpanel { position: absolute; left: 10px; top: 62px; width: 300px; max-height: calc(100% - 200px); overflow-y: auto; z-index: 15; padding: 12px 14px; }
 #rightpanel { position: absolute; right: 10px; top: 62px; width: 360px; max-height: calc(100% - 200px); z-index: 15; display: flex; flex-direction: column; }
 #rp-tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tab { flex: 1 1 auto; padding: 8px 3px; background: none; border: 0; border-right: 1px solid var(--line-soft); cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; white-space: nowrap; position: relative; }
+.tab { flex: 1 1 auto; padding: 8px 2px; background: none; border: 0; border-right: 1px solid var(--line-soft); cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: .02em; text-transform: uppercase; font-weight: 600; white-space: nowrap; position: relative; }
 .tab .dot { position: absolute; top: 5px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); }
 .tab:last-child { border-right: 0; }
 .tab.on { color: var(--paper); background: var(--panel-3); box-shadow: inset 0 -2px 0 var(--brass); }
@@ -331,6 +331,11 @@ table.goods .tr { font-size: 10px; opacity: .8; }
 }
 #leftpanel .builds { grid-template-columns: 1fr; }
 
+/* ---------- sea and air ---------- */
+.row.on { border-color: var(--brass); background: rgba(214,176,82,0.08); }
+a.lnk { color: var(--info); text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.lnk:hover { color: var(--brass); }
+
 </style>
 </head>
 <body>
@@ -357,6 +362,7 @@ table.goods .tr { font-size: 10px; opacity: .8; }
       <nav id="rp-tabs">
         <button class="tab on" data-tab="army">Army</button>
         <button class="tab" data-tab="recruit">Train</button>
+        <button class="tab" data-tab="navy" title="Navy and air force">Navy</button>
         <button class="tab" data-tab="diplo">Nations</button>
         <button class="tab" data-tab="econ">Economy<span class="dot" id="tab-econ-dot" hidden></span></button>
         <button class="tab" data-tab="tech">Tech</button>
@@ -370,6 +376,7 @@ table.goods .tr { font-size: 10px; opacity: .8; }
       <button class="btn sm active" id="mc-pol" title="Political map">Political</button>
       <button class="btn sm" id="mc-ter" title="Terrain map">Terrain</button>
       <button class="btn sm" id="mc-trade" title="Trade routes between nations">Trade</button>
+      <button class="btn sm" id="mc-sea" title="Sea zones and who controls them">Seas</button>
       <button class="btn sm" id="mc-in" aria-label="Zoom in">+</button>
       <button class="btn sm" id="mc-out" aria-label="Zoom out">−</button>
       <button class="btn sm" id="mc-world" title="Show the whole world">World</button>
@@ -3680,7 +3687,7 @@ const TECH_DATA = {
       ] },
       GBR: { name: 'United Kingdom', techs: [
         { id: 'gbr1', name: 'Industrial Revolution', desc: 'Workshops and arsenals +20%.', fx: [{ mod: 'workshops', value: 0.20 }, { mod: 'arsenals', value: 0.20 }] },
-        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'From Phase 5: cuts enemy sea deals; until then, enemy sea deals -50% (in game: trade bonus +10%, coastal defence +10%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.10, where: 'coast' }] },
+        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] },
         { id: 'gbr3', name: 'Subsidies', desc: 'Gold to allies raises their manpower (in game: relations grow 30% faster, +0.5 gold per day per faction member).', fx: [{ mod: 'relGrowth', value: 0.30 }, { mod: 'factionGold', value: 0.5 }] },
         { id: 'gbr4', name: 'Baker Rifles', desc: 'Light infantry +15%.', fx: [{ mod: 'attack', value: 0.15, unit: ['light'] }] }
       ] },
@@ -3780,7 +3787,7 @@ const TECH_DATA = {
         { id: 'trade1', name: 'Telegraph Cables', desc: '+1 trade slot.', fx: [{ mod: 'tradeSlots', value: 1 }] },
         { id: 'trade2', name: 'Gold Standard', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
         [
-          { id: 'trade3a', name: 'Convoys', desc: 'Sea deals keep 50% of their volume when blockaded (in game: stockpiles hold 30 more days, +5% trade bonus at war).', fx: [{ mod: 'stockDays', value: 30 }, { mod: 'tradeBonus', value: 0.05, when: 'war' }] },
+          { id: 'trade3a', name: 'Convoys', desc: 'Convoy losses to raiders halved, stockpiles hold 30 more days.', fx: [{ mod: 'convoyLoss', value: -0.5 }, { mod: 'stockDays', value: 30 }] },
           { id: 'trade3b', name: 'Neutral Shipping', desc: '+15% trade bonus while you are at peace.', fx: [{ mod: 'tradeBonus', value: 0.15, when: 'peace' }] }
         ],
         { id: 'trade4', name: 'Refrigerated Ships', desc: 'Food deals deliver 20% more (in game: food need -10%).', fx: [{ mod: 'foodNeed', value: -0.10 }] }
@@ -3822,7 +3829,7 @@ const TECH_DATA = {
       ] },
       GBR: { name: 'United Kingdom', techs: [
         { id: 'gbr1', name: 'Empire Grain', desc: 'Food deals with your dominions and colonies are free of the trade slot limit (in game: +1 trade slot).', fx: [{ mod: 'tradeSlots', value: 1 }] },
-        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Enemy sea deals -50%, full blockade in Phase 5 (in game: trade bonus +10%, coastal defence +10%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.10, where: 'coast' }] },
+        { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] },
         { id: 'gbr3', name: 'Ministry of Munitions', desc: 'Available from 1915: arsenals +25%.', fx: [{ mod: 'arsenals', value: 0.25 }], from: [1915, 6, 9] },
         { id: 'gbr4', name: 'Landships Committee', desc: 'Landships 20% cheaper.', fx: [{ mod: 'recruitCost', value: -0.20, unit: ['landships'] }] }
       ] },
@@ -3952,7 +3959,7 @@ const TECH_DATA = {
         { id: 'eng1', name: 'Imperial Preference', desc: 'Deals with dominions and colonies +25% trade bonus (in game: +15% trade bonus).', fx: [{ mod: 'tradeBonus', value: 0.15 }] },
         { id: 'eng2', name: 'Shadow Factories', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
         { id: 'eng3', name: 'Radar Chain', desc: 'Coastal defence +20%.', fx: [{ mod: 'defence', value: 0.20, where: 'coast' }] },
-        { id: 'eng4', name: 'Royal Navy Blockade', desc: 'Enemy sea deals -50%, full blockade in Phase 5 (in game: trade bonus +10%, war support +5%).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'warSupport', value: 0.05 }] }
+        { id: 'eng4', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] }
       ] },
       ITA: { name: 'Italy', techs: [
         { id: 'ita1', name: 'Autarchia', desc: 'Farms and mines +15%.', fx: [{ mod: 'farms', value: 0.15 }, { mod: 'mines', value: 0.15 }] },
@@ -4520,6 +4527,8 @@ const Sim = (function () {
     } else declareWar('ITA', 'ETH', true);
     if (typeof Tech !== 'undefined') Tech.setup();
     if (typeof Economy !== 'undefined') Economy.setup();
+    if (typeof Navy !== 'undefined') Navy.setup();
+    if (typeof Air !== 'undefined') Air.setup();
     return G;
   }
 
@@ -4684,7 +4693,9 @@ const Sim = (function () {
   // ---------- army helpers ----------
   function army(id) { return G.armies.find(a => a.id === id); }
   function armiesAt(prov) { return G.armies.filter(a => a.prov === prov); }
-  function hostilesAt(tag, prov) { return G.armies.filter(a => a.prov === prov && !a.retreating && atWar(a.owner, tag)); }
+  // armies already at sea (past embarkation) don't hold the province they left
+  const ashore = a => !a.sea || a.sea.phase === 'prep';
+  function hostilesAt(tag, prov) { return G.armies.filter(a => a.prov === prov && !a.retreating && ashore(a) && atWar(a.owner, tag)); }
   function armySpeed(a) {
     let s = Infinity, slow = null;
     for (const u of a.units) { const v = UNIT_TYPES[u.type].speed; if (v < s) { s = v; slow = u.type; } }
@@ -4709,19 +4720,28 @@ const Sim = (function () {
     for (const u of a.units) {
       const t = UNIT_TYPES[u.type];
       const m = TX ? 1 + Tech.modFast(a.owner, role === 'atk' ? 'attack' : 'defence', u.type, a.prov) : 1;
-      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1) * m;
+      // storming a beach from the boats: marines are trained for it
+      const land = a.landing && role === 'atk' ? (u.type === 'marines' || t.symbol === 'mar' ? 0.85 : 0.5) : 1;
+      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1) * m * land;
       else v += t.def * u.str * (0.4 + 0.6 * u.org) * m;
     }
     const c = G.countries[a.owner];
     const skill = a.commander.skill + (TX ? Tech.modFast(a.owner, 'commander', '', -1) : 0);
     v *= c.tech * (1 + 0.05 * skill) * (0.5 + 0.5 * a.supply);
-    if (role === 'def') v *= 1 + a.entrench;
+    if (role === 'def') v *= 1 + a.entrench + fortBonus(a.owner, a.prov);
     return v;
+  }
+  function fortBonus(tag, prov) {
+    if (typeof Economy === 'undefined' || !Economy.infra) return 0;
+    const f = Economy.infra(prov, 'fort');
+    return f && (G.owner[prov] === tag || allied(tag, G.owner[prov])) ? 0.15 * f : 0;
   }
   function manpowerOf(a) { return a.units.reduce((s, u) => s + UNIT_TYPES[u.type].mp * u.str, 0); }
 
   // ---------- orders ----------
   function orderMove(a, dest, kind) {
+    if (a.sea && a.sea.phase !== 'prep') return false;
+    if (a.sea) a.sea = null;   // a new order calls off the planned landing
     if (a.battle) leaveBattle(a);
     const mode = kind === 'redeploy' ? 'redeploy' : 'move';
     const path = findPath(a.owner, a.prov, dest, mode);
@@ -4729,10 +4749,11 @@ const Sim = (function () {
     a.path = path; a.progress = 0; a.order = kind || 'move'; a.target = dest; a.retreating = false;
     return true;
   }
-  function orderHold(a) { if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1; a.frontTag = null; }
-  function orderDefend(a, frontTag) { if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; }
+  function orderHold(a) { if (a.sea && a.sea.phase === 'prep') a.sea = null; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1; a.frontTag = null; }
+  function orderDefend(a, frontTag) { if (a.sea) return; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; }
   function orderRetreat(a) {
     const c = G.countries[a.owner];
+    if (a.sea) { if (typeof Navy !== 'undefined') Navy.cancelInvasion(a); return true; }
     if (a.battle) leaveBattle(a);
     // nearest own province not bordering an enemy
     const en = enemiesOf(a.owner);
@@ -4755,6 +4776,7 @@ const Sim = (function () {
   function mergeArmies(list) {
     if (list.length < 2) return null;
     const base = list[0];
+    if (list.some(a => a.sea)) return null;
     for (const a of list.slice(1)) {
       if (a.owner !== base.owner || a.prov !== base.prov) continue;
       if (a.battle) leaveBattle(a);
@@ -4764,7 +4786,7 @@ const Sim = (function () {
     return base;
   }
   function splitArmy(a) {
-    if (a.units.length < 2) return null;
+    if (a.units.length < 2 || a.sea) return null;
     const half = a.units.splice(Math.floor(a.units.length / 2));
     const b = newArmy(a.owner, a.prov, half);
     b.entrench = a.entrench; b.supply = a.supply;
@@ -4795,11 +4817,11 @@ const Sim = (function () {
   function leaveBattle(a) {
     const b = G.battles.find(x => x.id === a.battle);
     if (b) b.attackers = b.attackers.filter(id => id !== a.id);
-    a.battle = 0;
+    a.battle = 0; a.landing = false;
   }
   function endBattle(b) {
     G.battles = G.battles.filter(x => x !== b);
-    for (const id of b.attackers) { const a = army(id); if (a && a.battle === b.id) a.battle = 0; }
+    for (const id of b.attackers) { const a = army(id); if (a && a.battle === b.id) { a.battle = 0; a.landing = false; } }
   }
 
   function stepBattle(b) {
@@ -4818,6 +4840,11 @@ const Sim = (function () {
     for (const a of atts) { A += armyPower(a, 'atk', prov.terrain); B += armyPower(a, 'def', prov.terrain) * 0.6; }
     A *= flank * recon;
     for (const d of defs) { D += armyPower(d, 'def', prov.terrain); F += armyPower(d, 'atk', 'plains') * 0.9; }
+    // aircraft overhead and warships off the coast
+    const airA = typeof Air !== 'undefined' ? Air.battleBonus(b.atkTag, b.prov) : { mul: 1 }, airD = typeof Air !== 'undefined' ? Air.battleBonus(b.defTag, b.prov) : { mul: 1 };
+    const navA = typeof Navy !== 'undefined' && G.fleets ? Navy.shoreSupport(b.atkTag, b.prov) : 0, navD = typeof Navy !== 'undefined' && G.fleets ? Navy.shoreSupport(b.defTag, b.prov) : 0;
+    A *= airA.mul * (1 + navA); F *= airD.mul * (1 + navD);
+    const landing = atts.some(a => a.landing), fort = fortBonus(b.defTag, b.prov);
     const ra = Math.max(0.1, Math.min(6, A / Math.max(D, 1)));
     const rd = Math.max(0.1, Math.min(6, F / Math.max(B, 1)));
     const hitD = 0.014 * ra, hitA = 0.014 * rd;
@@ -4848,6 +4875,11 @@ const Sim = (function () {
     ];
     if (fronts > 1) b.mods.push(['Attack from ' + fronts + ' sides', flank - 1]);
     if (recon > 1) b.mods.push(['Reconnaissance', recon - 1]);
+    if (fort) b.mods.push(['Fortifications', -fort]);
+    if (landing) b.mods.push(['Amphibious landing', -0.5]);
+    if (airA.supB || airD.supB) b.mods.push(['Air superiority', (airA.supB || 0) - (airD.supB || 0)]);
+    if (airA.cas || airD.cas) b.mods.push(['Close air support', (airA.cas || 0) - (airD.cas || 0)]);
+    if (navA || navD) b.mods.push(['Naval gunfire', navA - navD]);
     // remove shattered units
     for (const a of atts.concat(defs)) {
       a.units = a.units.filter(u => u.str > 0.05);
@@ -4967,38 +4999,63 @@ const Sim = (function () {
     D.guar = D.guar.filter(g => g.by !== tag && g.of !== tag);
     for (const k of Object.keys(D.pacts)) if (k.split('|').includes(tag)) delete D.pacts[k];
     if (typeof Economy !== 'undefined') Economy.dropNation(tag);
+    if (typeof Navy !== 'undefined') Navy.dropNation(tag);
+    if (typeof Air !== 'undefined') Air.dropNation(tag);
   }
 
   // ---------- supply ----------
+  // Supply comes from home provinces, cities, supply hubs and ports the navy keeps open;
+  // it thins out with every province it has to travel and with poor infrastructure.
+  function sourceValue(tag, id) {
+    const p = MAP.provs[id], o = G.owner[id];
+    if (o !== tag && !allied(tag, o)) return 0;
+    let v = 0;
+    if (p.core === o && p.home) v = 1;
+    else if (p.core === o) v = p.city ? 0.75 : 0.55;           // colonies feed troops a little
+    const EC = typeof Economy !== 'undefined' && Economy.infra;
+    if (EC && Economy.infra(id, 'hub')) v = Math.max(v, 1);
+    if (G.countries[o] && G.countries[o].capital === id) v = 1;
+    if (EC && typeof Navy !== 'undefined' && G.fleets && Economy.infra(id, 'port')) v = Math.max(v, Navy.portSupply(tag, id));
+    return v;
+  }
+  function supplyReach(tag, prov) {
+    let best = sourceValue(tag, prov);
+    if (best >= 1) return 1;
+    const seen = new Set([prov]); let fr = [prov];
+    for (let d = 1; d <= 7 && fr.length; d++) {
+      const f = Math.pow(0.88, d);
+      if (f <= best) break;
+      const nx = [];
+      for (const q of fr) for (const n of MAP.provs[q].nb) {
+        if (seen.has(n)) continue; seen.add(n);
+        const o = G.owner[n];
+        if (o !== tag && !allied(tag, o)) continue;
+        const v = sourceValue(tag, n) * f;
+        if (v > best) best = v;
+        nx.push(n);
+      }
+      fr = nx;
+    }
+    return best;
+  }
   function computeSupply(a) {
+    if (a.sea && a.sea.phase !== 'prep') return Math.max(0.3, a.supply || 0.8);
     const p = MAP.provs[a.prov];
     const owner = G.owner[a.prov];
     const friendly = owner === a.owner || allied(a.owner, owner);
     let base = friendly ? 0.55 + 0.09 * p.infra : 0.4;
     if (p.core !== a.owner && !allied(p.core, a.owner)) base *= 0.85;
-    // steps to a home province of this country or an ally
-    let steps = 0;
-    if (!(p.core === a.owner && owner === a.owner)) {
-      const seen = new Set([a.prov]); let fr = [a.prov]; steps = 8;
-      outer: for (let d = 1; d <= 7; d++) {
-        const nx = [];
-        for (const q of fr) for (const n of MAP.provs[q].nb) {
-          if (seen.has(n)) continue; seen.add(n);
-          const o = G.owner[n];
-          if (o !== a.owner && !allied(a.owner, o)) continue;
-          if (MAP.provs[n].core === o) { steps = d; break outer; }
-          nx.push(n);
-        }
-        fr = nx;
-      }
-    }
-    const distF = Math.pow(0.88, steps);
-    const cap = 4 + p.infra * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0);
+    const reach = Math.max(0.12, supplyReach(a.owner, a.prov));
+    const EC = typeof Economy !== 'undefined' && Economy.infra;
+    const cap = 4 + p.infra * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
     let demand = 0;
     for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
     const tm = typeof Tech !== 'undefined' ? 1 + Tech.mod(a.owner, 'supply', { prov: a.prov }) : 1;
-    return Math.max(0.05, Math.min(1, base * distF * capF * tm));
+    // enemy aircraft over the roads
+    let air = 1;
+    if (typeof Air !== 'undefined' && G.wings && G.wings.length) { const sup = Air.superiority(a.owner, [p.lon, p.lat]); if (sup < 0.5) air = 0.7 + 0.6 * sup; }
+    return Math.max(0.05, Math.min(1, base * reach * capF * tm * air));
   }
 
   // ---------- recruitment ----------
@@ -5019,7 +5076,7 @@ const Sim = (function () {
   function finishRecruit(c, item) {
     const target = item.armyId ? army(item.armyId) : null;
     const u = makeUnit(item.type, 1); u.org = 0.5;
-    if (target && target.owner === c.tag && (G.owner[target.prov] === c.tag)) { target.units.push(u); return; }
+    if (target && target.owner === c.tag && !target.sea && (G.owner[target.prov] === c.tag)) { target.units.push(u); return; }
     const cap = c.capital;
     if (cap < 0 || G.owner[cap] !== c.tag) return;
     let reserve = G.armies.find(a => a.owner === c.tag && a.prov === cap && a.reserve && a.units.length < 12);
@@ -5050,7 +5107,7 @@ const Sim = (function () {
       let gaps = front.filter(p => !covered.has(p.id)).length;
       for (const a of myArmies.slice()) {
         if (gaps <= 0) break;
-        if (!a.battle && !a.path.length && a.units.length >= 6) { splitArmy(a); gaps--; }
+        if (!a.battle && !a.path.length && !a.sea && a.units.length >= 6) { splitArmy(a); gaps--; }
       }
       frontlineAI(c.tag, G.armies.filter(a => a.owner === c.tag), true);
     }
@@ -5080,7 +5137,7 @@ const Sim = (function () {
       if (f) f.def += armyPower(a, 'def', MAP.provs[f.id].terrain) / 20;
     }
     for (const a of list) {
-      if (a.battle || a.retreating || a.path.length || !a.units.length) continue;
+      if (a.battle || a.retreating || a.path.length || !a.units.length || a.sea) continue;
       const st = armyStats(a);
       const here = fmap.get(a.prov);
       if (here && allowAttack && st.org > 0.7 && st.str > 0.6) {
@@ -5140,6 +5197,7 @@ const Sim = (function () {
     for (const a of G.armies.slice()) {
       if (!G.armies.includes(a)) continue;
       a.rate = 0;   // km per hour this hour; the renderer uses it to glide between ticks
+      if (a.sea && typeof Navy !== 'undefined' && Navy.stepArmy(a)) continue;
       if (a.battle) continue;
       if (!a.path.length) {
         a.entrench = Math.min(0.25, a.entrench + 0.25 / (24 * 10));
@@ -5164,13 +5222,14 @@ const Sim = (function () {
       if (a.progress >= distKm(a.prov, next)) {
         // carry the leftover distance into the next leg, so marching never stalls at a province centre
         const over = a.progress - distKm(a.prov, next);
-        a.prov = next; a.path.shift(); a.progress = a.path.length ? Math.min(over, distKm(next, a.path[0]) * 0.9) : 0;
+        a.prov = next; a.path.shift(); a.progress = a.path.length ? Math.min(over, distKm(next, a.path[0]) * 0.9) : 0; a.landing = false;
         const o = G.owner[next];
         if (o !== a.owner && (atWar(a.owner, o) || wild(o))) capture(next, a.owner);
         if (!a.path.length) a.retreating = false;
       }
     }
     for (const b of G.battles.slice()) if (G.battles.includes(b)) stepBattle(b);
+    if (typeof Navy !== 'undefined' && G.fleets) Navy.hour();
     // queue
     for (const c of Object.values(G.countries)) {
       if (!c.alive || !c.queue.length) continue;
@@ -5190,6 +5249,9 @@ const Sim = (function () {
 
   function dayTick() {
     const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
+    // sea and air first: convoy losses and bomb damage feed today's economy
+    if (typeof Navy !== 'undefined' && G.fleets) Navy.daily();
+    if (typeof Air !== 'undefined' && G.wings) Air.daily();
     if (ECO) Economy.daily();
     if (TX) Tech.daily();
     if (ECO && Math.floor(G.hour / 24) % 30 === 0) Economy.monthly();
@@ -5210,9 +5272,10 @@ const Sim = (function () {
     }
     for (const a of G.armies) {
       a.supply = computeSupply(a);
-      if (a.supply < 0.35) for (const u of a.units) u.str = Math.max(0.1, u.str - 0.004 * (0.35 - a.supply) / 0.35);
+      // out of supply: attrition, and organisation drains away
+      if (a.supply < 0.35) for (const u of a.units) { u.str = Math.max(0.1, u.str - 0.004 * (0.35 - a.supply) / 0.35); u.org = Math.max(0, u.org - 0.03 * (0.35 - a.supply) / 0.35); }
       // reinforcement in friendly territory
-      if (G.owner[a.prov] === a.owner && !a.battle) {
+      if (G.owner[a.prov] === a.owner && !a.battle && !a.sea) {
         const c = G.countries[a.owner];
         for (const u of a.units) {
           if (u.str >= 1) continue;
@@ -5246,6 +5309,7 @@ const Sim = (function () {
     get MAP() { return MAP; },
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
+    startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
     orderMove, orderHold, orderDefend, orderRetreat, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply
@@ -5822,6 +5886,28 @@ const Economy = (function () {
     arsenal: { good: 'arms',      cp: 300, gold: 120 }
   };
   const KIND_KEYS = Object.keys(KINDS);
+  // military works: ports, dockyards, airbases, supply hubs, forts and radar. They use no industry slot.
+  const INFRA = {
+    port:  { cp: 150, gold: 60, max: 3, coast: true },
+    dock:  { cp: 260, gold: 110, max: 5, coast: true },
+    air:   { cp: 150, gold: 60, max: 3, needs: 'air' },
+    hub:   { cp: 220, gold: 90, max: 1 },
+    fort:  { cp: 180, gold: 70, max: 3 },
+    radar: { cp: 160, gold: 90, max: 1, needs: 'radar' }
+  };
+  const INFRA_KEYS = Object.keys(INFRA);
+  const INFRA_NAMES = {
+    'ww2-1936': { port: 'Port', dock: 'Naval dockyard', air: 'Airbase', hub: 'Supply hub', fort: 'Fort', radar: 'Radar station' },
+    'greatwar-1914': { port: 'Harbour', dock: 'Naval dockyard', air: 'Airfield', hub: 'Railhead depot', fort: 'Fortress' },
+    'napoleonic-1805': { port: 'Harbour', dock: 'Naval yard', hub: 'Supply depot', fort: 'Fortress' },
+    'medieval-1200': { port: 'Harbour', dock: 'Shipyard', hub: 'Supply depot', fort: 'Castle' },
+    'rome-117': { port: 'Harbour', dock: 'Navalia', hub: 'Supply depot', fort: 'Fort' },
+    'greece-431bc': { port: 'Harbour', dock: 'Shipsheds', hub: 'Supply depot', fort: 'Walls' }
+  };
+  const isInfra = k => !!INFRA[k];
+  function infraKinds() { const n = INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936']; return INFRA_KEYS.filter(k => n[k]); }
+  function infra(pid, k) { const I = G().inf && G().inf[pid]; return (I && I[k]) || 0; }
+  function setInfra(pid, k, v) { const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
   const MOD_OF = { farm: 'farms', mine: 'mines', fuel: 'fuelworks', strat: 'stratworks', shop: 'workshops', arsenal: 'arsenals' };
   const FARM_TERRAIN = { plains: 1.5, forest: 0.8, hills: 0.9, mountains: 0.5, desert: 0.5, jungle: 0.7, marsh: 0.7, tundra: 0.3, urban: 0.8 };
 
@@ -5853,7 +5939,7 @@ const Economy = (function () {
   const eraId = () => (typeof Eras !== 'undefined' && Eras.info()) ? Eras.info().id : 'ww2-1936';
   const E = () => ERA_ECO[eraId()] || ERA_ECO['ww2-1936'];
   const goodName = g => g === 'gold' ? 'Gold' : (E().goods[g] || g);
-  const kindName = k => E().kinds[k] || k;
+  const kindName = k => INFRA[k] ? ((INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936'])[k] || k) : (E().kinds[k] || k);
   const coin = () => E().coin;
   const mod = (tag, name, ctx) => typeof Tech !== 'undefined' ? Tech.mod(tag, name, ctx) : 0;
 
@@ -5930,6 +6016,7 @@ const Economy = (function () {
     let m = 1 + mod(tag, MOD_OF[kind], ctx) + mod(tag, 'industry', ctx);
     if (kind === 'strat') m += mod(tag, 'strategic', ctx);
     if (kind === 'shop') m += mod(tag, 'luxuries', ctx);
+    if (typeof Air !== 'undefined') m *= 1 - Air.bombDamage(p.id);
     if (p.core !== tag) {
       const coreAlive = G().countries[p.core] && G().countries[p.core].alive;
       m *= coreAlive ? Math.min(1, 0.5 + mod(tag, 'occupied')) : 0.85;
@@ -5944,6 +6031,7 @@ const Economy = (function () {
     buildDeposits();
     M.provs.forEach(p => coastal(p));
     g.ind = M.provs.map(() => null);
+    seedInfra();
     g.eco = { nextDeal: 1, spike: {}, price: Object.assign({}, BASE_PRICE), era: eraId() };
     g.dip.trade = []; g.dip.embargo = [];
     for (const p of M.provs) {
@@ -5988,6 +6076,29 @@ const Economy = (function () {
       if (!c.eco || !c.eco.need) continue;
       for (const k of GOODS) c.eco.stock[k] = Math.round(c.eco.need[k] * START_DAYS);
     }
+  }
+  // opening harbours on every coastal city, bigger at capitals; forts where history built them
+  function seedInfra() {
+    const g = G(), M = MAP(), id = eraId();
+    g.inf = M.provs.map(() => null);
+    const coast = pid => typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(M.provs[pid]);
+    for (const p of M.provs) {
+      const d = COUNTRY_BY_TAG[g.owner[p.id]];
+      if (!d || d.unclaimed) continue;
+      if (p.city && coast(p.id)) setInfra(p.id, 'port', p.capital ? 2 : 1);
+      if (p.capital && id !== 'ww2-1936' && id !== 'greatwar-1914') setInfra(p.id, 'fort', id === 'napoleonic-1805' ? 1 : 2);
+    }
+    // nations with a coast but no coastal city still get one harbour
+    const hasPort = new Set();
+    for (const p of M.provs) if (infra(p.id, 'port')) hasPort.add(g.owner[p.id]);
+    for (const p of M.provs.slice().sort((a, b) => b.pop - a.pop)) {
+      const o = g.owner[p.id], d = COUNTRY_BY_TAG[o];
+      if (!d || d.unclaimed || hasPort.has(o) || !coast(p.id)) continue;
+      setInfra(p.id, 'port', 1); hasPort.add(o);
+    }
+    const wall = (tag, vs, lvl) => { for (const p of M.provs) if (g.owner[p.id] === tag && p.home && p.nb.some(n => g.owner[n] === vs)) setInfra(p.id, 'fort', lvl); };
+    if (id === 'ww2-1936') { wall('FRA', 'GER', 3); wall('CZE', 'GER', 2); wall('GER', 'FRA', 1); wall('FIN', 'SOV', 2); wall('BEL', 'GER', 1); }
+    if (id === 'greatwar-1914') { wall('FRA', 'GER', 2); wall('BEL', 'GER', 2); wall('GER', 'FRA', 1); wall('RUS', 'GER', 1); wall('AUH', 'ITA', 1); }
   }
   function seedDeals() {
     const g = G();
@@ -6081,6 +6192,7 @@ const Economy = (function () {
     const divsOf = {}, stratDivs = {}, upk = {};
     for (const ar of g.armies) for (const u of ar.units) { divsOf[ar.owner] = (divsOf[ar.owner] || 0) + 1; upk[ar.owner] = (upk[ar.owner] || 0) + 0.1 + (UNIT_TYPES[u.type] ? UNIT_TYPES[u.type].eq : 100) / 500; if (stratUnit(u.type)) stratDivs[ar.owner] = (stratDivs[ar.owner] || 0) + 1; }
     for (const c of Object.values(cs)) if (c.alive) for (const q of c.queue) if (stratUnit(q.type)) stratDivs[c.tag] = (stratDivs[c.tag] || 0) + 1;
+    for (const c of Object.values(cs)) if (c.alive) upk[c.tag] = (upk[c.tag] || 0) + (typeof Navy !== 'undefined' && g.fleets ? Navy.upkeep(c.tag) : 0) + (typeof Air !== 'undefined' && g.wings ? Air.upkeep(c.tag) : 0);
     const aStrat = E().arsenalStrat || 0;
     // needs
     const totProd = { food: 0, metal: 0, fuel: 0, strategic: 0, luxuries: 0 }, totNeed = Object.assign({}, totProd);
@@ -6107,9 +6219,12 @@ const Economy = (function () {
       if (!s || !b || !s.alive || !b.alive || !s.eco || !b.eco) continue;
       const avail = s.eco.prod[d.good] + s.eco.stock[d.good] + s.eco.imp[d.good] - s.eco.exp[d.good];
       const q = Math.max(0, Math.min(d.amount, avail));
-      d.delivered = q;
-      s.eco.exp[d.good] += q; b.eco.imp[d.good] += q;
-      const paid = d.price * (q / d.amount);
+      // goods shipped by sea can be sunk on the way; the buyer pays only for what arrives
+      const arrive = !setupOnly && typeof Navy !== 'undefined' && g.fleets ? q * Navy.convoyFactor(d) : q;
+      if (!setupOnly && typeof Navy !== 'undefined' && g.fleets) Navy.recordConvoy(d, q, arrive);
+      d.delivered = arrive;
+      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive;
+      const paid = d.price * (arrive / d.amount);
       b.eco.dealOut += paid; s.eco.dealIn += paid;
       const bonus = paid * tradeBonusRate(d.from);
       const bonusB = paid * tradeBonusRate(d.to);
@@ -6197,13 +6312,58 @@ const Economy = (function () {
   function tradeBonusRate(tag) { return 0.10 + mod(tag, 'tradeBonus') * 0.5; }
 
   // ---------- construction ----------
-  function buildCost(kind, tag) {
+  function buildCost(kind, tag, pid) {
+    if (INFRA[kind]) {
+      const k = INFRA[kind], lvl = pid >= 0 ? infra(pid, kind) : 0;
+      return { cp: Math.round(k.cp * (1 + lvl * 0.5)), gold: Math.round(k.gold * (1 + lvl * 0.5)) };
+    }
     const k = KINDS[kind];
     const n = G().ind.reduce((s, I, i) => s + (I && I[kind] && G().owner[i] === tag ? I[kind] : 0), 0);
     return { cp: Math.round(k.cp * (1 + n * 0.004)), gold: Math.round(k.gold * (1 + n * 0.01)) };
   }
+  function canInfra(tag, kind, pid) {
+    const g = G(), c = g.countries[tag], k = INFRA[kind];
+    if (!infraKinds().includes(kind) || (k.needs === 'air' && !(typeof Air !== 'undefined' && Air.available()))) return { ok: false, why: 'Not available in this era' };
+    if (!c || !c.eco || c.eco.none) return { ok: false, why: 'No economy' };
+    if (pid === undefined || pid < 0) { const p = bestInfra(tag, kind); if (!p) return { ok: false, why: k.coast ? 'No coastal province with room' : 'No province with room' }; pid = p.id; }
+    const cost = buildCost(kind, tag, pid);
+    if (c.eco.gold < cost.gold) return { ok: false, why: 'Needs ' + cost.gold + ' gold' };
+    if (c.eco.queue.length >= 6) return { ok: false, why: 'The construction queue is full (6)' };
+    if (g.owner[pid] !== tag) return { ok: false, why: 'Not your province' };
+    const p = MAP().provs[pid];
+    if (k.coast && !(typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(p))) return { ok: false, why: 'Needs a coast' };
+    if (kind === 'dock' && !infra(pid, 'port')) return { ok: false, why: 'Needs a ' + kindName('port').toLowerCase() + ' first' };
+    const queued = c.eco.queue.filter(q => q.prov === pid && q.kind === kind).length;
+    if (infra(pid, kind) + queued >= k.max) return { ok: false, why: k.max > 1 ? 'Already at level ' + k.max : 'Already built' };
+    return { ok: true, prov: pid, cost };
+  }
+  function bestInfra(tag, kind) {
+    const g = G(), c = g.countries[tag], k = INFRA[kind];
+    const cap = c.capital >= 0 ? MAP().provs[c.capital] : null;
+    let best = null, bs = -Infinity;
+    for (const p of MAP().provs) {
+      if (g.owner[p.id] !== tag) continue;
+      const queued = c.eco.queue.filter(q => q.prov === p.id && q.kind === kind).length;
+      if (infra(p.id, kind) + queued >= k.max) continue;
+      if (k.coast && !(typeof Seas !== 'undefined' ? Seas.isCoastal(p.id) : coastal(p))) continue;
+      if (kind === 'dock' && !infra(p.id, 'port')) continue;
+      const far = cap ? GEO.haversineKm(p.lon, p.lat, cap.lon, cap.lat) : 0;
+      const front = enemyNear(tag, p) ? 1 : 0;
+      const lvl = infra(p.id, kind);
+      let s;
+      if (kind === 'port') s = (p.city ? 5 : 0) + p.pop / 5e5 + (p.home ? 2 : 0) - lvl * 3;
+      else if (kind === 'dock') s = infra(p.id, 'port') * 2 + (p.home ? 3 : 0) + lvl - front * 5;
+      else if (kind === 'air') s = (p.city ? 3 : 0) + (p.home ? 2 : 0) + front * 2 - lvl * 3 - far / 3000;
+      else if (kind === 'hub') s = far / 400 + (p.city ? 2 : 0) + front * 3 - (p.core === tag ? 0 : 1);
+      else if (kind === 'fort') s = front * 6 + (p.capital ? 3 : 0) + (p.city ? 1 : 0) - lvl * 2 + (({ mountains: 2, hills: 1 })[p.terrain] || 0);
+      else s = (p.capital ? 4 : 0) + (p.city ? 2 : 0) + (typeof Seas !== 'undefined' && Seas.isCoastal(p.id) ? 1 : 0) + front * 2;
+      if (s > bs) { bs = s; best = p; }
+    }
+    return best;
+  }
   function canBuild(tag, kind, pid) {
     const g = G(), c = g.countries[tag];
+    if (INFRA[kind]) return canInfra(tag, kind, pid);
     if (!KINDS[kind]) return { ok: false, why: 'Unknown industry' };
     if (!c || !c.eco) return { ok: false, why: 'No economy' };
     const cost = buildCost(kind, tag);
@@ -6239,14 +6399,14 @@ const Economy = (function () {
     if (!chk.ok) return chk;
     const c = G().countries[tag];
     c.eco.gold -= chk.cost.gold;
-    c.eco.queue.push({ kind, prov: chk.prov, left: chk.cost.cp, total: chk.cost.cp });
+    c.eco.queue.push({ kind, prov: chk.prov, left: chk.cost.cp, total: chk.cost.cp, gold: chk.cost.gold });
     return { ok: true, prov: chk.prov, text: kindName(kind) + ' started in ' + MAP().provs[chk.prov].name + '.' };
   }
   function cancelBuild(tag, i) {
     const c = G().countries[tag], q = c.eco.queue[i];
     if (!q) return;
     c.eco.queue.splice(i, 1);
-    c.eco.gold += Math.round(buildCost(q.kind, tag).gold * 0.5);
+    c.eco.gold += Math.round((q.gold || buildCost(q.kind, tag).gold) * 0.5);
   }
   function stepQueue(c) {
     const g = G(), e = c.eco;
@@ -6258,7 +6418,8 @@ const Economy = (function () {
       const share = cp / active.length;
       q.left -= share;
       if (q.left <= 0) {
-        ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
+        if (INFRA[q.kind]) setInfra(q.prov, q.kind, infra(q.prov, q.kind) + 1);
+        else ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
         q.done = true;
         if (c.tag === g.player) Sim.notify(kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
       }
@@ -6485,7 +6646,7 @@ const Economy = (function () {
   }
 
   return {
-    GOODS, KINDS, KIND_KEYS, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
+    GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId
@@ -6751,6 +6912,1421 @@ const Tech = (function () {
     if (best) start(c.tag, best.id, free);
   }
   return { setup, daily, mod, modFast, unlocked, registerUnlocks, branchesFor, ownBranch, state, info, start, stop, rate, fromLabel, dateReady, unitClass, invalidate, TIER_COST, SLOTS };
+})();
+
+// Sea zones: named stretches of ocean that fleets move through and fight over.
+// Water is split on a 1-degree grid, flood-filled from each zone's centre so a zone never
+// leaks across land; coastal provinces learn which zones they touch. Deterministic, built once.
+'use strict';
+const SEA_ZONES = [
+  // [name, lon, lat]
+  ['North Sea', 3, 56], ['English Channel', -2.5, 50.1], ['Baltic Sea', 18.5, 56.5], ['Gulf of Bothnia', 20.5, 62.5],
+  ['Norwegian Sea', 5, 67], ['Barents Sea', 40, 73], ['Celtic Sea', -8.5, 49.5], ['Bay of Biscay', -5, 45.5],
+  ['Western Approaches', -20, 52], ['Iberian Coast', -12, 39], ['Western Mediterranean', 4, 39.5], ['Tyrrhenian Sea', 12, 40],
+  ['Adriatic Sea', 15.5, 43], ['Central Mediterranean', 17.5, 35.5], ['Aegean Sea', 25, 38.5], ['Eastern Mediterranean', 31, 33.5],
+  ['Black Sea', 34, 43.5], ['Caspian Sea', 51, 42], ['Red Sea', 38.5, 20], ['Gulf of Aden', 48, 12.5],
+  ['Persian Gulf', 51.5, 27], ['Arabian Sea', 64, 16], ['Bay of Bengal', 88, 14], ['Central Indian Ocean', 78, -5],
+  ['Mozambique Channel', 41, -18], ['South Indian Ocean', 75, -35], ['Andaman Sea', 95.5, 9], ['South China Sea', 113, 13],
+  ['Java Sea', 110, -5], ['Timor Sea', 125, -10], ['Philippine Sea', 132, 18], ['East China Sea', 125, 29],
+  ['Yellow Sea', 122.5, 36], ['Sea of Japan', 135, 40], ['Sea of Okhotsk', 148, 53], ['Northwest Pacific', 160, 38],
+  ['Bering Sea', 178, 58], ['Coral Sea', 155, -18], ['Tasman Sea', 160, -38], ['Central Pacific', -157, 20],
+  ['South Pacific', -140, -20], ['Gulf of Alaska', -140, 52], ['California Coast', -125, 32], ['Eastern Pacific', -100, 8],
+  ['Chilean Coast', -80, -25], ['Cape Horn', -60, -52], ['South Atlantic', -30, -15], ['Gulf of Guinea', 2, 0],
+  ['Cape of Good Hope', 10, -32], ['Central Atlantic', -38, 28], ['West African Coast', -22, 16], ['Caribbean Sea', -75, 15],
+  ['Gulf of Mexico', -90, 25], ['US East Coast', -70, 36], ['Newfoundland Banks', -48, 45], ['Labrador Sea', -56, 59],
+  ['Hudson Bay', -85, 60], ['Denmark Strait', -25, 65], ['Arctic Ocean', 60, 80], ['Southern Ocean', 20, -58],
+  ['Argentine Sea', -55, -40], ['Brazilian Coast', -38, -5]
+];
+
+const Seas = (function () {
+  const RES = 1, X0 = -180, Y0 = -125, NX = 360, NY = 197;
+  // Narrow crossings the grid can't see: [zone A, zone B, controlling point lon/lat, name, opens (year)]
+  const STRAITS = [
+    ['Aegean Sea', 'Black Sea', 29.0, 41.1, 'Bosporus'],
+    ['North Sea', 'Baltic Sea', 12.6, 55.7, 'Danish Straits'],
+    ['Iberian Coast', 'Western Mediterranean', -5.4, 36.1, 'Strait of Gibraltar'],
+    ['Red Sea', 'Gulf of Aden', 43.4, 12.6, 'Bab-el-Mandeb'],
+    ['Persian Gulf', 'Arabian Sea', 56.3, 26.5, 'Strait of Hormuz'],
+    ['Andaman Sea', 'Java Sea', 103.8, 1.3, 'Strait of Malacca'],
+    ['Andaman Sea', 'South China Sea', 103.8, 1.3, 'Strait of Malacca'],
+    ['Eastern Mediterranean', 'Red Sea', 32.4, 30.5, 'Suez Canal', 1869],
+    ['Caribbean Sea', 'Eastern Pacific', -79.6, 9.1, 'Panama Canal', 1914]
+  ];
+  // pairs the coarse grid may join across thin land; only a strait above connects them
+  const NO_TOUCH = [['Eastern Mediterranean', 'Red Sea'], ['Caribbean Sea', 'Eastern Pacific'], ['Gulf of Mexico', 'Eastern Pacific'], ['Black Sea', 'Aegean Sea'], ['Caspian Sea', 'Black Sea'], ['Caspian Sea', 'Persian Gulf'],
+    ['Iberian Coast', 'Western Mediterranean'], ['Andaman Sea', 'Java Sea'], ['Andaman Sea', 'South China Sea']];
+  // open-water joins the coarse grid misses
+  const EXTRA = [['Central Mediterranean', 'Eastern Mediterranean'], ['Western Mediterranean', 'Central Mediterranean']];
+  let built = null;
+
+  function build(map) {
+    if (built && built.map === map) return built;
+    const t0 = performance.now();
+    const cell = new Int16Array(NX * NY).fill(-2);  // -2 land, -1 unassigned water, >=0 zone
+    for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+      const x = X0 + (i + 0.5) * RES, y = Y0 + (j + 0.5) * RES;
+      if (map.landmassAt(x, y) < 0) cell[j * NX + i] = -1;
+    }
+    const zones = SEA_ZONES.map((z, id) => { const [x, y] = GEO.project(z[1], z[2]); return { id, name: z[0], lon: z[1], lat: z[2], x, y, nb: [], coast: [], cells: 0 }; });
+    const idx = (x, y) => { let i = Math.floor((x - X0) / RES), j = Math.floor((y - Y0) / RES); i = (i % NX + NX) % NX; return j < 0 || j >= NY ? -1 : j * NX + i; };
+    // flood fill from every centre at once (the map wraps east-west)
+    let front = [];
+    for (const z of zones) {
+      let k = idx(z.x, z.y);
+      if (k < 0 || cell[k] !== -1) {  // centre on land at this resolution: nudge to the nearest water cell
+        let best = -1, bd = Infinity;
+        for (let dj = -4; dj <= 4; dj++) for (let di = -4; di <= 4; di++) {
+          const kk = idx(z.x + di, z.y + dj); if (kk >= 0 && cell[kk] === -1 && di * di + dj * dj < bd) { bd = di * di + dj * dj; best = kk; }
+        }
+        k = best;
+      }
+      if (k >= 0) { cell[k] = z.id; front.push(k); }
+    }
+    const nbOf = k => { const i = k % NX, j = (k - i) / NX; const out = [j * NX + (i + 1) % NX, j * NX + (i + NX - 1) % NX]; if (j > 0) out.push(k - NX); if (j < NY - 1) out.push(k + NX); return out; };
+    while (front.length) {
+      const next = [];
+      for (const k of front) for (const n of nbOf(k)) if (cell[n] === -1) { cell[n] = cell[k]; next.push(n); }
+      front = next;
+    }
+    // water no centre could reach (inland seas, enclosed bays): nearest centre
+    for (let k = 0; k < cell.length; k++) if (cell[k] === -1) {
+      const x = X0 + (k % NX + 0.5) * RES, y = Y0 + (Math.floor(k / NX) + 0.5) * RES;
+      let best = 0, bd = Infinity;
+      for (const z of zones) { const d = (z.x - x) ** 2 + (z.y - y) ** 2; if (d < bd) { bd = d; best = z.id; } }
+      cell[k] = best;
+    }
+    const byName = {}; zones.forEach(z => { byName[z.name] = z.id; });
+    const blocked = new Set(NO_TOUCH.map(([a, b]) => Math.min(byName[a], byName[b]) + ':' + Math.max(byName[a], byName[b])));
+    const link = (a, b) => { if (a === b || zones[a].nb.includes(b)) return; zones[a].nb.push(b); zones[b].nb.push(a); };
+    for (let k = 0; k < cell.length; k++) {
+      const a = cell[k]; if (a < 0) continue;
+      zones[a].cells++;
+      for (const n of nbOf(k)) { const b = cell[n]; if (b >= 0 && b !== a && !blocked.has(Math.min(a, b) + ':' + Math.max(a, b))) link(a, b); }
+    }
+    for (const [a, b] of EXTRA) link(byName[a], byName[b]);
+    const straits = [];
+    for (const [a, b, lon, lat, name, year] of STRAITS) {
+      const za = byName[a], zb = byName[b]; if (za === undefined || zb === undefined) continue;
+      straits.push({ a: za, b: zb, lon, lat, name, year: year || null, prov: -1 });
+    }
+    // coastal provinces: sample around each province outline for the water cells it touches
+    const provZones = map.provs.map(() => []);
+    for (const p of map.provs) {
+      const cnt = {};
+      const poly = p.poly || [];
+      for (let i = 0; i < poly.length; i++) {
+        const v = poly[i], w = poly[(i + 1) % poly.length];
+        for (const t of [0, 0.25, 0.5, 0.75]) {
+          const x = v.x + (w.x - v.x) * t, y = v.y + (w.y - v.y) * t;
+          if ((x - p.x) ** 2 + (y - p.y) ** 2 > 36 || map.landmassAt(x, y) >= 0) continue;
+          let k = idx(x, y);
+          if (k < 0 || cell[k] < 0) {
+            k = -1;
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const kk = idx(x + dx, y + dy); if (kk >= 0 && cell[kk] >= 0) { k = kk; break; } }
+          }
+          if (k >= 0) cnt[cell[k]] = (cnt[cell[k]] || 0) + 1;
+        }
+      }
+      provZones[p.id] = Object.keys(cnt).map(Number).sort((a, b) => cnt[b] - cnt[a]).slice(0, 3);
+      for (const z of provZones[p.id]) zones[z].coast.push(p.id);
+    }
+    // the province that controls each strait
+    for (const s of straits) {
+      const [sx, sy] = GEO.project(s.lon, s.lat);
+      let best = -1, bd = Infinity;
+      for (const p of map.provs) { if (!provZones[p.id].length) continue; const d = (p.x - sx) ** 2 + (p.y - sy) ** 2; if (d < bd) { bd = d; best = p.id; } }
+      s.prov = best;
+    }
+    // distances between neighbouring zone centres, km
+    for (const z of zones) z.dist = z.nb.map(n => GEO.haversineKm(z.lon, z.lat, zones[n].lon, zones[n].lat));
+    built = { map, cell, zones, straits, provZones, byName, ms: performance.now() - t0 };
+    return built;
+  }
+  const B = () => built || build(Sim.MAP);
+
+  function zoneAt(x, y) { const b = B(); let i = Math.floor((x - X0) / RES), j = Math.floor((y - Y0) / RES); if (j < 0 || j >= NY) return -1; i = (i % NX + NX) % NX; const v = b.cell[j * NX + i]; return v >= 0 ? v : -1; }
+  function zonesOf(pid) { return B().provZones[pid] || []; }
+  function isCoastal(pid) { return zonesOf(pid).length > 0; }
+  function zone(id) { return B().zones[id]; }
+  function all() { return B().zones; }
+  const yearNow = () => typeof Sim !== 'undefined' && Sim.G ? new Date(Sim.dateTime()).getUTCFullYear() : 1936;
+  // a strait or canal is shut to anyone at war with whoever holds its shore
+  function straitOpen(s, tag) {
+    if (s.year && yearNow() < s.year) return false;
+    if (!tag || s.prov < 0 || !Sim.G) return true;
+    const o = Sim.G.owner[s.prov];
+    return !Sim.atWar(tag, o);
+  }
+  function straitBetween(a, b) { return B().straits.find(s => (s.a === a && s.b === b) || (s.a === b && s.b === a)) || null; }
+  // neighbours of a zone for a nation, including straits it may pass
+  function neighbours(z, tag) {
+    const b = B(), out = b.zones[z].nb.map((n, i) => [n, b.zones[z].dist[i]]);
+    for (const s of b.straits) {
+      if (s.a !== z && s.b !== z) continue;
+      const o = s.a === z ? s.b : s.a;
+      if (!straitOpen(s, tag)) continue;
+      if (!out.some(e => e[0] === o)) out.push([o, GEO.haversineKm(b.zones[z].lon, b.zones[z].lat, b.zones[o].lon, b.zones[o].lat)]);
+    }
+    return out;
+  }
+  // cheapest route between zones; avoid(z) returns true for zones that can't be crossed
+  function route(from, to, tag, avoid) {
+    if (from === to) return [];
+    const b = B(), dist = new Map([[from, 0]]), came = new Map(), open = [[0, from]], done = new Set();
+    while (open.length) {
+      let bi = 0; for (let i = 1; i < open.length; i++) if (open[i][0] < open[bi][0]) bi = i;
+      const [d, cur] = open.splice(bi, 1)[0];
+      if (cur === to) break;
+      if (done.has(cur)) continue; done.add(cur);
+      for (const [n, km] of neighbours(cur, tag)) {
+        if (done.has(n) || (avoid && n !== to && avoid(n))) continue;
+        const nd = d + km;
+        if (nd < (dist.has(n) ? dist.get(n) : Infinity)) { dist.set(n, nd); came.set(n, cur); open.push([nd, n]); }
+      }
+    }
+    if (!came.has(to)) return null;
+    const path = [to]; let c = to;
+    while (came.get(c) !== from) { c = came.get(c); path.unshift(c); }
+    return path;
+  }
+  function routeKm(from, path) {
+    let km = 0, cur = from;
+    for (const z of path) { km += GEO.haversineKm(zone(cur).lon, zone(cur).lat, zone(z).lon, zone(z).lat); cur = z; }
+    return km;
+  }
+  return { build, zoneAt, zonesOf, isCoastal, zone, all, neighbours, route, routeKm, straitOpen, straitBetween, get straits() { return B().straits; }, get grid() { return { cell: B().cell, X0, Y0, NX, NY, RES }; } };
+})();
+
+// Navy: ships, fleets, missions, naval battles, sea control, convoys and raiding, transports and
+// naval invasions. State lives in G (G.fleets, G.navBattles, c.navy) so a save stays plain data.
+'use strict';
+const Navy = (function () {
+  const G = () => Sim.G, MAP = () => Sim.MAP;
+  const DAY = 24;
+  // one set of rules; each era renames the roles and slows the ships
+  const ROLES = {
+    battleship: { short: 'BB', atk: 36, torp: 0, asw: 0, aa: 6, air: 0, hp: 110, spd: 42, vis: 1.2, eq: 2500, days: 360, raid: 0.1, search: 1.0 },
+    carrier:    { short: 'CV', atk: 2, torp: 0, asw: 4, aa: 8, air: 30, hp: 70, spd: 50, vis: 1.3, eq: 2200, days: 330, raid: 0.2, search: 2.5 },
+    cruiser:    { short: 'CA', atk: 14, torp: 2, asw: 3, aa: 5, air: 0, hp: 45, spd: 55, vis: 1.0, eq: 900, days: 180, raid: 0.45, search: 1.4 },
+    destroyer:  { short: 'DD', atk: 6, torp: 3, asw: 9, aa: 3, air: 0, hp: 20, spd: 60, vis: 0.8, eq: 350, days: 90, raid: 0.2, search: 1.2 },
+    submarine:  { short: 'SS', atk: 0, torp: 22, asw: 0, aa: 0, air: 0, hp: 14, spd: 30, vis: 0.25, eq: 350, days: 75, raid: 1.0, search: 0.8 },
+    transport:  { short: 'TR', atk: 0, torp: 0, asw: 0, aa: 0, air: 0, hp: 10, spd: 35, vis: 1.0, eq: 150, days: 45, raid: 0, search: 0 }
+  };
+  const ROLE_KEYS = Object.keys(ROLES);
+  const ERA_NAVY = {
+    'ww2-1936': { speed: 1, days: 1, eq: 1, fleet: 'Fleet', names: { battleship: 'Battleship', carrier: 'Aircraft carrier', cruiser: 'Cruiser', destroyer: 'Destroyer flotilla', submarine: 'Submarine flotilla', transport: 'Transport' } },
+    'greatwar-1914': { speed: 0.85, days: 1, eq: 0.8, fleet: 'Fleet', subMul: 0.7, names: { battleship: 'Dreadnought', cruiser: 'Cruiser', destroyer: 'Destroyer flotilla', submarine: 'Submarine flotilla', transport: 'Troopship' } },
+    'napoleonic-1805': { speed: 0.26, days: 0.7, eq: 0.5, fleet: 'Squadron', names: { battleship: 'Ship of the line', cruiser: 'Frigate', destroyer: 'Brig', transport: 'Troopship' } },
+    'medieval-1200': { speed: 0.2, days: 0.45, eq: 0.3, fleet: 'Fleet', names: { battleship: 'Great galley', destroyer: 'Galley', transport: 'Cog' } },
+    'rome-117': { speed: 0.2, days: 0.45, eq: 0.3, fleet: 'Classis', names: { battleship: 'Quinquereme', cruiser: 'Trireme', destroyer: 'Liburna', transport: 'Merchantman' } },
+    'greece-431bc': { speed: 0.2, days: 0.45, eq: 0.3, fleet: 'Fleet', names: { cruiser: 'Trireme', destroyer: 'Penteconter', transport: 'Merchantman' } }
+  };
+  // opening navies: [battleship, carrier, cruiser, destroyer, submarine, transport]
+  const START = {
+    'ww2-1936': { ENG: [15, 6, 20, 18, 6, 30], USA: [15, 4, 18, 20, 10, 24], JAP: [10, 6, 16, 16, 8, 24], FRA: [7, 1, 14, 14, 12, 16], ITA: [4, 0, 14, 12, 14, 16],
+      GER: [3, 0, 6, 6, 8, 10], SOV: [3, 0, 5, 8, 14, 8], HOL: [0, 0, 3, 6, 4, 6], SPA: [1, 0, 4, 6, 4, 6], TUR: [1, 0, 1, 3, 3, 4], SWE: [0, 0, 1, 4, 4, 3],
+      ARG: [2, 0, 3, 6, 2, 4], BRA: [2, 0, 2, 4, 1, 4], CHL: [1, 0, 1, 4, 2, 3], GRE: [0, 0, 1, 4, 2, 3], POL: [0, 0, 0, 2, 3, 2], CHI: [0, 0, 2, 2, 0, 4],
+      AST: [0, 0, 3, 2, 0, 3], CAN: [0, 0, 0, 3, 0, 3], YUG: [0, 0, 0, 2, 2, 2], ROM: [0, 0, 0, 2, 1, 2], NOR: [0, 0, 0, 2, 2, 2], DEN: [0, 0, 0, 1, 1, 1], POR: [0, 0, 0, 3, 2, 2] },
+    'greatwar-1914': { GBR: [22, 0, 20, 22, 8, 30], GER: [15, 0, 12, 16, 8, 12], FRA: [8, 0, 12, 14, 8, 14], RUS: [4, 0, 8, 12, 4, 8], AUH: [4, 0, 6, 8, 2, 6],
+      ITA: [5, 0, 8, 10, 4, 8], USA: [12, 0, 10, 12, 6, 12], JAP: [8, 0, 10, 10, 2, 12], OTT: [1, 0, 2, 4, 0, 4], SPA: [2, 0, 2, 3, 0, 3], BRA: [2, 0, 2, 3, 0, 3],
+      ARG: [2, 0, 2, 3, 0, 3], CHL: [1, 0, 2, 2, 0, 2], NED: [0, 0, 2, 4, 2, 3], GRE: [0, 0, 1, 3, 0, 2], SWE: [0, 0, 1, 3, 2, 2], AST: [0, 0, 2, 2, 0, 2] },
+    'napoleonic-1805': { GBR: [30, 0, 20, 16, 0, 20], FRA: [18, 0, 10, 8, 0, 14], SPA: [14, 0, 6, 5, 0, 8], RUS: [8, 0, 4, 4, 0, 6], DEN: [5, 0, 3, 2, 0, 3],
+      SWE: [4, 0, 3, 3, 0, 3], OTT: [6, 0, 4, 4, 0, 6], HOL: [4, 0, 3, 3, 0, 3], POR: [3, 0, 2, 2, 0, 2], NAP: [1, 0, 1, 2, 0, 2], EIC: [0, 0, 3, 4, 0, 6], ALG: [0, 0, 1, 4, 0, 1] },
+    'medieval-1200': { VEN: [8, 0, 0, 12, 0, 12], GEN: [6, 0, 0, 10, 0, 8], BYZ: [4, 0, 0, 8, 0, 6], SIC: [4, 0, 0, 6, 0, 6], ARA: [2, 0, 0, 5, 0, 4], AYY: [3, 0, 0, 6, 0, 4],
+      DEN: [0, 0, 0, 6, 0, 6], NOR: [0, 0, 0, 6, 0, 5], ENG: [0, 0, 0, 4, 0, 6], FRA: [0, 0, 0, 3, 0, 4], SNG: [4, 0, 0, 8, 0, 6], KAM: [0, 0, 0, 4, 0, 4], SRV: [0, 0, 0, 6, 0, 4],
+      ALM: [0, 0, 0, 5, 0, 4], JER: [0, 0, 0, 2, 0, 2], POR: [0, 0, 0, 2, 0, 2], CAS: [0, 0, 0, 2, 0, 2], GRY: [0, 0, 0, 3, 0, 2], CHO: [0, 0, 0, 5, 0, 3] },
+    'rome-117': { ROM: [8, 0, 16, 16, 0, 14], HAN: [0, 0, 4, 6, 0, 6], BOS: [0, 0, 0, 3, 0, 2], CHO: [0, 0, 0, 4, 0, 3], SAT: [0, 0, 0, 3, 0, 2], AKS: [0, 0, 0, 2, 0, 2], FUN: [0, 0, 0, 3, 0, 2], HIM: [0, 0, 0, 2, 0, 2] },
+    'greece-431bc': { ATH: [0, 0, 30, 8, 0, 12], SPA: [0, 0, 3, 2, 0, 2], CRT: [0, 0, 3, 2, 0, 1], PER: [0, 0, 15, 6, 0, 10], CAR: [0, 0, 12, 6, 0, 8], SYR: [0, 0, 8, 4, 0, 4],
+      MAS: [0, 0, 2, 3, 0, 2], ETR: [0, 0, 3, 3, 0, 2], TAR: [0, 0, 2, 2, 0, 2], BOS: [0, 0, 0, 2, 0, 1], CHU: [0, 0, 0, 4, 0, 3], YUE: [0, 0, 0, 4, 0, 3], QII: [0, 0, 0, 2, 0, 2] }
+  };
+  const MISSIONS = {
+    hold:    { name: 'Hold position', search: 0.04, desc: 'Stays put and only fights when found.' },
+    patrol:  { name: 'Patrol', search: 0.15, desc: 'Watches the zone and engages enemy ships it spots.' },
+    hunt:    { name: 'Search and destroy', search: 0.3, desc: 'Actively hunts enemy fleets in the zone.' },
+    escort:  { name: 'Convoy escort', search: 0.12, desc: 'Protects trade convoys and supply lines passing through.' },
+    raid:    { name: 'Convoy raiding', search: 0.02, desc: 'Sinks enemy convoys in the zone. Submarines excel at it.' },
+    support: { name: 'Invasion support', search: 0.12, desc: 'Covers landings and shells the coast for troops ashore.' },
+    repair:  { name: 'Return to port', search: 0.02, desc: 'Sails to the nearest friendly port to repair.' }
+  };
+  const eraId = () => typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936';
+  const EN = () => ERA_NAVY[eraId()] || ERA_NAVY['ww2-1936'];
+  const roles = () => ROLE_KEYS.filter(r => EN().names[r]);
+  const warRoles = () => roles().filter(r => r !== 'transport');
+  const typeName = r => EN().names[r] || r;
+  const stat = (r, k) => {
+    const v = ROLES[r][k];
+    if (k === 'spd') return v * EN().speed;
+    if (k === 'days') return Math.max(10, Math.round(v * EN().days));
+    if (k === 'eq') return Math.round(v * EN().eq);
+    if (k === 'torp') return v * (EN().subMul || 1);
+    return v;
+  };
+  const mod = (tag, name, ctx) => typeof Tech !== 'undefined' ? Tech.mod(tag, name, ctx || {}) : 0;
+  const infra = (pid, k) => typeof Economy !== 'undefined' && Economy.infra ? Economy.infra(pid, k) : 0;
+  const ORD = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+
+  function nav(c) { return c.navy || (c.navy = { transports: 0, queue: [], seq: 0, sunk: 0, lost: 0, convoysSunk: 0, convoysLost: 0 }); }
+  function fleet(id) { return G().fleets.find(f => f.id === id); }
+  const friendlyTo = (tag, o) => o === tag || Sim.allied(tag, o);
+
+  // ---------- ports ----------
+  function isPort(pid) { return infra(pid, 'port') > 0; }
+  function portsOf(tag, allies) {
+    const g = G(), out = [];
+    for (const p of MAP().provs) if (isPort(p.id) && (allies ? friendlyTo(tag, g.owner[p.id]) : g.owner[p.id] === tag)) out.push(p.id);
+    return out;
+  }
+  // zones with a friendly port: where fleets repair and troops embark
+  function portZones(tag) {
+    const s = new Set();
+    for (const pid of portsOf(tag, true)) for (const z of Seas.zonesOf(pid)) s.add(z);
+    return s;
+  }
+  function homePort(tag) {
+    const g = G(), c = g.countries[tag];
+    const ports = portsOf(tag, false);
+    if (!ports.length) return -1;
+    const cap = c.capital >= 0 ? MAP().provs[c.capital] : null;
+    let best = ports[0], bs = -Infinity;
+    for (const pid of ports) {
+      const p = MAP().provs[pid];
+      const s = infra(pid, 'port') * 2 + infra(pid, 'dock') * 3 + (p.home ? 4 : 0) + (p.core === tag ? 2 : 0) - (cap ? GEO.haversineKm(p.lon, p.lat, cap.lon, cap.lat) / 800 : 0);
+      if (s > bs) { bs = s; best = pid; }
+    }
+    return best;
+  }
+  function homeZone(tag) { const pid = homePort(tag); return pid < 0 ? -1 : Seas.zonesOf(pid)[0]; }
+  function nearestPortZone(tag, from) {
+    const pz = portZones(tag);
+    if (pz.has(from)) return from;
+    let best = -1, bd = Infinity;
+    for (const z of pz) { const r = Seas.route(from, z, tag); if (!r) continue; const km = Seas.routeKm(from, r); if (km < bd) { bd = km; best = z; } }
+    return best;
+  }
+
+  // ---------- setup ----------
+  function setup() {
+    const g = G();
+    g.fleets = []; g.nextFleet = 1; g.navBattles = []; g.nextNB = 1; g.navLog = [];
+    Seas.build(MAP());
+    const table = START[eraId()] || {};
+    for (const c of Object.values(g.countries)) {
+      if (!c.alive) continue;
+      nav(c);
+      const def = COUNTRY_BY_TAG[c.tag];
+      if (!def || def.unclaimed || !portsOf(c.tag, false).length) continue;
+      let n = table[c.tag];
+      if (!n) {
+        // navies nobody listed: a few small ships for seafaring nations
+        const coast = MAP().provs.filter(p => g.owner[p.id] === c.tag && p.city && Seas.isCoastal(p.id)).length;
+        if (!coast || (def.divs || 0) < 3) continue;
+        const d = Math.min(4, Math.round((def.mil || 1) / 4 + coast / 4));
+        n = [0, 0, def.mil >= 8 ? 1 : 0, d, 0, Math.max(1, Math.round(d / 2))];
+      }
+      const [bb, cv, ca, dd, ss, tr] = n;
+      c.navy.transports = tr;
+      // the dockyards that built these ships
+      const hp = homePort(c.tag);
+      if (hp >= 0) Economy.setInfra(hp, 'dock', Math.max(1, Math.min(5, Math.round((bb * 3 + cv * 3 + ca + dd * 0.5 + ss * 0.5) / 12))));
+      const home = homeZone(c.tag);
+      if (home < 0) continue;
+      // a second station on another sea, if the nation has ports there
+      const others = [...new Set(portsOf(c.tag, false).flatMap(pid => Seas.zonesOf(pid)))].filter(z => z !== home);
+      const second = others.length && bb + ca + dd >= 10 ? others.sort((a, b) => Seas.zone(b).coast.filter(pid => g.owner[pid] === c.tag).length - Seas.zone(a).coast.filter(pid => g.owner[pid] === c.tag).length)[0] : -1;
+      const ships = (r, k) => Array.from({ length: k }, () => ({ type: r, str: 1, org: 1 }));
+      const has = r => !!EN().names[r];
+      const main = [], aux = [];
+      const split = (r, k) => { if (!has(r) || !k) return; const a = second >= 0 ? Math.floor(k / 3) : 0; main.push(...ships(r, k - a)); aux.push(...ships(r, a)); };
+      split('battleship', bb); split('carrier', cv); split('cruiser', ca); split('destroyer', dd);
+      if (main.length) newFleet(c.tag, home, main, 'hold');
+      if (aux.length) newFleet(c.tag, second, aux, 'hold');
+      if (has('submarine') && ss) newFleet(c.tag, home, ships('submarine', ss), 'hold', 'Submarine Flotilla');
+    }
+    computeControl();
+  }
+  function newFleet(tag, zone, ships, mission, name) {
+    const g = G(), c = g.countries[tag], n = nav(c);
+    n.seq++;
+    const f = { id: g.nextFleet++, owner: tag, name: name ? ORD(n.seq) + ' ' + name : ORD(n.seq) + ' ' + EN().fleet, zone, path: [], progress: 0, mission: mission || 'hold', area: zone, ships, battle: 0, retreat: false, rate: 0 };
+    g.fleets.push(f);
+    return f;
+  }
+  function removeFleet(f) { const g = G(); g.fleets = g.fleets.filter(x => x !== f); for (const b of g.navBattles) { b.a = b.a.filter(id => id !== f.id); b.b = b.b.filter(id => id !== f.id); } }
+
+  // ---------- fleet stats ----------
+  function fleetSpeed(f) { let s = Infinity; for (const sh of f.ships) s = Math.min(s, stat(sh.type, 'spd')); return (s === Infinity ? 0 : s) * (1 + mod(f.owner, 'navalSpeed')); }
+  function fleetStats(f) {
+    let str = 0, org = 0; const n = f.ships.length;
+    for (const s of f.ships) { str += s.str; org += s.org; }
+    return { str: n ? str / n : 0, org: n ? org / n : 0, n };
+  }
+  // combat value of a fleet, for sea control and AI choices
+  function power(f) {
+    let v = 0;
+    const m = 1 + mod(f.owner, 'naval');
+    for (const s of f.ships) v += (stat(s.type, 'atk') + stat(s.type, 'torp') * 0.7 + stat(s.type, 'air') + stat(s.type, 'asw') * 0.4 + stat(s.type, 'hp') * 0.1) * s.str * (0.5 + 0.5 * s.org);
+    return v * m;
+  }
+  function visibility(f) { let v = 0; for (const s of f.ships) v = Math.max(v, stat(s.type, 'vis')); return v; }
+  function searchOf(f) {
+    let s = 0; for (const sh of f.ships) s = Math.max(s, stat(sh.type, 'search'));
+    let m = f.path.length ? 0.08 : (MISSIONS[f.mission] || MISSIONS.hold).search;
+    // radar on a friendly coast helps find ships in the zone
+    if (Seas.zone(f.zone).coast.some(pid => infra(pid, 'radar') && friendlyTo(f.owner, G().owner[pid]))) m *= 1.5;
+    return m * s;
+  }
+  function comp(f) {
+    const cnt = {};
+    for (const s of f.ships) cnt[s.type] = (cnt[s.type] || 0) + 1;
+    return ROLE_KEYS.filter(r => cnt[r]).map(r => cnt[r] + ' ' + stat(r, 'short')).join(' · ');
+  }
+  function compLong(f) {
+    const cnt = {};
+    for (const s of f.ships) cnt[s.type] = (cnt[s.type] || 0) + 1;
+    return ROLE_KEYS.filter(r => cnt[r]).map(r => ({ type: r, n: cnt[r] }));
+  }
+
+  // ---------- sea control ----------
+  let ctl = {}, ctlHour = -1;
+  function computeControl() {
+    const g = G();
+    ctl = {};
+    for (const f of g.fleets) {
+      const z = f.zone;
+      (ctl[z] || (ctl[z] = {}))[f.owner] = (ctl[z][f.owner] || 0) + power(f);
+    }
+    // naval bombers on patrol count toward control
+    if (typeof Air !== 'undefined') for (const [z, tag, v] of Air.seaPresence()) (ctl[z] || (ctl[z] = {}))[tag] = (ctl[z][tag] || 0) + v;
+    ctlHour = g.hour;
+  }
+  function control(z) { if (G().hour - ctlHour > 6) computeControl(); return ctl[z] || {}; }
+  // share of naval power in a zone on this nation's side; 1 when nobody hostile is there
+  function superiority(tag, z) {
+    const c = control(z);
+    let own = 0, en = 0;
+    for (const t in c) { if (friendlyTo(tag, t)) own += c[t]; else if (Sim.atWar(tag, t)) en += c[t]; }
+    if (en <= 0) return 1;
+    return own / (own + en);
+  }
+  function enemyPower(tag, z) { const c = control(z); let en = 0; for (const t in c) if (Sim.atWar(tag, t)) en += c[t]; return en; }
+  function controller(z) {
+    const c = control(z); let best = null, bv = 0;
+    for (const t in c) if (c[t] > bv) { bv = c[t]; best = t; }
+    return best;
+  }
+
+  // ---------- orders ----------
+  function orderMove(f, z, mission) {
+    if (f.battle) return false;
+    const path = Seas.route(f.zone, z, f.owner);
+    if (!path) return false;
+    f.path = path; f.progress = 0; f.area = z; f.retreat = false;
+    if (mission) f.mission = mission;
+    return true;
+  }
+  function setMission(f, m, z) {
+    if (!MISSIONS[m]) return false;
+    if (m === 'repair') {
+      const pz = nearestPortZone(f.owner, f.zone);
+      if (pz < 0) return false;
+      f.mission = 'repair';
+      if (pz !== f.zone) return orderMove(f, pz, 'repair');
+      f.area = pz; return true;
+    }
+    const target = z === undefined || z < 0 ? (f.path.length ? f.path[f.path.length - 1] : f.zone) : z;
+    if (target !== f.zone && !f.path.length) { if (!orderMove(f, target, m)) return false; }
+    f.mission = m; f.area = target;
+    return true;
+  }
+  function splitFleet(f) {
+    if (f.ships.length < 2 || f.battle) return null;
+    // split by kind: keep capital ships together, hand over half of each type
+    const give = [];
+    const byType = {};
+    f.ships.forEach((s, i) => (byType[s.type] = byType[s.type] || []).push(i));
+    for (const t in byType) { const idx = byType[t]; idx.slice(0, Math.floor(idx.length / 2)).forEach(i => give.push(i)); }
+    if (!give.length) give.push(f.ships.length - 1);
+    const moved = f.ships.filter((_, i) => give.includes(i));
+    f.ships = f.ships.filter((_, i) => !give.includes(i));
+    const b = newFleet(f.owner, f.zone, moved, f.mission);
+    b.area = f.area;
+    return b;
+  }
+  function mergeFleets(list) {
+    if (list.length < 2) return null;
+    const base = list[0];
+    for (const f of list.slice(1)) {
+      if (f.owner !== base.owner || f.zone !== base.zone || f.battle || base.battle) continue;
+      base.ships.push(...f.ships); removeFleet(f);
+    }
+    return base;
+  }
+
+  // ---------- production ----------
+  function docks(tag) { const g = G(); let n = 0; for (const p of MAP().provs) if (g.owner[p.id] === tag) n += infra(p.id, 'dock'); return n; }
+  function canBuild(tag, r) {
+    const c = G().countries[tag];
+    if (!EN().names[r]) return { ok: false, why: 'Not built in this era' };
+    if (!docks(tag)) return { ok: false, why: 'Needs a naval dockyard' };
+    const eq = stat(r, 'eq');
+    if (c.equipment < eq) return { ok: false, why: 'Needs ' + eq + ' ' + (typeof Economy !== 'undefined' ? Economy.goodName('arms').toLowerCase() : 'equipment') };
+    if (nav(c).queue.length >= 8) return { ok: false, why: 'The shipyard queue is full (8)' };
+    return { ok: true, eq };
+  }
+  function build(tag, r) {
+    const chk = canBuild(tag, r);
+    if (!chk.ok) return chk;
+    const c = G().countries[tag];
+    c.equipment -= chk.eq;
+    const days = stat(r, 'days') * Math.max(0.5, 1 + mod(tag, 'shipBuild'));
+    nav(c).queue.push({ type: r, left: days, total: days });
+    return { ok: true, text: typeName(r) + ' laid down.' };
+  }
+  function cancelBuild(tag, i) {
+    const c = G().countries[tag], q = nav(c).queue[i];
+    if (!q) return;
+    nav(c).queue.splice(i, 1);
+    c.equipment += Math.round(stat(q.type, 'eq') * 0.5);
+  }
+  function stepYards(c) {
+    const n = nav(c);
+    if (!n.queue.length) return;
+    const d = docks(c.tag);
+    if (!d) return;
+    // each dockyard level works on one hull; more levels, more hulls at once
+    const lines = Math.max(1, Math.min(n.queue.length, d));
+    const eco = c.eco && c.eco.sat ? 0.4 + 0.6 * c.eco.sat.metal : 1;
+    for (const q of n.queue.slice(0, lines)) q.left -= eco;
+    const done = n.queue.filter(q => q.left <= 0);
+    n.queue = n.queue.filter(q => q.left > 0);
+    for (const q of done) launch(c, q.type);
+  }
+  function launch(c, r) {
+    const g = G();
+    if (r === 'transport') { nav(c).transports++; if (c.tag === g.player) Sim.notify('A new ' + typeName(r).toLowerCase() + ' joined the transport pool.', -1, 'info', false); return; }
+    const home = homeZone(c.tag);
+    if (home < 0) return;
+    // new ships join a fleet waiting at the home port, or form a new one
+    let f = g.fleets.find(x => x.owner === c.tag && x.zone === home && !x.path.length && !x.battle && (r === 'submarine') === x.ships.every(s => s.type === 'submarine') && x.ships.length < 30);
+    const ship = { type: r, str: 1, org: 0.6 };
+    if (f) f.ships.push(ship); else f = newFleet(c.tag, home, [ship], 'hold', r === 'submarine' ? 'Submarine Flotilla' : null);
+    if (c.tag === g.player) Sim.notify('A new ' + typeName(r).toLowerCase() + ' joined the ' + f.name + ' at ' + Seas.zone(home).name + '.', -1, 'info', false);
+  }
+  function upkeep(tag) {
+    let u = 0;
+    for (const f of G().fleets) if (f.owner === tag) for (const s of f.ships) u += stat(s.type, 'eq') / 8000;
+    const c = G().countries[tag];
+    return u + (c && c.navy ? c.navy.transports * 0.02 : 0);
+  }
+
+  // ---------- hourly: movement, spotting and battles ----------
+  function hour() {
+    const g = G();
+    if (!g.fleets) return;
+    for (const f of g.fleets.slice()) {
+      f.rate = 0;
+      if (f.battle || !f.path.length) continue;
+      const next = f.path[0];
+      // a strait that closed under the fleet (a new war) turns it around
+      const st = Seas.straitBetween(f.zone, next);
+      if (st && !Seas.zone(f.zone).nb.includes(next) && !Seas.straitOpen(st, f.owner)) { f.path = []; f.progress = 0; continue; }
+      const km = GEO.haversineKm(Seas.zone(f.zone).lon, Seas.zone(f.zone).lat, Seas.zone(next).lon, Seas.zone(next).lat);
+      f.rate = fleetSpeed(f);
+      f.progress += f.rate;
+      for (const s of f.ships) s.org = Math.max(0.2, s.org - 0.0008);
+      if (f.progress >= km) {
+        f.zone = next; f.path.shift(); f.progress = 0;
+        if (!f.path.length) f.retreat = false;
+      }
+    }
+    // spotting: hostile fleets sharing a zone may find each other
+    const byZone = {};
+    for (const f of g.fleets) if (!f.battle && !f.retreat && !(f.safeUntil > g.hour)) (byZone[f.zone] = byZone[f.zone] || []).push(f);
+    for (const z in byZone) {
+      const list = byZone[z];
+      if (list.length < 2) continue;
+      for (const f of list) {
+        if (f.battle) continue;
+        for (const e of list) {
+          if (e === f || e.battle || f.battle || !Sim.atWar(f.owner, e.owner)) continue;
+          const p = searchOf(f) * visibility(e) * 0.6;
+          if (Sim.rng() < p) startBattle(+z, f, e);
+        }
+      }
+    }
+    for (const b of g.navBattles.slice()) stepBattle(b);
+    if (g.hour % 6 === 0) computeControl();
+  }
+  function startBattle(z, f, e) {
+    const g = G();
+    const b = { id: g.nextNB++, zone: z, sideA: f.owner, sideB: e.owner, a: [], b: [], start: g.hour, sunkA: 0, sunkB: 0 };
+    // everyone at sea there on either side joins
+    for (const x of g.fleets) {
+      if (x.zone !== z || x.battle || x.retreat) continue;
+      if ((x.owner === f.owner || Sim.allied(x.owner, f.owner)) && Sim.atWar(x.owner, e.owner)) { b.a.push(x.id); x.battle = b.id; }
+      else if ((x.owner === e.owner || Sim.allied(x.owner, e.owner)) && Sim.atWar(x.owner, f.owner)) { b.b.push(x.id); x.battle = b.id; }
+    }
+    if (!b.a.length || !b.b.length) { for (const id of b.a.concat(b.b)) { const x = fleet(id); if (x) x.battle = 0; } return; }
+    for (const id of b.a.concat(b.b)) { const x = fleet(id); x.path = []; x.progress = 0; }
+    g.navBattles.push(b);
+    const pl = g.player;
+    if (friendlyTo(pl, f.owner) || friendlyTo(pl, e.owner)) Sim.notify('Naval battle in the ' + Seas.zone(z).name + ' between ' + g.countries[f.owner].name + ' and ' + g.countries[e.owner].name + '.', -1, 'battle', false);
+  }
+  function endBattle(b) {
+    const g = G();
+    g.navBattles = g.navBattles.filter(x => x !== b);
+    for (const id of b.a.concat(b.b)) { const f = fleet(id); if (f && f.battle === b.id) f.battle = 0; }
+  }
+  function fire(list, zone, enemyTag) {
+    let surf = 0, torp = 0, asw = 0, air = 0, aa = 0;
+    for (const f of list) {
+      const m = 1 + mod(f.owner, 'naval');
+      for (const s of f.ships) {
+        const k = s.str * (0.4 + 0.6 * s.org) * m;
+        surf += stat(s.type, 'atk') * k; torp += stat(s.type, 'torp') * k; asw += stat(s.type, 'asw') * k; air += stat(s.type, 'air') * k; aa += stat(s.type, 'aa') * s.str;
+      }
+    }
+    if (typeof Air !== 'undefined' && list.length) air += Air.navalStrike(list[0].owner, zone, enemyTag);
+    return { surf, torp, asw, air, aa };
+  }
+  function hitShips(list, dmgSurf, dmgSub, b, side) {
+    const g = G();
+    // spread damage over ships, bigger and easier-to-see ships draw more fire
+    const surface = [], subs = [];
+    for (const f of list) for (const s of f.ships) (s.type === 'submarine' ? subs : surface).push([f, s]);
+    // fire falls in salvoes on a few ships at a time, so damaged ships do go down
+    const hit = (arr, dmg) => {
+      if (!arr.length || dmg <= 0) return;
+      const w = arr.map(([, s]) => stat(s.type, 'hp') * stat(s.type, 'vis'));
+      const tot = w.reduce((a, v) => a + v, 0);
+      const shots = Math.max(1, Math.min(arr.length, Math.round(dmg / 12)));
+      for (let k = 0; k < shots; k++) {
+        let r = Sim.rng() * tot, i = 0;
+        while (i < w.length - 1 && r > w[i]) { r -= w[i]; i++; }
+        const s = arr[i][1], share = dmg / shots * (0.6 + Sim.rng() * 0.8);
+        s.str -= share / stat(s.type, 'hp');
+        s.org = Math.max(0, s.org - share / stat(s.type, 'hp') * 0.8);
+      }
+      for (const [, s] of arr) s.org = Math.max(0, s.org - 0.02);
+    };
+    hit(surface, dmgSurf); hit(subs, dmgSub);
+    for (const f of list) {
+      const before = f.ships.length;
+      const sunk = f.ships.filter(s => s.str <= 0.02);
+      f.ships = f.ships.filter(s => s.str > 0.02);
+      if (sunk.length) {
+        b['sunk' + side] += sunk.length;
+        nav(g.countries[f.owner]).lost += sunk.length;
+        const pl = g.player;
+        if (f.owner === pl || Sim.allied(f.owner, pl) || Sim.atWar(f.owner, pl)) {
+          const names = sunk.map(s => typeName(s.type).toLowerCase());
+          Sim.notify(g.countries[f.owner].name + ' lost ' + (sunk.length > 1 ? sunk.length + ' ships' : 'a ' + names[0]) + ' of the ' + f.name + ' in the ' + Seas.zone(f.zone).name + '.', -1, f.owner === pl ? 'loss' : Sim.atWar(f.owner, pl) ? 'win' : 'info', false);
+        }
+      }
+      if (!f.ships.length && before) removeFleet(f);
+    }
+  }
+  function stepBattle(b) {
+    const g = G();
+    const A = b.a.map(fleet).filter(f => f && f.battle === b.id && f.ships.length && f.zone === b.zone);
+    const B = b.b.map(fleet).filter(f => f && f.battle === b.id && f.ships.length && f.zone === b.zone);
+    b.a = A.map(f => f.id); b.b = B.map(f => f.id);
+    if (!A.length || !B.length || g.hour - b.start > 36) { endBattle(b); return; }
+    const fa = fire(A, b.zone, b.sideB), fb = fire(B, b.zone, b.sideA);
+    const K = 0.05;
+    // guns and torpedoes hit surface ships; only escorts and aircraft can reach submarines
+    hitShips(B, (fa.surf + fa.torp * 0.8 + fa.air * Math.max(0.3, 1 - fb.aa / 150)) * K, (fa.asw + fa.air * 0.2) * K * 0.8, b, 'B');
+    hitShips(A, (fb.surf + fb.torp * 0.8 + fb.air * Math.max(0.3, 1 - fa.aa / 150)) * K, (fb.asw + fb.air * 0.2) * K * 0.8, b, 'A');
+    // battered fleets break off and run for port
+    for (const f of A.concat(B)) {
+      if (!g.fleets.includes(f)) continue;
+      const st = fleetStats(f);
+      if (st.org < 0.25 || st.str < 0.35) {
+        f.battle = 0; f.retreat = true; f.safeUntil = g.hour + 24;
+        const pz = nearestPortZone(f.owner, f.zone);
+        if (pz >= 0 && pz !== f.zone) { f.path = Seas.route(f.zone, pz, f.owner) || []; f.progress = 0; }
+        if (!f.path.length) f.retreat = false;
+        f.mission = 'repair'; f.area = pz >= 0 ? pz : f.zone;
+      }
+    }
+    for (const s of ['a', 'b']) b[s] = b[s].filter(id => { const f = fleet(id); return f && f.battle === b.id; });
+    if (!b.a.length || !b.b.length) {
+      const pl = g.player;
+      const winA = b.a.length > 0;
+      const winner = winA ? b.sideA : b.sideB, loser = winA ? b.sideB : b.sideA;
+      if (friendlyTo(pl, winner) || friendlyTo(pl, loser)) Sim.notify((friendlyTo(pl, winner) ? 'Victory' : 'Defeat') + ' at sea in the ' + Seas.zone(b.zone).name + ': ' + (b.sunkA + b.sunkB) + ' ships sunk.', -1, friendlyTo(pl, winner) ? 'win' : 'loss', false);
+      nav(g.countries[winner]).sunk += winA ? b.sunkB : b.sunkA;
+      endBattle(b);
+    }
+  }
+
+  // ---------- daily: repair, missions, convoys, production, AI ----------
+  let raidCache = { day: -1, z: {} };
+  function daily() {
+    const g = G();
+    if (!g.fleets) return;
+    computeControl();
+    const pz = {};
+    for (const f of g.fleets) {
+      if (f.battle) continue;
+      if (f.retreat && !f.path.length) f.retreat = false;
+      if (!pz[f.owner]) pz[f.owner] = portZones(f.owner);
+      const inPort = pz[f.owner].has(f.zone) && !f.path.length;
+      const c = g.countries[f.owner];
+      if (inPort && (f.mission === 'hold' || f.mission === 'repair')) {
+        const yard = Seas.zone(f.zone).coast.reduce((m, pid) => friendlyTo(f.owner, g.owner[pid]) ? Math.max(m, infra(pid, 'dock')) : m, 0);
+        for (const s of f.ships) {
+          s.org = Math.min(1, s.org + 0.12);
+          if (s.str < 1) {
+            const need = Math.min(1 - s.str, 0.015 * (1 + yard * 0.6));
+            const eq = need * stat(s.type, 'eq') * 0.5;
+            if (c.equipment >= eq) { c.equipment -= eq; s.str += need; }
+          }
+        }
+        if (f.mission === 'repair' && fleetStats(f).str > 0.95 && fleetStats(f).org > 0.9) f.mission = 'hold';
+      } else for (const s of f.ships) s.org = Math.min(1, s.org + (f.path.length ? 0 : 0.02));
+      // a fleet on a mission away from its area heads back there
+      if (!f.path.length && f.area !== undefined && f.area !== f.zone && f.mission !== 'hold') { const r = Seas.route(f.zone, f.area, f.owner); if (r) { f.path = r; f.progress = 0; } }
+    }
+    raidDaily();
+    for (const c of Object.values(g.countries)) if (c.alive && c.navy) stepYards(c);
+    const day = Math.floor(g.hour / DAY);
+    for (const c of Object.values(g.countries)) {
+      if (!c.alive || c.tag === g.player) continue;
+      if ((day + c.tag.charCodeAt(1)) % 3 === 0) ai(c);
+    }
+    // armies at sea
+    for (const a of g.armies) if (a.sea && a.sea.phase === 'sail') seaLosses(a);
+  }
+
+  // Raiders sink convoys in their zone; escorts there shield convoys and hunt the raiders.
+  function raidersIn(z) {
+    const out = [];
+    for (const f of G().fleets) if (f.zone === z && f.mission === 'raid' && !f.battle && !f.path.length) out.push(f);
+    return out;
+  }
+  function raidPower(f) { let v = 0; for (const s of f.ships) v += stat(s.type, 'raid') * (stat(s.type, 'torp') + stat(s.type, 'atk')) * s.str * (0.5 + 0.5 * s.org); return v * (1 + mod(f.owner, 'raiding')); }
+  function escortPower(tag, z) {
+    let v = 0;
+    for (const f of G().fleets) {
+      if (f.zone !== z || f.battle || !friendlyTo(tag, f.owner)) continue;
+      const m = f.mission === 'escort' ? 1 : f.mission === 'patrol' || f.mission === 'hunt' ? 0.5 : 0.1;
+      for (const s of f.ships) v += (stat(s.type, 'asw') + stat(s.type, 'atk') * 0.2 + stat(s.type, 'air') * 0.5) * s.str * m;
+    }
+    return v * (1 + mod(tag, 'escort'));
+  }
+  function raidDaily() {
+    const g = G();
+    raidCache = { day: Math.floor(g.hour / DAY), z: {} };
+    const zones = new Set();
+    for (const f of g.fleets) if (f.mission === 'raid' && !f.battle && !f.path.length) zones.add(f.zone);
+    if (typeof Air !== 'undefined') for (const [z] of Air.seaPresence()) zones.add(z);
+    for (const z of zones) {
+      const list = raidersIn(z);
+      const by = {};
+      for (const f of list) by[f.owner] = (by[f.owner] || 0) + raidPower(f);
+      if (typeof Air !== 'undefined') for (const [zz, tag, v] of Air.seaPresence()) if (zz === z) by[tag] = (by[tag] || 0) + v * 0.3;
+      raidCache.z[z] = by;
+      // escorts fight back against raiding fleets
+      for (const f of list) {
+        let esc = 0;
+        for (const t of Object.keys(g.countries)) if (g.countries[t].alive && Sim.atWar(t, f.owner)) { esc = Math.max(esc, escortPower(t, z)); }
+        if (esc <= 0) continue;
+        const dmg = esc * 0.03;
+        for (const s of f.ships) { s.str -= dmg / stat(s.type, 'hp') * (0.5 + Sim.rng()) / f.ships.length * 3; s.org = Math.max(0, s.org - 0.05); }
+        const sunk = f.ships.filter(s => s.str <= 0.02).length;
+        f.ships = f.ships.filter(s => s.str > 0.02);
+        if (sunk) {
+          nav(g.countries[f.owner]).lost += sunk;
+          if (f.owner === g.player) Sim.notify('Escorts sank ' + sunk + ' of our raiders in the ' + Seas.zone(z).name + '.', -1, 'loss', false);
+        }
+        if (!f.ships.length) removeFleet(f);
+        else if (fleetStats(f).str < 0.4) setMission(f, 'repair');
+      }
+    }
+  }
+  // share of a convoy lost in one zone to raiders at war with the nation
+  function lossIn(tag, z) {
+    const by = raidCache.z[z];
+    if (!by) return 0;
+    let raid = 0;
+    for (const t in by) if (Sim.atWar(tag, t)) raid += by[t];
+    if (raid <= 0) return 0;
+    const esc = escortPower(tag, z);
+    return Math.min(0.7, raid / (raid + esc * 1.5 + 25)) * Math.max(0.3, 1 + mod(tag, 'convoyLoss'));
+  }
+  // the sea lane a trade deal uses (null when the partners share a land border)
+  const laneCache = new Map();
+  function tradeZone(tag) {
+    const c = G().countries[tag];
+    if (c.capital >= 0 && Seas.isCoastal(c.capital)) return Seas.zonesOf(c.capital)[0];
+    const h = homeZone(tag);
+    if (h >= 0) return h;
+    const p = MAP().provs.find(q => G().owner[q.id] === tag && q.city && Seas.isCoastal(q.id));
+    return p ? Seas.zonesOf(p.id)[0] : -1;
+  }
+  function lane(from, to) {
+    const key = from + '>' + to + ':' + Math.floor(G().hour / (DAY * 10));
+    if (laneCache.has(key)) return laneCache.get(key);
+    let out = null;
+    // overland only when the two capitals share a continent and the nations share a border
+    const ca = G().countries[from].capital, cb = G().countries[to].capital;
+    const land = ca >= 0 && cb >= 0 && MAP().provs[ca].lm === MAP().provs[cb].lm && typeof Diplo !== 'undefined' && Diplo.borders && Diplo.borders(from, to);
+    if (!land) {
+      const a = tradeZone(from), b = tradeZone(to);
+      if (a >= 0 && b >= 0) { const r = Seas.route(a, b, to); out = r ? [a, ...r] : null; }
+    }
+    if (laneCache.size > 4000) laneCache.clear();
+    laneCache.set(key, out);
+    return out;
+  }
+  // share of a deal's goods that arrive; the rest is sunk on the way
+  function convoyFactor(d) {
+    const l = lane(d.from, d.to);
+    if (!l) return 1;
+    let f = 1;
+    for (const z of l) f *= 1 - Math.max(lossIn(d.to, z), lossIn(d.from, z));
+    return f;
+  }
+  function recordConvoy(d, shipped, arrived) {
+    const g = G(), lost = shipped - arrived;
+    d.sunk = lost > 0.01 ? lost : 0;
+    if (lost <= 0.01) return;
+    const l = lane(d.from, d.to) || [];
+    for (const z of l) {
+      const by = raidCache.z[z]; if (!by) continue;
+      for (const t in by) if (Sim.atWar(d.to, t) || Sim.atWar(d.from, t)) { nav(g.countries[t]).convoysSunk += lost / l.length; }
+    }
+    nav(g.countries[d.to]).convoysLost += lost;
+  }
+
+  // ---------- supply over the sea ----------
+  // zones a nation's supply ships can reach from its home ports, and how much gets through
+  let reachCache = {};
+  function seaReach(tag) {
+    const g = G(), key = tag + ':' + Math.floor(g.hour / DAY);
+    if (reachCache[key]) return reachCache[key];
+    if (Object.keys(reachCache).length > 400) reachCache = {};
+    const out = new Map();
+    const start = new Set();
+    for (const p of MAP().provs) if (g.owner[p.id] === tag && p.core === tag && p.home && isPort(p.id)) for (const z of Seas.zonesOf(p.id)) start.add(z);
+    let front = [...start];
+    for (const z of front) out.set(z, 1 - lossIn(tag, z));
+    while (front.length) {
+      const next = [];
+      for (const z of front) for (const [n] of Seas.neighbours(z, tag)) {
+        const q = out.get(z) * (1 - lossIn(tag, n)) * (superiority(tag, n) < 0.3 ? 0 : 0.98);
+        if (q > 0.05 && q > (out.get(n) || 0)) { out.set(n, q); next.push(n); }
+      }
+      front = next;
+    }
+    reachCache[key] = out;
+    return out;
+  }
+  // how well a port feeds armies (0 = cut off); used as a supply source by the land supply model
+  function portSupply(tag, pid) {
+    if (!isPort(pid)) return 0;
+    const g = G(), o = g.owner[pid];
+    if (!friendlyTo(tag, o)) return 0;
+    const r = seaReach(tag);
+    let best = 0;
+    for (const z of Seas.zonesOf(pid)) best = Math.max(best, r.get(z) || 0);
+    return best * (0.7 + 0.1 * infra(pid, 'port')) * (typeof Air !== 'undefined' ? 1 - Air.bombDamage(pid) * 0.5 : 1);
+  }
+
+  // ---------- naval invasions and sea transport ----------
+  function freeTransports(tag) {
+    const c = G().countries[tag];
+    const used = G().armies.filter(a => a.owner === tag && a.sea).reduce((s, a) => s + a.sea.ships, 0);
+    return Math.max(0, nav(c).transports - used);
+  }
+  function planInvasion(a, target) {
+    const g = G(), tag = a.owner;
+    const from = MAP().provs[a.prov], to = MAP().provs[target];
+    if (!to) return { ok: false, why: 'Pick a coastal province.' };
+    if (a.sea) return { ok: false, why: 'This army is already at sea.' };
+    if (a.battle) return { ok: false, why: 'The army is in battle.' };
+    if (!Seas.isCoastal(a.prov)) return { ok: false, why: 'The army must stand in a coastal province to embark.' };
+    if (!friendlyTo(tag, g.owner[a.prov])) return { ok: false, why: 'Troops can only embark on friendly shores.' };
+    if (!Seas.isCoastal(target)) return { ok: false, why: to.name + ' has no coast.' };
+    if (target === a.prov) return { ok: false, why: 'The army is already there.' };
+    const o = g.owner[target];
+    const hostile = Sim.atWar(tag, o) || !!(COUNTRY_BY_TAG[o] && COUNTRY_BY_TAG[o].unclaimed);
+    if (!hostile && !friendlyTo(tag, o)) return { ok: false, why: 'You need to be at war with ' + g.countries[o].name + ' or allied to land there.' };
+    const need = a.units.length;
+    if (freeTransports(tag) < need) return { ok: false, why: 'Needs ' + need + ' ' + typeName('transport').toLowerCase() + (need > 1 ? 's' : '') + '; ' + freeTransports(tag) + ' free.' };
+    // the best pair of zones: embark where the army stands, land where the target touches the sea
+    let best = null;
+    for (const za of Seas.zonesOf(a.prov)) for (const zb of Seas.zonesOf(target)) {
+      const r = za === zb ? [] : Seas.route(za, zb, tag, z => superiority(tag, z) < 0.2);
+      if (!r) continue;
+      const km = Seas.routeKm(za, r) + 150;
+      if (!best || km < best.km) best = { za, zb, route: r, km };
+    }
+    if (!best) return { ok: false, why: 'No open sea route: enemy fleets or a closed strait block the way.' };
+    const port = infra(a.prov, 'port');
+    const prep = Math.round(DAY * (hostile ? 12 : 2) * (port ? 0.6 : 1) * Math.max(0.3, 1 + mod(tag, 'invasionPrep')));
+    const sail = Math.max(12, Math.round(best.km / stat('transport', 'spd')));
+    return { ok: true, hostile, prep, sail, need, from: best.za, zone: best.zb, route: best.route, km: best.km, sup: superiority(tag, best.zb) };
+  }
+  function invade(a, target) {
+    const plan = planInvasion(a, target);
+    if (!plan.ok) return plan;
+    if (a.battle) return { ok: false, why: 'The army is in battle.' };
+    a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1;
+    a.sea = { target, hostile: plan.hostile, phase: 'prep', t: 0, prep: plan.prep, sail: plan.sail, ships: plan.need, from: plan.from, zone: plan.zone, route: plan.route, origin: a.prov, wait: 0 };
+    return { ok: true, plan, text: (plan.hostile ? 'Invasion of ' : 'Sea transport to ') + MAP().provs[target].name + ' is being prepared: ' + Math.ceil(plan.prep / DAY) + ' days to plan, then about ' + Math.ceil(plan.sail / DAY) + ' at sea.' };
+  }
+  function cancelInvasion(a) {
+    if (!a.sea) return;
+    if (a.sea.phase === 'prep') { a.sea = null; return; }
+    // turn back to the port they left, or the nearest friendly coast
+    a.sea.phase = 'return'; a.sea.t = 0;
+  }
+  function progress(a) {
+    const s = a.sea; if (!s) return 0;
+    const total = s.prep + s.sail;
+    if (s.phase === 'prep') return 0.9 * s.t / total;
+    if (s.phase === 'sail') return 0.9 * (s.prep + s.t) / total;
+    return 0.95;
+  }
+  function phaseText(a) {
+    const s = a.sea; if (!s) return '';
+    const to = MAP().provs[s.target].name;
+    if (s.phase === 'prep') return (s.hostile ? 'Planning the invasion of ' : 'Embarking for ') + to + ' · ' + Math.ceil((s.prep - s.t) / DAY) + ' days';
+    if (s.phase === 'sail') return 'At sea to ' + to + ' · ' + Math.ceil((s.sail - s.t) / DAY) + ' days';
+    if (s.phase === 'wait') return 'Waiting off ' + to + ' for naval superiority (' + Math.round(superiority(a.owner, s.zone) * 100) + '%, needs 40%)';
+    if (s.phase === 'return') return 'Returning to port';
+    return '';
+  }
+  function seaLosses(a) {
+    // transports crossing waters the enemy controls lose men
+    let risk = 0;
+    for (const z of [a.sea.from, ...a.sea.route]) { const s = superiority(a.owner, z); if (s < 0.5) risk += (0.5 - s) * 0.1; risk += lossIn(a.owner, z) * 0.05; }
+    if (risk <= 0) return;
+    for (const u of a.units) u.str = Math.max(0.05, u.str - risk * (0.5 + Sim.rng()));
+    if (a.owner === G().player && risk > 0.02) Sim.notify('Our transports to ' + MAP().provs[a.sea.target].name + ' are under attack at sea.', a.sea.target, 'loss', false);
+  }
+  // called every hour for an army with a.sea; returns true when the army should skip its land movement
+  function stepArmy(a) {
+    const g = G(), s = a.sea;
+    if (!s) return false;
+    if (s.phase === 'prep') {
+      if (a.battle || a.path.length) { a.sea = null; return false; }
+      if (!friendlyTo(a.owner, g.owner[a.prov])) { a.sea = null; return false; }
+      s.t++;
+      if (s.t >= s.prep) { s.phase = 'sail'; s.t = 0; if (a.owner === g.player) Sim.notify(a.name + ' has set sail for ' + MAP().provs[s.target].name + '.', s.target, 'info', false); }
+      return false;
+    }
+    if (s.phase === 'sail') { s.t++; if (s.t >= s.sail) s.phase = 'wait'; else return true; }
+    if (s.phase === 'return') {
+      s.t++;
+      if (s.t < Math.max(12, s.sail / 2)) return true;
+      const back = friendlyTo(a.owner, g.owner[s.origin]) ? s.origin : MAP().provs.filter(p => g.owner[p.id] === a.owner && Seas.isCoastal(p.id)).sort((x, y) => Sim.distKm(s.origin, x.id) - Sim.distKm(s.origin, y.id))[0]?.id;
+      a.sea = null;
+      if (back === undefined) { Sim.notify(g.countries[a.owner].name + ' ' + a.name + ' was lost at sea.', -1, 'loss', false); Sim.removeArmy(a); return true; }
+      a.prov = back; a.path = []; a.progress = 0;
+      return true;
+    }
+    // landing
+    const o = g.owner[s.target];
+    const hostile = Sim.atWar(a.owner, o) || !!(COUNTRY_BY_TAG[o] && COUNTRY_BY_TAG[o].unclaimed);
+    if (!hostile && !friendlyTo(a.owner, o)) { cancelInvasion(a); return true; }
+    if (hostile && superiority(a.owner, s.zone) < 0.4) {
+      s.wait++;
+      if (s.wait > DAY * 15) { cancelInvasion(a); if (a.owner === g.player) Sim.notify('The landing at ' + MAP().provs[s.target].name + ' was called off: the enemy holds the sea.', s.target, 'loss', false); }
+      return true;
+    }
+    const target = s.target;
+    a.sea = null;
+    const defenders = hostile ? Sim.hostilesAt(a.owner, target) : [];
+    if (defenders.length) {
+      a.landing = true;
+      a.target = target; a.order = 'move';
+      a.path = [target]; a.progress = Math.max(0, Sim.distKm(a.prov, target) - 0.01);
+      Sim.startBattle(a, target);
+      if (a.owner === g.player || defenders.some(d => d.owner === g.player)) Sim.notify('Troops are storming the beaches at ' + MAP().provs[target].name + '.', target, 'battle', false);
+    } else {
+      a.prov = target; a.path = []; a.progress = 0; a.order = 'hold'; a.entrench = 0;
+      for (const u of a.units) u.org = Math.max(0.2, u.org * 0.7);
+      if (hostile) Sim.capture(target, a.owner);
+      if (a.owner === g.player) Sim.notify(a.name + (hostile ? ' landed unopposed at ' : ' came ashore at ') + MAP().provs[target].name + '.', target, hostile ? 'win' : 'info', false);
+    }
+    return true;
+  }
+  // naval guns off the coast help friendly troops in a coastal battle
+  function shoreSupport(tag, pid) {
+    let v = 0;
+    for (const z of Seas.zonesOf(pid)) for (const f of G().fleets) {
+      if (f.zone !== z || f.battle || f.path.length || f.mission !== 'support' || !friendlyTo(tag, f.owner)) continue;
+      for (const s of f.ships) v += stat(s.type, 'atk') * s.str;
+    }
+    return Math.min(0.3, v / 250);
+  }
+
+  // ---------- AI ----------
+  function ai(c) {
+    const g = G(), tag = c.tag;
+    const mine = g.fleets.filter(f => f.owner === tag);
+    const war = Sim.isAtWar(tag);
+    const home = homeZone(tag);
+    // build: keep a navy in proportion to coast and industry
+    if (docks(tag) && c.eco && c.eco.gold > 50) {
+      const want = Math.round((COUNTRY_BY_TAG[tag]?.mil || 1) * 1.2 + (war ? 4 : 0));
+      const have = mine.reduce((s, f) => s + f.ships.length, 0) + nav(c).queue.length;
+      if (have < want && nav(c).queue.length < 3) {
+        const r = roles();
+        const pick = war && r.includes('submarine') && Sim.rng() < 0.4 ? 'submarine' : r.includes('destroyer') && Sim.rng() < 0.5 ? 'destroyer' : r.includes('cruiser') ? 'cruiser' : r[0];
+        if (c.equipment > stat(pick, 'eq') * 3) build(tag, pick);
+      }
+      if (war && nav(c).transports < 6 && nav(c).queue.length < 3 && c.equipment > 600) build(tag, 'transport');
+    }
+    if (!mine.length || home < 0) return;
+    const enemies = [...Sim.enemiesOf(tag)];
+    for (const f of mine) {
+      if (f.battle || f.retreat) continue;
+      const st = fleetStats(f);
+      if (st.str < 0.5 || st.org < 0.3) { if (f.mission !== 'repair') setMission(f, 'repair'); continue; }
+      if (f.mission === 'repair') continue;
+      if (!war) { if (f.mission !== 'hold' || f.zone !== home) { if (f.zone !== home) orderMove(f, home, 'hold'); else f.mission = 'hold'; } continue; }
+      const subs = f.ships.every(s => s.type === 'submarine');
+      // targets: enemy home waters within reach
+      const targets = [];
+      for (const e of enemies) { const z = tradeZone(e); if (z >= 0) targets.push(z); }
+      let best = -1, bd = Infinity;
+      for (const z of targets) { const r = Seas.route(f.zone, z, tag); if (!r) continue; const km = Seas.routeKm(f.zone, r); if (km < bd && km < 6000) { bd = km; best = z; } }
+      if (subs) { if (best >= 0) { if (f.area !== best || f.mission !== 'raid') setMission(f, 'raid', best); } else if (f.mission !== 'patrol') setMission(f, 'patrol', home); continue; }
+      const mine2 = power(f), there = best >= 0 ? enemyPower(tag, best) : Infinity;
+      if (best >= 0 && mine2 > there * 1.3) { if (f.area !== best || f.mission !== 'hunt') setMission(f, 'hunt', best); }
+      else if (f.mission !== 'patrol' || f.area !== home) setMission(f, 'patrol', home);
+    }
+    if (war) aiInvade(c);
+  }
+  function aiInvade(c) {
+    const g = G(), tag = c.tag;
+    const day = Math.floor(g.hour / DAY);
+    if ((day + tag.charCodeAt(0)) % 15 !== 0) return;
+    if (g.armies.some(a => a.owner === tag && a.sea)) return;
+    if (freeTransports(tag) < 2) return;
+    // only when some enemy can't be reached over land
+    const enemies = [...Sim.enemiesOf(tag)];
+    const armies = g.armies.filter(a => a.owner === tag && !a.battle && !a.path.length && !a.sea && a.units.length >= 2 && a.units.length <= freeTransports(tag) && Seas.isCoastal(a.prov) && g.owner[a.prov] === tag);
+    if (!armies.length) return;
+    let best = null;
+    for (const p of MAP().provs) {
+      const o = g.owner[p.id];
+      if (!enemies.includes(o) || !Seas.isCoastal(p.id)) continue;
+      const def = Sim.hostilesAt(tag, p.id).reduce((s, h) => s + h.units.length, 0);
+      for (const a of armies) {
+        const km = GEO.haversineKm(MAP().provs[a.prov].lon, MAP().provs[a.prov].lat, p.lon, p.lat);
+        if (km > 2500) continue;
+        const score = (a.units.length - def * 1.5) * 10 - km / 200 + (p.city ? 5 : 0) + (p.capital ? 10 : 0);
+        if (score > 5 && (!best || score > best.score)) best = { a, p: p.id, score };
+      }
+    }
+    if (!best) return;
+    const plan = planInvasion(best.a, best.p);
+    if (!plan.ok || plan.sup < 0.5) return;
+    invade(best.a, best.p);
+    // send the strongest fleet to cover it
+    const cover = g.fleets.filter(f => f.owner === tag && !f.battle && !f.ships.every(s => s.type === 'submarine')).sort((x, y) => power(y) - power(x))[0];
+    if (cover) setMission(cover, 'support', plan.zone);
+  }
+
+  // ---------- after capture or capitulation ----------
+  function dropNation(tag) {
+    const g = G();
+    if (!g.fleets) return;
+    // a beaten nation's ships are scuttled
+    for (const f of g.fleets.filter(x => x.owner === tag)) removeFleet(f);
+  }
+
+  return {
+    ROLES, ROLE_KEYS, MISSIONS, ERA_NAVY, roles, warRoles, typeName, stat, setup, hour, daily, fleet, newFleet, removeFleet,
+    fleetSpeed, fleetStats, power, comp, compLong, control, superiority, controller, enemyPower, orderMove, setMission, splitFleet, mergeFleets,
+    canBuild, build, cancelBuild, docks, upkeep, convoyFactor, recordConvoy, lane, lossIn, seaReach, portSupply, portZones, homeZone, isPort,
+    freeTransports, planInvasion, invade, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,
+    raidPowerIn: z => raidCache.z[z] || {}, escortPower
+  };
+})();
+
+// Air: wings of aircraft based at airbases, flying missions over land or sea within their range.
+// Fighters decide air superiority; close support and bombers help battles, strategic bombers
+// wreck industry and ports, naval bombers strike ships and convoys. State: G.wings, G.bomb.
+'use strict';
+const Air = (function () {
+  const G = () => Sim.G, MAP = () => Sim.MAP;
+  const TYPES = {
+    fighter:   { short: 'FTR', air: 30, ground: 2, naval: 2, range: 700, eq: 300, days: 45, aa: 1.0 },
+    cas:       { short: 'CAS', air: 6, ground: 26, naval: 8, range: 500, eq: 350, days: 50, aa: 1.3 },
+    bomber:    { short: 'BMB', air: 4, ground: 12, naval: 5, strat: 20, range: 1200, eq: 450, days: 60, aa: 1.2 },
+    navbomber: { short: 'NAV', air: 5, ground: 6, naval: 28, range: 1000, eq: 400, days: 55, aa: 1.3 }
+  };
+  const TYPE_KEYS = Object.keys(TYPES);
+  const ERA_AIR = {
+    'ww2-1936': { range: 1, names: { fighter: 'Fighters', cas: 'Close air support', bomber: 'Bombers', navbomber: 'Naval bombers' } },
+    'greatwar-1914': { range: 0.4, names: { fighter: 'Scout fighters', bomber: 'Bombers' } }
+  };
+  const MISSIONS = {
+    idle:        { name: 'Stand down', desc: 'Stays at its base and rebuilds.' },
+    superiority: { name: 'Air superiority', desc: 'Fights enemy aircraft over the target area. Wins the sky for battles there.' },
+    cas:         { name: 'Close air support', desc: 'Attacks enemy troops in battles near the target.' },
+    bomb:        { name: 'Strategic bombing', desc: 'Wrecks industry, ports and dockyards in an enemy province.' },
+    naval:       { name: 'Naval strike', desc: 'Attacks enemy ships and convoys in a sea zone.' }
+  };
+  const AREA_KM = 450;  // how far from its target point a mission's effect reaches
+  const eraId = () => typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936';
+  const EA = () => ERA_AIR[eraId()] || null;
+  const available = () => !!EA();
+  const types = () => EA() ? TYPE_KEYS.filter(t => EA().names[t]) : [];
+  const typeName = t => (EA() && EA().names[t]) || t;
+  const range = (t, tag) => TYPES[t].range * (EA() ? EA().range : 1) * (1 + mod(tag, 'airRange'));
+  const mod = (tag, name, ctx) => typeof Tech !== 'undefined' && tag ? Tech.mod(tag, name, ctx || {}) : 0;
+  const infra = (pid, k) => typeof Economy !== 'undefined' && Economy.infra ? Economy.infra(pid, k) : 0;
+  const friendlyTo = (tag, o) => o === tag || Sim.allied(tag, o);
+  const km = (a, b) => GEO.haversineKm(a[0], a[1], b[0], b[1]);
+  const ORD = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+
+  function wing(id) { return G().wings.find(w => w.id === id); }
+  function point(w) {
+    if (w.mission === 'idle' || w.target < 0) { const p = MAP().provs[w.base]; return [p.lon, p.lat]; }
+    if (w.sea) { const z = Seas.zone(w.target); return [z.lon, z.lat]; }
+    const p = MAP().provs[w.target]; return [p.lon, p.lat];
+  }
+  const basePt = w => { const p = MAP().provs[w.base]; return [p.lon, p.lat]; };
+  function inRange(w, pt) { return km(basePt(w), pt) <= range(w.type, w.owner); }
+
+  // ---------- airbases ----------
+  function capacity(pid) { return infra(pid, 'air') * 4; }
+  function basedAt(pid) { return G().wings.filter(w => w.base === pid).length; }
+  function basesOf(tag) {
+    const g = G(), out = [];
+    for (const p of MAP().provs) if (infra(p.id, 'air') && friendlyTo(tag, g.owner[p.id])) out.push(p.id);
+    return out;
+  }
+  function freeBase(tag, near) {
+    const g = G();
+    const list = basesOf(tag).filter(pid => g.owner[pid] === tag && basedAt(pid) < capacity(pid));
+    if (!list.length) return -1;
+    const n = near >= 0 ? MAP().provs[near] : MAP().provs[g.countries[tag].capital];
+    if (!n) return list[0];
+    return list.sort((a, b) => GEO.haversineKm(MAP().provs[a].lon, MAP().provs[a].lat, n.lon, n.lat) - GEO.haversineKm(MAP().provs[b].lon, MAP().provs[b].lat, n.lon, n.lat))[0];
+  }
+
+  // ---------- setup ----------
+  // opening air forces: [fighter, cas, bomber, navbomber]
+  const START = {
+    'ww2-1936': { GER: [4, 2, 3, 0], ENG: [4, 0, 3, 1], FRA: [4, 1, 2, 0], ITA: [3, 1, 3, 0], SOV: [6, 2, 4, 0], USA: [3, 1, 2, 2], JAP: [3, 0, 2, 3],
+      POL: [2, 0, 1, 0], CZE: [2, 0, 1, 0], SPA: [1, 0, 1, 0], CHI: [1, 0, 0, 0], ROM: [1, 0, 0, 0], YUG: [1, 0, 0, 0], TUR: [1, 0, 0, 0], HOL: [1, 0, 0, 0], BEL: [1, 0, 0, 0], SWE: [1, 0, 0, 0], AST: [1, 0, 0, 0], CAN: [1, 0, 0, 0] },
+    'greatwar-1914': { GER: [2, 0, 1, 0], FRA: [2, 0, 1, 0], GBR: [2, 0, 1, 0], RUS: [1, 0, 1, 0], AUH: [1, 0, 0, 0], ITA: [1, 0, 0, 0], USA: [1, 0, 0, 0] }
+  };
+  function setup() {
+    const g = G();
+    g.wings = []; g.nextWing = 1; g.bomb = {};
+    if (!available()) return;
+    const table = START[eraId()] || {};
+    // airbases: the capital and the biggest home cities of nations with an air force
+    for (const c of Object.values(g.countries)) {
+      const d = COUNTRY_BY_TAG[c.tag];
+      if (!c.alive || !d || d.unclaimed || c.capital < 0) continue;
+      const big = !!table[c.tag];
+      if (!big && (eraId() !== 'ww2-1936' || (d.mil || 0) < 3)) continue;
+      Economy.setInfra(c.capital, 'air', big ? 2 : 1);
+      if (big) MAP().provs.filter(p => g.owner[p.id] === c.tag && p.city && p.home && !p.capital).sort((a, b) => b.pop - a.pop).slice(0, 2).forEach(p => Economy.setInfra(p.id, 'air', 1));
+    }
+    for (const tag in table) {
+      const c = g.countries[tag];
+      if (!c || !c.alive) continue;
+      const [f, cas, b, n] = table[tag];
+      const list = [...Array(f).fill('fighter'), ...Array(cas).fill('cas'), ...Array(b).fill('bomber'), ...Array(n).fill('navbomber')].filter(t => types().includes(t));
+      for (const t of list) { const base = freeBase(tag, -1); if (base < 0) break; newWing(tag, t, base); }
+    }
+  }
+  function newWing(tag, type, base) {
+    const g = G(), c = g.countries[tag];
+    c.airSeq = (c.airSeq || 0) + 1;
+    const w = { id: g.nextWing++, owner: tag, type, name: ORD(c.airSeq) + ' ' + ({ fighter: 'Fighter', cas: 'Attack', bomber: 'Bomber', navbomber: 'Naval' })[type] + ' Wing', base, mission: 'idle', target: -1, sea: false, str: 1, org: 1, kills: 0 };
+    g.wings.push(w);
+    return w;
+  }
+  function removeWing(w) { G().wings = G().wings.filter(x => x !== w); }
+
+  // ---------- orders ----------
+  function canFly(w, mission, target, sea) {
+    if (!MISSIONS[mission]) return { ok: false, why: 'Unknown mission' };
+    if (mission === 'idle') return { ok: true };
+    if (target === undefined || target < 0) return { ok: false, why: 'Pick a target' };
+    if (mission === 'naval' && !sea) return { ok: false, why: 'Naval strikes need a sea zone.' };
+    if (mission !== 'naval' && mission !== 'superiority' && sea) return { ok: false, why: 'Pick a land province for this mission.' };
+    if (mission === 'bomb' && !Sim.atWar(w.owner, G().owner[target])) return { ok: false, why: 'Only enemy provinces can be bombed.' };
+    const pt = sea ? [Seas.zone(target).lon, Seas.zone(target).lat] : [MAP().provs[target].lon, MAP().provs[target].lat];
+    const d = km(basePt(w), pt), r = range(w.type, w.owner);
+    if (d > r) return { ok: false, why: 'Out of range: ' + Math.round(d) + ' km, this wing reaches ' + Math.round(r) + ' km. Rebase closer.' };
+    return { ok: true };
+  }
+  function setMission(w, mission, target, sea) {
+    const chk = canFly(w, mission, target, sea);
+    if (!chk.ok) return chk;
+    w.mission = mission; w.target = mission === 'idle' ? -1 : target; w.sea = mission === 'idle' ? false : !!sea;
+    return { ok: true };
+  }
+  function rebase(w, pid) {
+    if (!infra(pid, 'air')) return { ok: false, why: 'No airbase there.' };
+    if (!friendlyTo(w.owner, G().owner[pid])) return { ok: false, why: 'Not a friendly airbase.' };
+    if (basedAt(pid) >= capacity(pid)) return { ok: false, why: 'That airbase is full (' + capacity(pid) + ' wings).' };
+    w.base = pid;
+    if (w.mission !== 'idle' && !inRange(w, point(w))) { w.mission = 'idle'; w.target = -1; }
+    w.org = Math.max(0.3, w.org - 0.2);
+    return { ok: true };
+  }
+
+  // ---------- production ----------
+  function canBuild(tag, t) {
+    const c = G().countries[tag];
+    if (!types().includes(t)) return { ok: false, why: 'Not available in this era' };
+    const eq = TYPES[t].eq;
+    if (c.equipment < eq) return { ok: false, why: 'Needs ' + eq + ' ' + (typeof Economy !== 'undefined' ? Economy.goodName('arms').toLowerCase() : 'equipment') };
+    if (!basesOf(tag).some(pid => G().owner[pid] === tag)) return { ok: false, why: 'Needs an airbase' };
+    if ((c.airQueue || []).length >= 6) return { ok: false, why: 'The aircraft queue is full (6)' };
+    return { ok: true, eq };
+  }
+  function build(tag, t) {
+    const chk = canBuild(tag, t);
+    if (!chk.ok) return chk;
+    const c = G().countries[tag];
+    c.equipment -= chk.eq;
+    (c.airQueue = c.airQueue || []).push({ type: t, left: TYPES[t].days, total: TYPES[t].days });
+    return { ok: true, text: typeName(t) + ' ordered.' };
+  }
+  function cancelBuild(tag, i) {
+    const c = G().countries[tag], q = (c.airQueue || [])[i];
+    if (!q) return;
+    c.airQueue.splice(i, 1);
+    c.equipment += Math.round(TYPES[q.type].eq * 0.5);
+  }
+  function stepQueue(c) {
+    if (!c.airQueue || !c.airQueue.length) return;
+    // aircraft come out of the arsenals: more arsenals, more lines
+    const lines = Math.max(1, Math.min(c.airQueue.length, Math.floor(((c.eco && c.eco.arsenals) || c.mil || 1) / 4)));
+    const f = c.eco && c.eco.sat ? 0.4 + 0.6 * Math.min(c.eco.sat.metal, c.eco.sat.fuel) : 1;
+    for (const q of c.airQueue.slice(0, lines)) q.left -= f;
+    const done = c.airQueue.filter(q => q.left <= 0);
+    c.airQueue = c.airQueue.filter(q => q.left > 0);
+    for (const q of done) {
+      const base = freeBase(c.tag, -1);
+      if (base < 0) { c.airQueue.push({ type: q.type, left: 1, total: q.total }); continue; }   // waits for room at an airbase
+      const w = newWing(c.tag, q.type, base); w.org = 0.6;
+      if (c.tag === G().player) Sim.notify('The ' + w.name + ' (' + typeName(q.type).toLowerCase() + ') is ready at ' + MAP().provs[base].name + '.', base, 'info', false);
+    }
+  }
+  function upkeep(tag) { let u = 0; for (const w of G().wings) if (w.owner === tag) u += TYPES[w.type].eq / 2400; return u; }
+
+  // ---------- air superiority ----------
+  // fighter strength each side puts over a point; radar at home adds to defenders
+  let cache = { hour: -1, m: new Map() };
+  function fightersNear(tag, pt, friendly) {
+    let v = 0;
+    for (const w of G().wings) {
+      if (w.mission !== 'superiority') continue;
+      const mine = friendlyTo(tag, w.owner);
+      if (friendly ? !mine : !Sim.atWar(tag, w.owner)) continue;
+      if (km(point(w), pt) > AREA_KM) continue;
+      v += TYPES[w.type].air * w.str * (0.4 + 0.6 * w.org) * (1 + mod(w.owner, 'air')) * radarBonus(w.owner, pt);
+    }
+    return v;
+  }
+  function radarBonus(tag, pt) {
+    const g = G();
+    for (const p of MAP().provs) if (infra(p.id, 'radar') && friendlyTo(tag, g.owner[p.id]) && GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) < 600) return 1.3;
+    return 1;
+  }
+  // 0..1: this side's share of the sky over a point (0.5 when the sky is empty)
+  function superiority(tag, pt) {
+    const key = tag + ':' + Math.round(pt[0] * 2) + ':' + Math.round(pt[1] * 2);
+    const g = G();
+    if (cache.hour !== g.hour) cache = { hour: g.hour, m: new Map() };
+    if (cache.m.has(key)) return cache.m.get(key);
+    const own = fightersNear(tag, pt, true), en = fightersNear(tag, pt, false);
+    const s = own + en <= 0 ? 0.5 : own / (own + en);
+    cache.m.set(key, s);
+    return s;
+  }
+  function provPt(pid) { const p = MAP().provs[pid]; return [p.lon, p.lat]; }
+  // ground support near a battle
+  function casNear(tag, pid) {
+    const pt = provPt(pid);
+    let v = 0;
+    for (const w of G().wings) {
+      if (w.mission !== 'cas' || !friendlyTo(tag, w.owner) || w.sea) continue;
+      if (km(point(w), pt) > AREA_KM) continue;
+      v += TYPES[w.type].ground * w.str * (0.4 + 0.6 * w.org) * (1 + mod(w.owner, 'air'));
+    }
+    return v;
+  }
+  // multiplier on a side's combat power in a land battle, and the lines shown in the battle view
+  function battleBonus(tag, pid) {
+    if (!available() || !G().wings.length) return { mul: 1, sup: 0.5, cas: 0 };
+    const sup = superiority(tag, provPt(pid));
+    const cas = casNear(tag, pid);
+    const supB = (sup - 0.5) * 0.3;                                 // up to ±15% for owning the sky
+    const casB = Math.min(0.35, cas / (cas + 120) * 0.6) * (0.3 + 0.7 * sup);  // attack planes need cover
+    return { mul: 1 + supB + casB, sup, cas: casB, supB };
+  }
+
+  // ---------- sea presence and strikes ----------
+  // [zone, tag, power] for naval bombers watching a zone (feeds sea control and convoy raiding)
+  function seaPresence() {
+    const out = [];
+    const g = G();
+    if (!g.wings) return out;
+    for (const w of g.wings) if (w.mission === 'naval' && w.sea) out.push([w.target, w.owner, TYPES[w.type].naval * w.str * 0.5]);
+    return out;
+  }
+  // hourly strike power of a nation's aircraft on a zone where its fleet is fighting enemyTag
+  function navalStrike(tag, zone, enemyTag) {
+    let v = 0;
+    for (const w of G().wings) if (w.mission === 'naval' && w.sea && w.target === zone && friendlyTo(tag, w.owner)) v += TYPES[w.type].naval * w.str * (0.4 + 0.6 * w.org) * 0.5;
+    return v;
+  }
+
+  // ---------- damage from bombing ----------
+  function bombDamage(pid) { const b = G().bomb; return (b && b[pid]) || 0; }
+
+  // ---------- daily: air battles, strikes, bombing, recovery, AI ----------
+  function daily() {
+    const g = G();
+    if (!g.wings) return;
+    for (const pid in g.bomb) { g.bomb[pid] = Math.max(0, g.bomb[pid] - 0.01); if (!g.bomb[pid]) delete g.bomb[pid]; }
+    if (!available()) return;
+    cache = { hour: -1, m: new Map() };
+    for (const w of g.wings.slice()) {
+      if (!g.wings.includes(w)) continue;
+      // a base lost to the enemy: fly to the nearest free one or lose the wing
+      if (!friendlyTo(w.owner, g.owner[w.base]) || !infra(w.base, 'air')) {
+        const nb = freeBase(w.owner, w.base);
+        if (nb < 0) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' lost its airbase and was disbanded.', -1, 'loss', false); removeWing(w); continue; }
+        w.base = nb; w.mission = 'idle'; w.target = -1;
+      }
+      if (w.mission !== 'idle' && !inRange(w, point(w))) { w.mission = 'idle'; w.target = -1; }
+      if (w.mission === 'idle') { w.org = Math.min(1, w.org + 0.15); repair(w); continue; }
+      w.org = Math.max(0.1, w.org - 0.03);
+      const pt = point(w);
+      // enemy fighters over the area shoot down aircraft; fighters lose less
+      const en = fightersNear(w.owner, pt, false);
+      if (en > 0) {
+        const own = fightersNear(w.owner, pt, true);
+        const loss = 0.06 * en / (en + own + 10) * (w.type === 'fighter' ? 0.7 : 1.4) * TYPES[w.type].aa / (1 + mod(w.owner, 'air'));
+        w.str = Math.max(0, w.str - loss);
+      }
+      // enemy flak from ships under naval attack
+      if (w.mission === 'naval' && w.sea) {
+        let aa = 0, targets = [];
+        for (const f of g.fleets) if (f.zone === w.target && Sim.atWar(w.owner, f.owner)) { targets.push(f); for (const s of f.ships) aa += Navy.stat(s.type, 'aa') * s.str; }
+        if (targets.length) {
+          w.str = Math.max(0, w.str - Math.min(0.08, aa / 800));
+          // daily strike on ships not already in a surface battle (battles take the hourly strikes)
+          const idle = targets.filter(f => !f.battle);
+          let dmg = TYPES[w.type].naval * w.str * (0.4 + 0.6 * w.org) * 0.6;
+          for (const f of idle) {
+            if (dmg <= 0) break;
+            const s = f.ships[Math.floor(Sim.rng() * f.ships.length)];
+            if (!s) continue;
+            // submerged boats are hard to find from the air
+            s.str -= dmg * Math.min(1, Navy.stat(s.type, 'vis')) / Navy.stat(s.type, 'hp'); s.org = Math.max(0, s.org - 0.1);
+            dmg *= 0.5;
+            if (s.str <= 0.02) {
+              f.ships = f.ships.filter(x => x !== s);
+              w.kills++;
+              if (f.owner === g.player || w.owner === g.player) Sim.notify((w.owner === g.player ? 'Our aircraft sank' : 'Enemy aircraft sank') + ' a ' + Navy.typeName(s.type).toLowerCase() + ' in the ' + Seas.zone(f.zone).name + '.', -1, w.owner === g.player ? 'win' : 'loss', false);
+              if (!f.ships.length) Navy.removeFleet(f);
+            }
+          }
+        }
+      }
+      if (w.mission === 'bomb' && !w.sea && Sim.atWar(w.owner, g.owner[w.target])) {
+        const sup = superiority(w.owner, pt);
+        const hit = (TYPES[w.type].strat || TYPES[w.type].ground * 0.3) * w.str * (0.4 + 0.6 * w.org) * (0.3 + 0.7 * sup) / 1000;
+        g.bomb[w.target] = Math.min(0.75, (g.bomb[w.target] || 0) + hit);
+      }
+      if (w.str < 0.05) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' was shot out of the sky.', -1, 'loss', false); removeWing(w); continue; }
+      if (w.str < 0.35) { w.mission = 'idle'; w.target = -1; }
+    }
+    for (const c of Object.values(g.countries)) if (c.alive) stepQueue(c);
+    const day = Math.floor(g.hour / 24);
+    for (const c of Object.values(g.countries)) if (c.alive && c.tag !== g.player && (day + c.tag.charCodeAt(2)) % 3 === 0) ai(c);
+  }
+  function repair(w) {
+    if (w.str >= 1) return;
+    const c = G().countries[w.owner];
+    const need = Math.min(1 - w.str, 0.05);
+    const eq = need * TYPES[w.type].eq * 0.6;
+    if (c.equipment >= eq) { c.equipment -= eq; w.str += need; }
+  }
+
+  // ---------- AI ----------
+  function ai(c) {
+    const g = G(), tag = c.tag;
+    const mine = g.wings.filter(w => w.owner === tag);
+    const war = Sim.isAtWar(tag);
+    // build a few wings while industry allows
+    if (basesOf(tag).some(pid => g.owner[pid] === tag) && (c.airQueue || []).length < 2) {
+      const want = Math.round((COUNTRY_BY_TAG[tag]?.mil || 0) / 2) + (war ? 2 : 0);
+      if (mine.length + (c.airQueue || []).length < want) {
+        const r = Sim.rng(), ts = types();
+        const t = r < 0.5 ? 'fighter' : r < 0.7 && ts.includes('cas') ? 'cas' : r < 0.9 && ts.includes('bomber') ? 'bomber' : ts.includes('navbomber') ? 'navbomber' : 'fighter';
+        if (ts.includes(t) && c.equipment > TYPES[t].eq * 3) build(tag, t);
+      }
+    }
+    if (!mine.length) return;
+    if (!war) { for (const w of mine) if (w.mission !== 'idle') setMission(w, 'idle'); return; }
+    // the hottest battle of ours, or the most threatened front province
+    let focus = -1, fs = -Infinity;
+    for (const b of g.battles) {
+      const involved = b.atkTag === tag || b.defTag === tag || Sim.allied(b.atkTag, tag) || Sim.allied(b.defTag, tag);
+      if (!involved) continue;
+      const s = b.attackers.length * 3 + (MAP().provs[b.prov].city ? 2 : 0);
+      if (s > fs) { fs = s; focus = b.prov; }
+    }
+    if (focus < 0) {
+      const en = Sim.enemiesOf(tag);
+      for (const p of MAP().provs) if (g.owner[p.id] === tag && p.nb.some(n => en.has(g.owner[n]))) { const s = p.pop / 1e5 + (p.city ? 5 : 0); if (s > fs) { fs = s; focus = p.id; } }
+    }
+    for (const w of mine) {
+      if (w.str < 0.4) { if (w.mission !== 'idle') setMission(w, 'idle'); continue; }
+      if (w.type === 'navbomber') {
+        const zones = new Set(); for (const f of g.fleets) if (Sim.atWar(tag, f.owner)) zones.add(f.zone);
+        let best = -1, bd = Infinity;
+        for (const z of zones) { const zz = Seas.zone(z); const d = km(basePt(w), [zz.lon, zz.lat]); if (d < bd && d <= range(w.type, tag)) { bd = d; best = z; } }
+        if (best >= 0) setMission(w, 'naval', best, true);
+        continue;
+      }
+      if (w.type === 'bomber') {
+        // bomb the richest enemy province in reach
+        let best = -1, bs = 0;
+        for (const p of MAP().provs) {
+          if (!Sim.atWar(tag, g.owner[p.id])) continue;
+          const I = g.ind[p.id]; if (!I) continue;
+          const v = Object.values(I).reduce((s, n) => s + n, 0) + infra(p.id, 'dock') * 2;
+          if (v > bs && km(basePt(w), [p.lon, p.lat]) <= range(w.type, tag)) { bs = v; best = p.id; }
+        }
+        if (best >= 0 && Sim.rng() < 0.6) { setMission(w, 'bomb', best); continue; }
+      }
+      if (focus >= 0) {
+        const m = w.type === 'fighter' ? 'superiority' : 'cas';
+        const r = setMission(w, m, focus);
+        if (!r.ok) {
+          // move closer to the fighting
+          const nb = freeBase(tag, focus);
+          if (nb >= 0 && nb !== w.base) { rebase(w, nb); setMission(w, m, focus); }
+        }
+      }
+    }
+  }
+
+  function dropNation(tag) { const g = G(); if (g.wings) g.wings = g.wings.filter(w => w.owner !== tag); }
+
+  return { TYPES, TYPE_KEYS, MISSIONS, available, types, typeName, range, setup, daily, wing, newWing, removeWing, canFly, setMission, rebase,
+    canBuild, build, cancelBuild, upkeep, superiority, battleBonus, casNear, seaPresence, navalStrike, bombDamage, basesOf, capacity, basedAt, freeBase, point, dropNation, AREA_KM };
 })();
 
 // Troop figures: small low-poly 3D models (soldiers, trucks, tanks, guns, planes), rendered once per nation
@@ -7054,8 +8630,8 @@ const Render = (function () {
   let lmClips = [], lmProvs = [], lmBorders = [], lmCountryBorders = [];
   let fillCache = [], labels = [];
   let provGrid = null;
-  const state = { mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), dirtyOwners: true, frontEdges: null, pendingHint: null };
-  let counterHits = [], battleHits = [];
+  const state = { mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), selFleet: 0, selWing: 0, selZone: -1, dirtyOwners: true, frontEdges: null, pendingHint: null };
+  let counterHits = [], battleHits = [], fleetHits = [], wingHits = [];
   const stripeCache = {};
   let cityOrder = null;
 
@@ -7219,6 +8795,12 @@ const Render = (function () {
   // where an army is right now: along its current leg, including the part of the hour already elapsed
   function armyPos(a) {
     const p = MAP.provs[a.prov];
+    if (a.sea && a.sea.phase !== 'prep') {
+      // afloat: somewhere between the port it left and the beach it is heading for
+      const s = a.sea, q = MAP.provs[s.target];
+      const t = s.phase === 'sail' ? Math.min(0.85, (s.t + (state.hourFrac || 0)) / Math.max(1, s.sail) * 0.85) : s.phase === 'wait' ? 0.85 : Math.max(0, 0.85 - s.t / Math.max(12, s.sail / 2) * 0.85);
+      return [p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t];
+    }
     if (a.path.length) {
       const n = MAP.provs[a.path[0]];
       const prog = a.progress + (a.battle ? 0 : (a.rate || 0) * (state.hourFrac || 0));
@@ -7364,11 +8946,14 @@ const Render = (function () {
     });
 
     if (G && state.mode === 'trade') drawTrade(z, vx0, vy0, vx1, vy1);
+    if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawSeaTint(z);
+    if (G && state.selZone >= 0 && typeof Seas !== 'undefined') drawZoneOutline(z, state.selZone);
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
-    if (G) { drawPaths(z); drawArmies(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+    if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
+    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
   }
 
   // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
@@ -7666,6 +9251,196 @@ const Render = (function () {
     }
   }
 
+  // ---------- the sea: zone control tint, fleets, air wings, invasions ----------
+  let seaTint = null, seaTintAt = -1e9, seaClip = null;
+  function buildSeaTint() {
+    const g = Seas.grid, G = Sim.G;
+    if (!seaTint) { seaTint = document.createElement('canvas'); seaTint.width = g.NX; seaTint.height = g.NY; }
+    const cx = seaTint.getContext('2d'), img = cx.createImageData(g.NX, g.NY), d = img.data;
+    const col = Seas.all().map(z => { const t = Navy.controller(z.id); return t && G.countries[t] ? hexToRgb(G.countries[t].color) : null; });
+    for (let k = 0; k < g.cell.length; k++) {
+      const z = g.cell[k]; if (z < 0) continue;
+      const c = col[z], o = k * 4;
+      // zone edges show as a faint line of lighter cells
+      const i = k % g.NX, edge = (i + 1 < g.NX && g.cell[k + 1] >= 0 && g.cell[k + 1] !== z) || (k + g.NX < g.cell.length && g.cell[k + g.NX] >= 0 && g.cell[k + g.NX] !== z);
+      if (c) { d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = edge ? 190 : 120; }
+      else if (edge) { d[o] = 170; d[o + 1] = 200; d[o + 2] = 220; d[o + 3] = 60; }
+    }
+    cx.putImageData(img, 0, 0);
+    seaTintAt = performance.now();
+  }
+  function drawSeaTint(z) {
+    if (performance.now() - seaTintAt > 1500) buildSeaTint();
+    if (!seaClip) { seaClip = new Path2D(); seaClip.rect(WORLD.x0, WORLD.y0, WORLD.x1 - WORLD.x0, WORLD.y1 - WORLD.y0); seaClip.addPath(coastPath); }
+    const g = Seas.grid;
+    ctx.save(); ctx.clip(seaClip, 'evenodd');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(seaTint, g.X0, g.Y0, g.NX * g.RES, g.NY * g.RES);
+    ctx.restore();
+  }
+  function drawZoneOutline(z, id) {
+    const g = Seas.grid;
+    ctx.save(); ctx.clip(seaClip || (seaClip = (() => { const p = new Path2D(); p.rect(WORLD.x0, WORLD.y0, WORLD.x1 - WORLD.x0, WORLD.y1 - WORLD.y0); p.addPath(coastPath); return p; })()), 'evenodd');
+    ctx.fillStyle = 'rgba(255,236,170,0.16)';
+    ctx.beginPath();
+    for (let k = 0; k < g.cell.length; k++) if (g.cell[k] === id) ctx.rect(g.X0 + (k % g.NX) * g.RES, g.Y0 + Math.floor(k / g.NX) * g.RES, g.RES, g.RES);
+    ctx.fill();
+    ctx.restore();
+  }
+  function drawZoneLabels(z) {
+    const rel = z / minZoom();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'italic 600 ' + (rel < 1.8 ? 10 : 12) + 'px "Barlow Semi Condensed", sans-serif';
+    for (const zn of Seas.all()) {
+      if (rel < 1.4 && zn.cells < 150) continue;
+      const [sx, sy] = worldToScreen(zn.x, zn.y);
+      if (sx < -80 || sx > W + 80 || sy < -20 || sy > H + 20) continue;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(10,25,35,0.7)'; ctx.strokeText(zn.name, sx, sy + 18);
+      ctx.fillStyle = 'rgba(175,210,230,0.9)'; ctx.fillText(zn.name, sx, sy + 18);
+    }
+  }
+  function zonePt(id) { const zn = Seas.zone(id); return [zn.x, zn.y]; }
+  function fleetPos(f) {
+    const [ax, ay] = zonePt(f.zone);
+    if (!f.path.length) return [ax, ay];
+    let [bx, by] = zonePt(f.path[0]);
+    if (bx - ax > 180) bx -= 360; else if (ax - bx > 180) bx += 360;   // across the date line
+    const za = Seas.zone(f.zone), zb = Seas.zone(f.path[0]);
+    const km = GEO.haversineKm(za.lon, za.lat, zb.lon, zb.lat) || 1;
+    const t = Math.min(1, (f.progress + (f.battle ? 0 : (f.rate || 0) * (state.hourFrac || 0))) / km);
+    return [ax + (bx - ax) * t, ay + (by - ay) * t];
+  }
+  function hull(x, y, w, h, sub) {
+    ctx.beginPath();
+    if (sub) { ctx.ellipse(x + w / 2, y + h * 0.62, w * 0.46, h * 0.22, 0, 0, Math.PI * 2); ctx.rect(x + w * 0.44, y + h * 0.18, w * 0.14, h * 0.3); }
+    else { ctx.moveTo(x, y + h * 0.5); ctx.lineTo(x + w, y + h * 0.5); ctx.lineTo(x + w * 0.84, y + h * 0.85); ctx.lineTo(x + w * 0.12, y + h * 0.85); ctx.closePath(); ctx.rect(x + w * 0.34, y + h * 0.2, w * 0.26, h * 0.3); }
+    ctx.fill();
+  }
+  function drawFleets(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, pl = G.player;
+    fleetHits = [];
+    const rel = z / minZoom();
+    const groups = new Map();
+    for (const f of G.fleets) {
+      const [x, y] = fleetPos(f);
+      if (x < vx0 - 3 || x > vx1 + 3 || y < vy0 - 3 || y > vy1 + 3) continue;
+      if (rel < 1.8 && f.owner !== pl && !Sim.atWar(f.owner, pl) && !Sim.allied(f.owner, pl)) continue;
+      const key = f.zone + '>' + (f.path[0] ?? '') + ':' + f.owner;
+      if (!groups.has(key)) groups.set(key, { x, y, list: [] });
+      groups.get(key).list.push(f);
+    }
+    // groups in the same spot fan out
+    const spots = new Map();
+    const sorted = [...groups.values()].sort((a, b) => (a.list[0].owner === pl) - (b.list[0].owner === pl));
+    for (const g of sorted) {
+      const k = Math.round(g.x * 4) + ':' + Math.round(g.y * 4);
+      const n = spots.get(k) || 0; spots.set(k, n + 1);
+      let [sx, sy] = worldToScreen(g.x, g.y);
+      sx += (n % 3 - 1) * 42 * (n ? 1 : 0); sy += Math.floor(n / 3) * 20 - 6;
+      const f = g.list[0], mine = f.owner === pl, hostile = Sim.atWar(f.owner, pl);
+      const ships = g.list.reduce((s, x) => s + x.ships.length, 0);
+      const subs = g.list.every(x => x.ships.every(s => s.type === 'submarine'));
+      const sel = g.list.some(x => x.id === state.selFleet);
+      const w = 40, h = 16, x = sx - w / 2, y = sy - h / 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 1.5, y + 2, w, h);
+      ctx.fillStyle = mine ? '#1d2a33' : hostile ? '#3a1d1a' : '#20262b'; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = COUNTRY_BY_TAG[f.owner].color; ctx.fillRect(x + 2, y + 2, 17, h - 4);
+      ctx.fillStyle = '#10161a'; hull(x + 3, y + 2, 15, h - 4, subs);
+      ctx.font = '700 11px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e6eef2'; ctx.fillText(String(ships), x + 30, y + h / 2 + 0.5);
+      const busy = g.list.some(x => x.battle);
+      ctx.lineWidth = sel ? 2.2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : busy ? '#ff9a5a' : hostile ? '#c2493d' : mine ? '#7fa6bf' : '#4d5a63';
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      if (mine && g.list.some(x => x.mission !== 'hold')) { ctx.fillStyle = '#9fd0ea'; ctx.fillRect(x + w - 5, y + 2, 3, 3); }
+      fleetHits.push({ x, y, w, h, fleets: g.list });
+    }
+    // the selected fleet's course
+    const sf = state.selFleet && G.fleets.find(x => x.id === state.selFleet);
+    if (sf && sf.path.length) {
+      const pts = [fleetPos(sf), ...sf.path.map(zonePt)].map(p => worldToScreen(p[0], p[1]));
+      ctx.setLineDash([5, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(140,200,235,0.9)';
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // naval battles
+    for (const b of G.navBattles) {
+      const [sx, sy] = worldToScreen(...zonePt(b.zone));
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+      ctx.beginPath(); ctx.arc(sx, sy - 22, 9 + pulse * 2, 0, 7); ctx.fillStyle = 'rgba(190,90,40,0.92)'; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#f0e2b0'; ctx.stroke();
+      ctx.strokeStyle = '#f4ecd0'; ctx.lineWidth = 1.6; ctx.beginPath();
+      for (let i = -1; i <= 1; i += 2) { ctx.moveTo(sx - 5, sy - 22 + i * 2.5); ctx.quadraticCurveTo(sx - 2, sy - 25 + i * 2.5, sx, sy - 22 + i * 2.5); ctx.quadraticCurveTo(sx + 2, sy - 19 + i * 2.5, sx + 5, sy - 22 + i * 2.5); }
+      ctx.stroke();
+    }
+  }
+  function fleetAt(sx, sy) { for (let i = fleetHits.length - 1; i >= 0; i--) { const h = fleetHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.fleets; } return null; }
+  const MISSION_COL = { superiority: '120,180,235', cas: '230,150,70', bomb: '220,90,70', naval: '120,210,200' };
+  function drawWings(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, pl = G.player;
+    wingHits = [];
+    if (!G.wings.length) return;
+    const rel = z / minZoom();
+    // mission lines for the player's wings
+    for (const w of G.wings) {
+      if (w.owner !== pl || w.mission === 'idle' || w.target < 0) continue;
+      const b = MAP.provs[w.base];
+      const t = w.sea ? zonePt(w.target) : [MAP.provs[w.target].x, MAP.provs[w.target].y];
+      const [ax, ay] = worldToScreen(b.x, b.y), [bx, by] = worldToScreen(t[0], t[1]);
+      const col = MISSION_COL[w.mission] || '200,200,200', sel = w.id === state.selWing;
+      ctx.setLineDash([3, 5]); ctx.lineWidth = sel ? 2.5 : 1.5; ctx.strokeStyle = 'rgba(' + col + ',' + (sel ? 0.95 : 0.55) + ')';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2, Math.min(ay, by) - 30, bx, by); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(bx, by, sel ? 7 : 5, 0, 7); ctx.strokeStyle = 'rgba(' + col + ',0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+      if (sel) { const r = Air.range(w.type, w.owner) / 111 * z * 0.9; ctx.beginPath(); ctx.arc(ax, ay, r, 0, 7); ctx.setLineDash([2, 6]); ctx.strokeStyle = 'rgba(' + col + ',0.35)'; ctx.stroke(); ctx.setLineDash([]); }
+    }
+    if (rel < 1.8) return;
+    const groups = new Map();
+    for (const w of G.wings) {
+      const p = MAP.provs[w.base];
+      if (p.x < vx0 - 2 || p.x > vx1 + 2 || p.y < vy0 - 2 || p.y > vy1 + 2) continue;
+      const k = w.base + ':' + w.owner;
+      if (!groups.has(k)) groups.set(k, []); groups.get(k).push(w);
+    }
+    for (const list of groups.values()) {
+      const p = MAP.provs[list[0].base];
+      let [sx, sy] = worldToScreen(p.x, p.y); sx += 26; sy -= 30;
+      const mine = list[0].owner === pl, sel = list.some(w => w.id === state.selWing);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 1, sy - 1, 30, 14);
+      ctx.fillStyle = COUNTRY_BY_TAG[list[0].owner].color; ctx.fillRect(sx, sy, 12, 12);
+      // a small plane
+      ctx.fillStyle = '#10161a'; ctx.beginPath();
+      ctx.moveTo(sx + 6, sy + 1.5); ctx.lineTo(sx + 7, sy + 5); ctx.lineTo(sx + 11, sy + 6.5); ctx.lineTo(sx + 7, sy + 7); ctx.lineTo(sx + 6.6, sy + 9.5); ctx.lineTo(sx + 8, sy + 10.5);
+      ctx.lineTo(sx + 4, sy + 10.5); ctx.lineTo(sx + 5.4, sy + 9.5); ctx.lineTo(sx + 5, sy + 7); ctx.lineTo(sx + 1, sy + 6.5); ctx.lineTo(sx + 5, sy + 5); ctx.closePath(); ctx.fill();
+      ctx.font = '700 10px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e6eef2'; ctx.fillText(String(list.length), sx + 21, sy + 6.5);
+      ctx.lineWidth = sel ? 2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : mine ? '#9fb8c8' : '#4d5a63'; ctx.strokeRect(sx - 0.5, sy - 0.5, 29, 13);
+      wingHits.push({ x: sx - 1, y: sy - 1, w: 30, h: 14, wings: list });
+    }
+  }
+  function wingAt(sx, sy) { for (const h of wingHits) if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.wings; return null; }
+  function drawInvasions(z) {
+    const G = Sim.G, pl = G.player;
+    for (const a of G.armies) {
+      if (!a.sea) continue;
+      if (a.owner !== pl && !Sim.atWar(a.owner, pl) && !Sim.allied(a.owner, pl)) continue;
+      const p = MAP.provs[a.sea.origin ?? a.prov], q = MAP.provs[a.sea.target];
+      const [ax, ay] = worldToScreen(p.x, p.y), [bx, by] = worldToScreen(q.x, q.y);
+      const col = a.owner === pl ? '140,200,235' : Sim.atWar(a.owner, pl) ? '224,90,70' : '160,200,140';
+      ctx.setLineDash([7, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(' + col + ',0.85)';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
+      const ang = Math.atan2(by - ay, bx - ax);
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx - Math.cos(ang - 0.45) * 12, by - Math.sin(ang - 0.45) * 12); ctx.lineTo(bx - Math.cos(ang + 0.45) * 12, by - Math.sin(ang + 0.45) * 12); ctx.closePath();
+      ctx.fillStyle = 'rgba(' + col + ',0.95)'; ctx.fill();
+      // progress pill: planning, sailing, waiting for the sea to clear
+      const pr = Navy.progress(a), mx = (ax + bx) / 2, my = (ay + by) / 2 - 14;
+      const label = (a.sea.phase === 'wait' ? 'Waiting ' : a.sea.hostile ? 'Invasion ' : 'Transport ') + Math.round(pr * 100) + '%';
+      ctx.font = '700 11px "Barlow Semi Condensed", sans-serif';
+      const tw = ctx.measureText(label).width + 12;
+      ctx.fillStyle = 'rgba(16,22,26,0.9)'; ctx.fillRect(mx - tw / 2, my - 9, tw, 18);
+      ctx.fillStyle = 'rgba(' + col + ',0.45)'; ctx.fillRect(mx - tw / 2, my + 6, tw * pr, 3);
+      ctx.strokeStyle = 'rgba(' + col + ',0.9)'; ctx.lineWidth = 1; ctx.strokeRect(mx - tw / 2 + 0.5, my - 8.5, tw - 1, 17);
+      ctx.fillStyle = '#e6eef2'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, mx, my);
+    }
+  }
+
   function setFrontEdges(pairs) {
     if (!pairs || !pairs.size) { state.frontEdges = null; return; }
     const path = new Path2D();
@@ -7675,7 +9450,7 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
 
 // Interface: start screen, top bar, dossier panels, army tray, orders and input.
@@ -7684,7 +9459,7 @@ const UI = (function () {
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let MAP;
-  const sel = { prov: -1, armies: [], battle: 0, tab: 'army' };
+  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1 };
   let pending = null; // {kind, armies}
   let startPick = 'GER';
   const HPS = [0, 3, 8, 18, 36, 72]; // game hours per real second by speed level
@@ -7774,6 +9549,7 @@ const UI = (function () {
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
     $('#mc-trade').onclick = () => setMode(Render.state.mode === 'trade' ? 'political' : 'trade');
+    $('#mc-sea').onclick = () => setMode(Render.state.mode === 'sea' ? 'political' : 'sea');
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
@@ -7803,7 +9579,7 @@ const UI = (function () {
   }
   function setMode(m) {
     Render.state.mode = m; Render.state.dirtyOwners = true;
-    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain'); $('#mc-trade').classList.toggle('active', m === 'trade');
+    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain'); $('#mc-trade').classList.toggle('active', m === 'trade'); $('#mc-sea').classList.toggle('active', m === 'sea');
   }
 
   // ---------- start screen ----------
@@ -7879,7 +9655,8 @@ const UI = (function () {
     Render.state.dirtyOwners = true;
     const cap = MAP.provs[Sim.G.countries[tag].capital];
     Render.flyTo(cap.x, cap.y, 9);
-    sel.armies = []; sel.prov = -1;
+    sel.armies = []; sel.prov = -1; sel.fleet = 0; sel.wing = 0; sel.zone = -1;
+    Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     // paint the player's troops first, then everyone they border; others are painted when they first come into view
     { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
     sel.collapsed = innerWidth <= 820; // small screens start with the map clear
@@ -7939,12 +9716,14 @@ const UI = (function () {
   }
   function selectProvince(id, fly) {
     sel.prov = id; Render.state.selProv = id;
+    if (id >= 0) { sel.zone = -1; Render.state.selZone = -1; }
     if (fly && id >= 0) { const p = MAP.provs[id]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 8)); }
     renderLeft();
   }
   function renderLeft() {
     const el = $('#leftpanel');
     const G = Sim.G;
+    if (G && sel.prov < 0 && sel.zone >= 0) { renderZone(el); return; }
     if (sel.prov < 0 || !G) { el.hidden = true; return; }
     el.hidden = false;
     const p = MAP.provs[sel.prov];
@@ -7953,8 +9732,15 @@ const UI = (function () {
     const indList = Economy.KIND_KEYS.filter(k => I[k]).map(k => esc(Economy.kindName(k)) + (I[k] > 1 ? ' ×' + I[k] : '')).join(', ') || 'None';
     const deps = Economy.GOODS.filter(k => Economy.dep(p.id, k)).map(k => goodDot(k) + esc(Economy.goodName(k))).join(', ') || 'None';
     const res = `<dt>Industry</dt><dd>${indList}</dd><dt>Slots</dt><dd>${Economy.freeSlots(p.id)} free of ${Economy.slots(p)}${Economy.built(p.id) > Economy.slots(p) ? ' (' + Economy.built(p.id) + ' built)' : ''}</dd><dt>Deposits</dt><dd>${deps}</dd>`;
-    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>` : '';
-    const armies = G.armies.filter(a => a.prov === p.id);
+    const INF = Economy.infraKinds().filter(k => Economy.infra(p.id, k));
+    const works = `<dt>Military</dt><dd>${INF.map(k => esc(Economy.kindName(k)) + (Economy.INFRA[k].max > 1 ? ' ' + Economy.infra(p.id, k) : '')).join(', ') || 'None'}</dd>`
+      + (Seas.isCoastal(p.id) ? `<dt>Coast</dt><dd>${Seas.zonesOf(p.id).map(z => `<a href="#" class="lnk" data-zone="${z}">${esc(Seas.zone(z).name)}</a>`).join(', ')}</dd>` : '')
+      + (Air.bombDamage(p.id) > 0.01 ? `<dt>Bomb damage</dt><dd class="bad">${pct(Air.bombDamage(p.id))} of output lost</dd>` : '');
+    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}"><span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
+    const wingsHere = G.wings.filter(w => w.base === p.id);
+    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>` : '';
+    const armies = G.armies.filter(a => a.prov === p.id && !(a.sea && a.sea.phase !== 'prep'));
     const armyRows = armies.map(a => {
       const comp = compStr(a);
       return `<div class="row click" data-army="${a.id}">${flagSVG(a.owner)}<div class="grow"><div>${esc(G.countries[a.owner].name)} ${esc(a.name)}</div><div class="sub">${comp}</div></div></div>`;
@@ -7969,9 +9755,10 @@ const UI = (function () {
       <div class="owner">${flagSVG(owner)}<div><div>${esc(oc.name)}</div>${relationPill(owner)}</div></div>
       ${p.core !== owner ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
-      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}
+      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}${works}
       <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
       <div class="list">${armyRows}</div>
+      ${wingsHere.length ? '<div class="label" style="margin-top:6px">Air wings based here</div><div class="list">' + wingsHere.map(w => `<div class="row click" data-wing="${w.id}">${flagSVG(w.owner)}<div class="grow"><div>${esc(w.name)}</div><div class="sub">${esc(Air.typeName(w.type))} · ${esc(Air.MISSIONS[w.mission].name)}</div></div></div>`).join('') + '</div>' : ''}
       <hr class="sep">
       <div class="label">Nation</div>
       <dl class="kv"><dt>Government</dt><dd>${oc.gov}</dd><dt>Capital</dt><dd>${oc.capital >= 0 ? esc(MAP.provs[oc.capital].name) : '—'}</dd>
@@ -7980,6 +9767,8 @@ const UI = (function () {
       ${owner !== G.player ? `<div style="display:flex;gap:6px"><button class="btn" id="lp-dip" style="flex:1">Diplomacy</button>${canDeclare ? `<button class="btn danger" id="lp-war" style="flex:1" ${G.countries[G.player].pp < warCost(owner) ? 'disabled' : ''}>Declare war${warCost(owner) ? ' · ' + warCost(owner) + ' PP' : ''}</button>` : ''}</div>` : ''}`)) return;
     $('#lp-close').onclick = () => { selectProvince(-1); };
     el.querySelectorAll('[data-army]').forEach(r => r.onclick = () => selectArmies([+r.dataset.army], false));
+    el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
+    el.querySelectorAll('[data-wing]').forEach(r => r.onclick = () => selectWing(+r.dataset.wing));
     el.querySelectorAll('[data-pbuild]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.pbuild, p.id); toast(r.ok ? r.text : r.why, p.id, 'info'); renderLeft(); renderRight(); refreshTop(); });
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
@@ -7988,6 +9777,146 @@ const UI = (function () {
     const cnt = {};
     for (const u of a.units) cnt[u.type] = (cnt[u.type] || 0) + 1;
     return Object.keys(cnt).map(t => cnt[t] + ' ' + UNIT_TYPES[t].name).join(', ');
+  }
+
+  const INFRA_TIP = {
+    port: 'Ships repair here, troops embark faster, and it feeds armies by sea while your navy keeps the route open.',
+    dock: 'Builds warships: each level works on one hull at a time. Also speeds up repairs.',
+    air: 'Bases 4 air wings per level.',
+    hub: 'A supply source inland: armies nearby are supplied as if at home.',
+    fort: 'Defenders here fight 15% better per level.',
+    radar: 'Your fighters within 600 km fight 30% better, and your ships spot enemies off this coast more easily.'
+  };
+  function selectFleet(id) {
+    sel.fleet = id; sel.wing = 0; Render.state.selFleet = id; Render.state.selWing = 0;
+    if (id) { sel.armies = []; Render.state.selArmies = new Set(); sel.tab = 'navy'; sel.collapsed = false; }
+    pending = null; showHint();
+    renderRight(); renderTrays();
+  }
+  function selectWing(id) {
+    sel.wing = id; sel.fleet = 0; Render.state.selWing = id; Render.state.selFleet = 0;
+    if (id) { sel.armies = []; Render.state.selArmies = new Set(); sel.tab = 'navy'; sel.collapsed = false; }
+    pending = null; showHint();
+    renderRight(); renderTrays();
+  }
+  function selectZone(z, fly) {
+    sel.zone = z; Render.state.selZone = z;
+    if (z >= 0) { sel.prov = -1; Render.state.selProv = -1; if (fly) { const zz = Seas.zone(z); Render.flyTo(zz.x, zz.y, Math.max(Render.cam.z, 5)); } }
+    renderLeft();
+  }
+  function renderZone(el) {
+    const G = Sim.G, z = Seas.zone(sel.zone), me = G.player;
+    el.hidden = false;
+    const ctl = Navy.control(z.id), tot = Object.values(ctl).reduce((s, v) => s + v, 0);
+    const ctlRows = Object.entries(ctl).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, v]) => `<div class="row">${flagSVG(t)}<div class="grow"><div>${esc(G.countries[t].name)}</div><div class="bar sup"><i style="width:${Math.round(v / tot * 100)}%"></i></div></div><span class="sub">${pct(v / tot)}</span></div>`).join('');
+    const war = Sim.isAtWar(me);
+    const fleets = G.fleets.filter(f => f.zone === z.id);
+    const straits = Seas.straits.filter(s => s.a === z.id || s.b === z.id);
+    const ports = z.coast.filter(pid => Navy.isPort(pid));
+    const loss = war ? Navy.lossIn(me, z.id) : 0;
+    const invs = G.armies.filter(a => a.sea && a.sea.zone === z.id);
+    if (!setHTML(el, `<button class="close" aria-label="Close" id="lp-close">×</button>
+      <div class="label">Sea zone</div>
+      <h2 class="display" style="font-size:24px;margin:2px 0 6px">${esc(z.name)}</h2>
+      <dl class="kv"><dt>Ports</dt><dd>${ports.length} on ${z.coast.length} coastal provinces</dd>
+      ${war ? `<dt>Your sea control</dt><dd class="${Navy.superiority(me, z.id) < 0.4 ? 'bad' : ''}">${pct(Navy.superiority(me, z.id))}</dd><dt>Convoy losses</dt><dd class="${loss > 0.05 ? 'bad' : ''}">${loss > 0.005 ? pct(loss) + ' of your shipping sunk here' : 'None'}</dd>` : ''}
+      <dt>Borders</dt><dd>${Seas.neighbours(z.id, me).map(([n]) => `<a href="#" class="lnk" data-zone="${n}">${esc(Seas.zone(n).name)}</a>`).join(', ')}</dd></dl>
+      ${straits.map(st => `<div class="note">${esc(st.name)}: held by ${esc(G.countries[G.owner[st.prov]]?.name || 'nobody')}${st.year && new Date(Sim.dateTime()).getUTCFullYear() < st.year ? ', not yet built' : Seas.straitOpen(st, me) ? ', open to you' : ', closed to you'}.</div>`).join('')}
+      <div class="label" style="margin-top:8px">Naval power here</div><div class="list">${ctlRows || '<div class="note">No warships here.</div>'}</div>
+      ${fleets.length ? '<div class="label" style="margin-top:8px">Fleets</div><div class="list">' + fleets.map(f => fleetRow(f)).join('') + '</div>' : ''}
+      ${invs.length ? '<div class="label" style="margin-top:8px">Landings</div><div class="list">' + invs.map(a => `<div class="row">${flagSVG(a.owner)}<div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(Navy.phaseText(a))}</div></div></div>`).join('') + '</div>' : ''}
+      ${sel.fleet && Sim.G.fleets.some(f => f.id === sel.fleet && f.owner === me) ? `<button class="btn" id="lp-sail" style="width:100%;margin-top:8px">Send the selected fleet here</button>` : ''}`)) return;
+    $('#lp-close').onclick = () => selectZone(-1);
+    el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
+    el.querySelectorAll('[data-fleet]').forEach(r => r.onclick = () => selectFleet(+r.dataset.fleet));
+    const sail = $('#lp-sail'); if (sail) sail.onclick = () => sendFleet(sel.zone);
+  }
+  function sendFleet(z) {
+    const f = Navy.fleet(sel.fleet); if (!f || z < 0) return;
+    if (f.battle) { toast('The ' + f.name + ' is in battle and cannot break off.', -1, 'info'); return; }
+    if (z === f.zone && !f.path.length) { f.area = z; toast('The ' + f.name + ' is already in the ' + Seas.zone(z).name + '.', -1, 'info'); return; }
+    if (Navy.orderMove(f, z)) toast('The ' + f.name + ' sails for the ' + Seas.zone(z).name + (f.mission !== 'hold' ? ' to ' + Navy.MISSIONS[f.mission].name.toLowerCase() : '') + '.', -1, 'info');
+    else toast('No sea route to the ' + Seas.zone(z).name + ': a strait may be closed to you.', -1, 'info');
+    renderRight(); renderLeft();
+  }
+  function hullIcon(color, sub) {
+    return `<svg viewBox="0 0 34 22" style="width:34px;height:22px;flex:none"><rect x="0.5" y="0.5" width="33" height="21" rx="2" fill="${color}" stroke="rgba(0,0,0,.6)"/>${sub ? '<ellipse cx="17" cy="14" rx="12" ry="3.5" fill="#10161a"/><rect x="15" y="6" width="4" height="6" fill="#10161a"/>' : '<path d="M4 11 H30 L26 17 H8 Z M13 6 H20 V11 H13 Z" fill="#10161a"/>'}</svg>`;
+  }
+  function planeIcon(color) {
+    return `<svg viewBox="0 0 34 22" style="width:34px;height:22px;flex:none"><rect x="0.5" y="0.5" width="33" height="21" rx="2" fill="${color}" stroke="rgba(0,0,0,.6)"/><path d="M17 3 L18.5 9 L28 11 L18.5 12.5 L18 17 L21 19 H13 L16 17 L15.5 12.5 L6 11 L15.5 9 Z" fill="#10161a"/></svg>`;
+  }
+  function fleetRow(f) {
+    const G = Sim.G, st = Navy.fleetStats(f);
+    const where = f.battle ? '⚔ In battle' : f.path.length ? 'Sailing to ' + Seas.zone(f.path[f.path.length - 1]).name : Seas.zone(f.zone).name;
+    return `<div class="row click ${f.id === sel.fleet ? 'on' : ''}" data-fleet="${f.id}">${hullIcon(COUNTRY_BY_TAG[f.owner].color, f.ships.every(s => s.type === 'submarine'))}<div class="grow"><div>${f.owner !== G.player ? esc(G.countries[f.owner].name) + ' ' : ''}${esc(f.name)}</div>
+      <div class="sub">${esc(Navy.comp(f))} · ${esc(where)} · ${esc(Navy.MISSIONS[f.mission].name)}</div><div class="bar str"><i style="width:${st.str * 100}%"></i></div><div class="bar org"><i style="width:${st.org * 100}%"></i></div></div></div>`;
+  }
+  function wingRow(w) {
+    return `<div class="row click ${w.id === sel.wing ? 'on' : ''}" data-wing="${w.id}">${planeIcon(COUNTRY_BY_TAG[w.owner].color)}<div class="grow"><div>${esc(w.name)}</div>
+      <div class="sub">${esc(Air.typeName(w.type))} · ${esc(MAP.provs[w.base].name)} · ${esc(Air.MISSIONS[w.mission].name)}${w.mission !== 'idle' && w.target >= 0 ? ' over ' + esc(w.sea ? Seas.zone(w.target).name : MAP.provs[w.target].name) : ''}</div><div class="bar str"><i style="width:${w.str * 100}%"></i></div><div class="bar org"><i style="width:${w.org * 100}%"></i></div></div></div>`;
+  }
+  function fleetCard(f) {
+    const G = Sim.G, st = Navy.fleetStats(f), mine = f.owner === G.player;
+    let status = f.battle ? 'In battle' : f.path.length ? 'Sailing to ' + Seas.zone(f.path[f.path.length - 1]).name : 'At sea';
+    if (f.path.length && !f.battle) { const km = Seas.routeKm(f.zone, f.path) - f.progress; status += ' · ~' + Math.max(1, Math.round(km / Math.max(1, Navy.fleetSpeed(f)) / 24)) + ' days'; }
+    const here = G.fleets.filter(x => x !== f && x.owner === G.player && x.zone === f.zone && !x.battle);
+    let html = `<div class="owner">${flagSVG(f.owner)}<div><h2 class="display" style="font-size:21px">${esc(f.name)}</h2><div class="sub label">${esc(G.countries[f.owner].name)}</div></div></div>
+      <dl class="kv"><dt>Location</dt><dd><a href="#" class="lnk" data-zone="${f.zone}">${esc(Seas.zone(f.zone).name)}</a></dd><dt>Status</dt><dd>${esc(status)}</dd>
+      <dt>Mission</dt><dd>${esc(Navy.MISSIONS[f.mission].name)}${f.mission !== 'hold' && f.area >= 0 ? ' in the ' + esc(Seas.zone(f.area).name) : ''}</dd>
+      <dt>Speed</dt><dd>${Math.round(Navy.fleetSpeed(f))} km/h</dd><dt>Power</dt><dd>${Math.round(Navy.power(f))}</dd></dl>
+      ${meter('Strength', st.str, 'str')}${meter('Organisation', st.org, 'org')}
+      <div class="unitgrid" style="margin-top:8px">${Navy.compLong(f).map(x => `<span>${esc(Navy.typeName(x.type))}</span><span>× ${x.n}</span>`).join('')}</div>`;
+    if (!mine) return html + '<p class="note">Foreign fleet.</p>';
+    html += `<div class="label" style="margin-top:8px">Mission</div><div class="orders">${['patrol', 'hunt', 'escort', 'raid', 'support', 'hold'].map(m => `<button class="btn sm ${f.mission === m ? 'active' : ''}" data-fm="${m}" title="${esc(Navy.MISSIONS[m].desc)}">${esc(Navy.MISSIONS[m].name)}</button>`).join('')}</div>
+      <div class="orders" style="margin-top:6px"><button class="btn sm ${pending?.kind === 'fleet' ? 'active' : ''}" data-fo="move" title="Pick a sea zone">Move</button>
+      <button class="btn sm" data-fo="repair" title="${esc(Navy.MISSIONS.repair.desc)}">Return to port</button>
+      <button class="btn sm" data-fo="split" ${f.ships.length > 1 && !f.battle ? '' : 'disabled'}>Split</button>
+      <button class="btn sm" data-fo="merge" ${here.length && !f.battle ? '' : 'disabled'} title="Joins your other fleets in this zone">Merge</button>
+      <button class="btn sm" data-fo="back">All fleets</button></div>
+      <p class="note">The mission is carried out where the fleet is headed. Right-click a sea zone (or pick one with Move) to send it elsewhere.</p>`;
+    return html;
+  }
+  function wingCard(w) {
+    const G = Sim.G, mine = w.owner === G.player;
+    let html = `<div class="owner">${flagSVG(w.owner)}<div><h2 class="display" style="font-size:21px">${esc(w.name)}</h2><div class="sub label">${esc(G.countries[w.owner].name)} · ${esc(Air.typeName(w.type))}</div></div></div>
+      <dl class="kv"><dt>Base</dt><dd>${esc(MAP.provs[w.base].name)}</dd><dt>Mission</dt><dd>${esc(Air.MISSIONS[w.mission].name)}${w.mission !== 'idle' && w.target >= 0 ? ' over ' + esc(w.sea ? Seas.zone(w.target).name : MAP.provs[w.target].name) : ''}</dd>
+      <dt>Range</dt><dd>${Math.round(Air.range(w.type, w.owner))} km</dd>${w.kills ? `<dt>Ships sunk</dt><dd>${w.kills}</dd>` : ''}</dl>
+      ${meter('Strength', w.str, 'str')}${meter('Readiness', w.org, 'org')}`;
+    if (w.mission !== 'idle' && w.target >= 0) { const pt = Air.point(w); html += `<div class="note">Your side holds ${pct(Air.superiority(w.owner, pt))} of the sky there.</div>`; }
+    if (!mine) return html;
+    html += `<div class="label" style="margin-top:8px">Mission · pick a target on the map</div><div class="orders">${['superiority', 'cas', 'bomb', 'naval'].map(m => `<button class="btn sm ${pending?.kind === 'wing' && pending.mission === m ? 'active' : w.mission === m ? 'active' : ''}" data-wm="${m}" title="${esc(Air.MISSIONS[m].desc)}">${esc(Air.MISSIONS[m].name)}</button>`).join('')}</div>
+      <div class="orders" style="margin-top:6px"><button class="btn sm" data-wo="idle">Stand down</button><button class="btn sm ${pending?.kind === 'rebase' ? 'active' : ''}" data-wo="rebase" title="Pick a friendly airbase">Rebase</button><button class="btn sm" data-wo="back">All wings</button></div>`;
+    return html;
+  }
+  function navyPanel() {
+    const G = Sim.G, c = G.countries[G.player], me = G.player;
+    const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
+    if (sel.fleet && !f) sel.fleet = 0;
+    if (f) return fleetCard(f);
+    const w = sel.wing ? Air.wing(sel.wing) : null;
+    if (sel.wing && !w) sel.wing = 0;
+    if (w) return wingCard(w);
+    const nv = Navy.nav(c);
+    const mine = G.fleets.filter(x => x.owner === me);
+    const ships = mine.reduce((s, x) => s + x.ships.length, 0);
+    let html = `<div class="label">Fleets · ${ships} ships</div>`;
+    html += mine.length ? '<div class="list" style="margin-top:6px">' + mine.map(fleetRow).join('') + '</div>' : '<div class="note">You have no warships.</div>';
+    html += `<dl class="kv" style="margin-top:6px"><dt>${esc(Navy.typeName('transport'))}s</dt><dd>${Navy.freeTransports(me)} free of ${nv.transports} · each carries one division</dd>
+      <dt>Enemy ships sunk</dt><dd>${nv.sunk}</dd><dt>Ships lost</dt><dd>${nv.lost}</dd>${nv.convoysLost > 0.5 || nv.convoysSunk > 0.5 ? `<dt>Convoys</dt><dd>${f1(nv.convoysLost)} goods lost, ${f1(nv.convoysSunk)} sunk by us</dd>` : ''}</dl>`;
+    const docks = Navy.docks(me);
+    html += `<hr class="sep"><div class="label">Shipyards · ${docks} dockyard level${docks === 1 ? '' : 's'}</div>`;
+    if (nv.queue.length) html += '<div class="list" style="margin:6px 0">' + nv.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Navy.typeName(q.type))}</div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < Math.max(1, docks) ? Math.ceil(q.left) + ' d' : 'waiting'}</span><button class="btn sm" data-unship="${i}" aria-label="Cancel ship" title="Cancel (half the ${esc(Economy.goodName('arms').toLowerCase())} back)">×</button></div>`).join('') + '</div>';
+    html += `<div class="builds">${Navy.roles().map(r => { const chk = Navy.canBuild(me, r); return `<button class="btn sm" data-ship="${r}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? Navy.stat(r, 'days') + ' days on one dockyard line' : chk.why)}"><span>${esc(Navy.typeName(r))}</span><small>${fmtN(Navy.stat(r, 'eq'))} ${esc(Economy.goodName('arms').toLowerCase())}</small></button>`; }).join('')}</div>`;
+    if (!docks) html += `<div class="note">Build a ${esc(Economy.kindName('dock').toLowerCase())} in a coastal province with a ${esc(Economy.kindName('port').toLowerCase())} to lay down ships.</div>`;
+    if (Air.available()) {
+      const wings = G.wings.filter(x => x.owner === me);
+      html += `<hr class="sep"><div class="label">Air wings · ${wings.length}</div>`;
+      html += wings.length ? '<div class="list" style="margin-top:6px">' + wings.map(wingRow).join('') + '</div>' : '<div class="note">You have no aircraft.</div>';
+      const q = c.airQueue || [];
+      if (q.length) html += '<div class="list" style="margin:6px 0">' + q.map((x, i) => `<div class="row"><div class="grow"><div>${esc(Air.typeName(x.type))}</div><div class="bar prog"><i style="width:${Math.round((1 - x.left / x.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(x.left)} d</span><button class="btn sm" data-unplane="${i}" aria-label="Cancel aircraft">×</button></div>`).join('') + '</div>';
+      html += `<div class="builds">${Air.types().map(t => { const chk = Air.canBuild(me, t); return `<button class="btn sm" data-plane="${t}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? Air.MISSIONS[t === 'fighter' ? 'superiority' : t === 'navbomber' ? 'naval' : t === 'bomber' ? 'bomb' : 'cas'].desc : chk.why)}"><span>${esc(Air.typeName(t))}</span><small>${fmtN(Air.TYPES[t].eq)} ${esc(Economy.goodName('arms').toLowerCase())}</small></button>`; }).join('')}</div>`;
+    } else html += '<hr class="sep"><div class="note">No aircraft fly in this era.</div>';
+    return html;
   }
 
   function warCost(tag) { const G = Sim.G; return G.dip.claims[G.player + '>' + tag] > G.hour ? 0 : DECLARE_COST; }
@@ -8022,7 +9951,7 @@ const UI = (function () {
     // only own armies can be multi-selected
     if (sel.armies.length > 1) sel.armies = sel.armies.filter(id => { const a = Sim.army(id); return a && a.owner === G.player; });
     Render.state.selArmies = new Set(sel.armies);
-    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; }
+    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; sel.fleet = 0; sel.wing = 0; Render.state.selFleet = 0; Render.state.selWing = 0; }
     renderRight(); renderTrays();
   }
   function selectedArmies() { return sel.armies.map(Sim.army).filter(Boolean); }
@@ -8037,14 +9966,15 @@ const UI = (function () {
     const body = $('#rp-body');
     body.hidden = !!sel.collapsed;
     $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
-    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
+    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'navy' ? navyPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
     if (setHTML(body, html)) bindRight();
   }
   function meter(label, v, cls) { return `<div class="meter"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`; }
   const ORDER_TEXT = { hold: 'Holding position', move: 'Moving', attack: 'Offensive', defend: 'Defending front', retreat: 'Retreating', redeploy: 'Strategic redeployment' };
   function orderText(a) {
     const G = Sim.G;
-    if (a.battle) { const b = G.battles.find(x => x.id === a.battle); return 'Attacking ' + (b ? MAP.provs[b.prov].name : ''); }
+    if (a.sea) return Navy.phaseText(a);
+    if (a.battle) { const b = G.battles.find(x => x.id === a.battle); return (a.landing ? 'Landing at ' : 'Attacking ') + (b ? MAP.provs[b.prov].name : ''); }
     if (a.retreating) return 'Retreating to ' + MAP.provs[a.path[a.path.length - 1]]?.name;
     let t = ORDER_TEXT[a.order] || a.order;
     if (a.order === 'defend') t += a.frontTag ? ' vs ' + G.countries[a.frontTag].name : ' (all enemies)';
@@ -8086,7 +10016,14 @@ const UI = (function () {
       <button class="btn sm ${pending?.kind === 'redeploy' ? 'active' : ''}" data-o="redeploy" title="Fast move through friendly land; organisation drops">Redeploy</button>
       <button class="btn sm" data-o="split" ${one && list[0].units.length > 1 ? '' : 'disabled'}>Split</button>
       <button class="btn sm" data-o="merge" ${list.length > 1 && sameProv ? '' : 'disabled'} title="Armies must share a province">Merge</button>
-      <button class="btn sm" data-o="recruit" ${one ? '' : 'disabled'}>Reinforce</button></div>`;
+      <button class="btn sm" data-o="recruit" ${one ? '' : 'disabled'}>Reinforce</button>
+      <button class="btn sm ${pending?.kind === 'invade' ? 'active' : ''}" data-o="invade" ${one && !list[0].sea ? '' : 'disabled'} title="Ship this army across the sea: pick a coastal province">Invade by sea</button></div>`;
+    if (one && list[0].sea) {
+      const a = list[0];
+      html += `<div class="label" style="margin-top:8px">${a.sea.hostile ? 'Naval invasion' : 'Sea transport'}</div><div class="bar prog" style="height:8px"><i style="width:${Math.round(Navy.progress(a) * 100)}%"></i></div>
+        <div class="note">${esc(Navy.phaseText(a))}. Uses ${a.sea.ships} ${esc(Navy.typeName('transport').toLowerCase())}${a.sea.ships > 1 ? 's' : ''}.${a.sea.hostile ? ' Landing needs 40% sea control in the ' + esc(Seas.zone(a.sea.zone).name) + ' (now ' + pct(Navy.superiority(a.owner, a.sea.zone)) + '). Fleets on Invasion support there help.' : ''}</div>
+        <button class="btn sm" data-o="cancelsea">${a.sea.phase === 'prep' ? 'Call off' : 'Turn back'}</button>`;
+    } else if (one && Seas.isCoastal(list[0].prov)) html += `<div class="note">Coastal province: ${Navy.freeTransports(G.player)} ${esc(Navy.typeName('transport').toLowerCase())}s free for an invasion.</div>`;
     if (list.length > 1 && !sameProv) html += '<p class="note">Merging needs all selected armies in the same province.</p>';
     return html;
   }
@@ -8228,7 +10165,7 @@ const UI = (function () {
     const G = Sim.G, c = G.countries[G.player], e = c.eco;
     if (!e || !e.need) return '<p class="note">No economy.</p>';
     const inc = e.income || {};
-    const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Army upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
+    const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Military upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
     let html = `<div class="goldline"><div><div class="label">Gold · ${esc(Economy.coin())}</div><div class="big num ${e.gold < 0 ? 'neg' : ''}">${fmtN(e.gold)}</div></div>
       <div class="num ${e.goldDelta < 0 ? 'neg' : 'pos'}">${sgn(e.goldDelta || 0)} a day</div></div>
       <div class="mods">${parts.map(x => `<span>${x[0]}</span><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span>`).join('')}</div>
@@ -8248,6 +10185,8 @@ const UI = (function () {
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
     if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
     html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:8px">Military works</div>
+      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
     const deals = Economy.dealsOf(G.player);
     html += `<hr class="sep"><div class="label">Trade deals · ${deals.length} of ${Economy.tradeSlots(G.player)} slots</div>`;
@@ -8397,6 +10336,33 @@ const UI = (function () {
     body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
     body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-tech]').forEach(b => b.onclick = () => pickTech(b.dataset.tech));
+    body.querySelectorAll('[data-fleet]').forEach(b => b.onclick = () => { selectFleet(+b.dataset.fleet); const f = Navy.fleet(+b.dataset.fleet); if (f) { const [x, y] = Render.fleetPos(f); Render.flyTo(x, y, Math.max(Render.cam.z, 5)); } });
+    body.querySelectorAll('[data-wing]').forEach(b => b.onclick = () => { selectWing(+b.dataset.wing); const w = Air.wing(+b.dataset.wing); if (w) { const p = MAP.provs[w.base]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } });
+    body.querySelectorAll('[data-zone]').forEach(b => b.onclick = e => { e.preventDefault(); selectZone(+b.dataset.zone, true); });
+    body.querySelectorAll('[data-fm]').forEach(b => b.onclick = () => { const f = Navy.fleet(sel.fleet); if (!f) return; if (!Navy.setMission(f, b.dataset.fm)) toast('The fleet cannot take that mission from here.', -1, 'info'); renderRight(); });
+    body.querySelectorAll('[data-fo]').forEach(b => b.onclick = () => {
+      const f = Navy.fleet(sel.fleet), k = b.dataset.fo;
+      if (k === 'back') { selectFleet(0); return; }
+      if (!f) return;
+      if (k === 'move') { pending = pending && pending.kind === 'fleet' ? null : { kind: 'fleet' }; showHint(); }
+      if (k === 'repair') { if (!Navy.setMission(f, 'repair')) toast('No friendly port within reach.', -1, 'info'); }
+      if (k === 'split') { const n = Navy.splitFleet(f); if (n) toast('Split off the ' + n.name + '.', -1, 'info'); }
+      if (k === 'merge') { const m = Navy.mergeFleets([f, ...G.fleets.filter(x => x !== f && x.owner === G.player && x.zone === f.zone && !x.battle)]); if (m) toast('Fleets merged into the ' + m.name + '.', -1, 'info'); }
+      renderRight();
+    });
+    body.querySelectorAll('[data-wm]').forEach(b => b.onclick = () => { pending = pending && pending.kind === 'wing' && pending.mission === b.dataset.wm ? null : { kind: 'wing', mission: b.dataset.wm }; showHint(); renderRight(); });
+    body.querySelectorAll('[data-wo]').forEach(b => b.onclick = () => {
+      const w = Air.wing(sel.wing), k = b.dataset.wo;
+      if (k === 'back') { selectWing(0); return; }
+      if (!w) return;
+      if (k === 'idle') { Air.setMission(w, 'idle'); pending = null; showHint(); }
+      if (k === 'rebase') { pending = pending && pending.kind === 'rebase' ? null : { kind: 'rebase' }; showHint(); }
+      renderRight();
+    });
+    body.querySelectorAll('[data-ship]').forEach(b => b.onclick = () => { const r = Navy.build(G.player, b.dataset.ship); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-unship]').forEach(b => b.onclick = () => { Navy.cancelBuild(G.player, +b.dataset.unship); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-plane]').forEach(b => b.onclick = () => { const r = Air.build(G.player, b.dataset.plane); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-unplane]').forEach(b => b.onclick = () => { Air.cancelBuild(G.player, +b.dataset.unplane); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-stopr]').forEach(b => b.onclick = () => { Tech.stop(G.player, +b.dataset.stopr); renderRight(); renderTree(); });
     body.querySelectorAll('[data-opentree]').forEach(b => b.onclick = () => { treeOpen = true; renderTree(); });
     const s = $('#dp-search');
@@ -8406,7 +10372,8 @@ const UI = (function () {
   function armyOrder(kind) {
     const list = myArmiesSel();
     if (!list.length) return;
-    if (kind === 'move' || kind === 'attack' || kind === 'redeploy' || kind === 'front') {
+    if (kind === 'cancelsea') { list.forEach(a => Navy.cancelInvasion(a)); renderRight(); return; }
+    if (kind === 'move' || kind === 'attack' || kind === 'redeploy' || kind === 'front' || kind === 'invade') {
       pending = pending && pending.kind === kind ? null : { kind };
       showHint(); renderRight(); return;
     }
@@ -8420,14 +10387,31 @@ const UI = (function () {
   }
   function showHint() {
     const h = $('#hint');
-    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against' };
+    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
+      invade: 'Choose a coastal province to land in', fleet: 'Choose a sea zone to sail to', rebase: 'Choose a province with a friendly airbase',
+      wing: pending && pending.mission === 'naval' ? 'Choose a sea zone to strike' : pending && pending.mission === 'bomb' ? 'Choose an enemy province to bomb' : 'Choose where the wing should fly' };
     if (!pending) { h.hidden = true; $('#map').classList.remove('targeting'); return; }
     h.hidden = false; h.textContent = txt[pending.kind] + ' · Esc to cancel';
     $('#map').classList.add('targeting');
   }
-  function resolvePending(prov) {
+  function resolvePending(prov, zone) {
     const G = Sim.G, list = myArmiesSel();
-    const kind = pending.kind; pending = null; showHint();
+    const kind = pending.kind, mission = pending.mission; pending = null; showHint();
+    if (kind === 'fleet') { sendFleet(zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1); renderRight(); return; }
+    if (kind === 'wing' || kind === 'rebase') {
+      const w = Air.wing(sel.wing); if (!w) return;
+      let r;
+      if (kind === 'rebase') r = prov >= 0 ? Air.rebase(w, prov) : { ok: false, why: 'Pick a province with an airbase.' };
+      else if (mission === 'naval' || (mission === 'superiority' && prov < 0)) r = zone >= 0 ? Air.setMission(w, mission, zone, true) : prov >= 0 && mission === 'naval' && Seas.isCoastal(prov) ? Air.setMission(w, mission, Seas.zonesOf(prov)[0], true) : mission === 'superiority' && prov >= 0 ? Air.setMission(w, mission, prov) : { ok: false, why: 'Pick a sea zone.' };
+      else r = prov >= 0 ? Air.setMission(w, mission, prov) : { ok: false, why: 'Pick a land province.' };
+      toast(r.ok ? (kind === 'rebase' ? w.name + ' moved to ' + MAP.provs[w.base].name + '.' : w.name + ': ' + Air.MISSIONS[w.mission].name.toLowerCase() + '.') : r.why, -1, 'info');
+      renderRight(); return;
+    }
+    if (kind === 'invade') {
+      if (prov < 0 || list.length !== 1) { toast('Pick a coastal province on land.', -1, 'info'); return; }
+      const r = Navy.invade(list[0], prov);
+      toast(r.ok ? r.text : r.why, prov, 'info'); renderRight(); renderTrays(); return;
+    }
     if (prov < 0 || !list.length) return;
     if (kind === 'front') {
       const tag = G.owner[prov];
@@ -8448,7 +10432,7 @@ const UI = (function () {
     }
     if (failed) {
       const o = G.owner[prov];
-      const why = o !== G.player && !Sim.allied(o, G.player) && !Sim.atWar(o, G.player) ? 'You need to be at war with ' + G.countries[o].name + ' or allied to enter.' : kind === 'redeploy' ? 'Redeployment only uses friendly land.' : 'No land route (sea crossings arrive with the navy).';
+      const why = o !== G.player && !Sim.allied(o, G.player) && !Sim.atWar(o, G.player) ? 'You need to be at war with ' + G.countries[o].name + ' or allied to enter.' : kind === 'redeploy' ? 'Redeployment only uses friendly land.' : 'No land route: use Invade by sea to cross water.';
       toast('No route to ' + MAP.provs[prov].name + '. ' + why, prov, 'info');
     }
     renderRight();
@@ -8458,7 +10442,7 @@ const UI = (function () {
   function renderTrays() {
     const G = Sim.G; if (!G) return;
     const mine = G.armies.filter(a => a.owner === G.player);
-    const status = a => a.battle ? '⚔ In battle' : a.retreating ? 'Retreating' : a.path.length ? (a.order === 'attack' ? 'Advancing' : 'Moving') : a.order === 'defend' ? 'Defending front' : 'Holding';
+    const status = a => a.sea ? (a.sea.phase === 'prep' ? 'Embarking' : 'At sea') : a.battle ? '⚔ In battle' : a.retreating ? 'Retreating' : a.path.length ? (a.order === 'attack' ? 'Advancing' : 'Moving') : a.order === 'defend' ? 'Defending front' : 'Holding';
     const trayHTML = mine.map(a => {
       const st = Sim.armyStats(a);
       return `<button class="acard ${sel.armies.includes(a.id) ? 'sel' : ''}" data-a="${a.id}"><div class="t"><span>${esc(a.name)}</span><span class="num">${a.units.length}</span></div>
@@ -8529,7 +10513,8 @@ const UI = (function () {
       x => { if (x === 'yes') backToStart(); });
   }
   function backToStart() {
-    Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; pending = null; showHint();
+    Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true;
     showStart();
@@ -8587,14 +10572,27 @@ const UI = (function () {
     const G = Sim.G;
     const [wx, wy] = Render.screenToWorld(sx, sy);
     const prov = Render.provinceAt(wx, wy);
+    const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
-    if (pending && button === 0) { resolvePending(prov); return; }
+    if (pending && button === 0) { resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
+      const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
+      if (f && f.owner === G.player) { const z = zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1; if (z >= 0) sendFleet(z); return; }
       const list = myArmiesSel();
       if (list.length && prov >= 0) issueMove(list, prov, 'auto');
       return;
     }
+    const fl = Render.fleetAt(sx, sy);
+    if (fl) {
+      // clicking the same counter again steps through the fleets in it
+      const ids = fl.map(x => x.id), k = ids.indexOf(sel.fleet);
+      selectFleet(ids[(k + 1) % ids.length]);
+      selectZone(fl[0].path.length ? -1 : fl[0].zone);
+      return;
+    }
+    const wl = Render.wingAt(sx, sy);
+    if (wl) { const ids = wl.map(x => x.id), k = ids.indexOf(sel.wing); selectWing(ids[(k + 1) % ids.length]); selectProvince(wl[0].base); return; }
     const b = Render.battleAtScreen(sx, sy);
     if (b) { openBattle(b); return; }
     const stack = Render.stackAt(sx, sy);
@@ -8615,6 +10613,7 @@ const UI = (function () {
       return;
     }
     if (!add) selectArmies([], false);
+    if (prov < 0 && zone >= 0) { selectProvince(-1); selectZone(zone); return; }
     selectProvince(prov);
   }
   function bindKeys() {
@@ -8629,7 +10628,7 @@ const UI = (function () {
         if (pending) { pending = null; showHint(); renderRight(); }
         else if (!$('#modal').hidden) $('#modal').hidden = true;
         else if (sel.battle) { sel.battle = 0; $('#battle').hidden = true; }
-        else { selectArmies([], false); selectProvince(-1); }
+        else { selectArmies([], false); selectProvince(-1); selectZone(-1); if (sel.fleet) selectFleet(0); if (sel.wing) selectWing(0); }
       }
     });
   }
@@ -8642,6 +10641,8 @@ const UI = (function () {
       lastRefresh = now;
       sel.armies = sel.armies.filter(id => Sim.army(id));
       Render.state.selArmies = new Set(sel.armies);
+      if (sel.fleet && !Navy.fleet(sel.fleet)) { sel.fleet = 0; Render.state.selFleet = 0; }
+      if (sel.wing && !Air.wing(sel.wing)) { sel.wing = 0; Render.state.selWing = 0; }
       if (now > lockUntil) {
         // a panel under the mouse refreshes slowly, so its buttons don't shift while you aim at them
         // (and not at all while the pointer rests on one of its buttons)
@@ -8670,7 +10671,8 @@ const UI = (function () {
     }
   }
 
-  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice() };
+  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice(),
+    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }) };
 })();
 
 // Boot: generate the map, then run the render/simulation loop.

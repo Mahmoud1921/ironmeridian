@@ -20,6 +20,28 @@ const Economy = (function () {
     arsenal: { good: 'arms',      cp: 300, gold: 120 }
   };
   const KIND_KEYS = Object.keys(KINDS);
+  // military works: ports, dockyards, airbases, supply hubs, forts and radar. They use no industry slot.
+  const INFRA = {
+    port:  { cp: 150, gold: 60, max: 3, coast: true },
+    dock:  { cp: 260, gold: 110, max: 5, coast: true },
+    air:   { cp: 150, gold: 60, max: 3, needs: 'air' },
+    hub:   { cp: 220, gold: 90, max: 1 },
+    fort:  { cp: 180, gold: 70, max: 3 },
+    radar: { cp: 160, gold: 90, max: 1, needs: 'radar' }
+  };
+  const INFRA_KEYS = Object.keys(INFRA);
+  const INFRA_NAMES = {
+    'ww2-1936': { port: 'Port', dock: 'Naval dockyard', air: 'Airbase', hub: 'Supply hub', fort: 'Fort', radar: 'Radar station' },
+    'greatwar-1914': { port: 'Harbour', dock: 'Naval dockyard', air: 'Airfield', hub: 'Railhead depot', fort: 'Fortress' },
+    'napoleonic-1805': { port: 'Harbour', dock: 'Naval yard', hub: 'Supply depot', fort: 'Fortress' },
+    'medieval-1200': { port: 'Harbour', dock: 'Shipyard', hub: 'Supply depot', fort: 'Castle' },
+    'rome-117': { port: 'Harbour', dock: 'Navalia', hub: 'Supply depot', fort: 'Fort' },
+    'greece-431bc': { port: 'Harbour', dock: 'Shipsheds', hub: 'Supply depot', fort: 'Walls' }
+  };
+  const isInfra = k => !!INFRA[k];
+  function infraKinds() { const n = INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936']; return INFRA_KEYS.filter(k => n[k]); }
+  function infra(pid, k) { const I = G().inf && G().inf[pid]; return (I && I[k]) || 0; }
+  function setInfra(pid, k, v) { const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
   const MOD_OF = { farm: 'farms', mine: 'mines', fuel: 'fuelworks', strat: 'stratworks', shop: 'workshops', arsenal: 'arsenals' };
   const FARM_TERRAIN = { plains: 1.5, forest: 0.8, hills: 0.9, mountains: 0.5, desert: 0.5, jungle: 0.7, marsh: 0.7, tundra: 0.3, urban: 0.8 };
 
@@ -51,7 +73,7 @@ const Economy = (function () {
   const eraId = () => (typeof Eras !== 'undefined' && Eras.info()) ? Eras.info().id : 'ww2-1936';
   const E = () => ERA_ECO[eraId()] || ERA_ECO['ww2-1936'];
   const goodName = g => g === 'gold' ? 'Gold' : (E().goods[g] || g);
-  const kindName = k => E().kinds[k] || k;
+  const kindName = k => INFRA[k] ? ((INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936'])[k] || k) : (E().kinds[k] || k);
   const coin = () => E().coin;
   const mod = (tag, name, ctx) => typeof Tech !== 'undefined' ? Tech.mod(tag, name, ctx) : 0;
 
@@ -128,6 +150,7 @@ const Economy = (function () {
     let m = 1 + mod(tag, MOD_OF[kind], ctx) + mod(tag, 'industry', ctx);
     if (kind === 'strat') m += mod(tag, 'strategic', ctx);
     if (kind === 'shop') m += mod(tag, 'luxuries', ctx);
+    if (typeof Air !== 'undefined') m *= 1 - Air.bombDamage(p.id);
     if (p.core !== tag) {
       const coreAlive = G().countries[p.core] && G().countries[p.core].alive;
       m *= coreAlive ? Math.min(1, 0.5 + mod(tag, 'occupied')) : 0.85;
@@ -142,6 +165,7 @@ const Economy = (function () {
     buildDeposits();
     M.provs.forEach(p => coastal(p));
     g.ind = M.provs.map(() => null);
+    seedInfra();
     g.eco = { nextDeal: 1, spike: {}, price: Object.assign({}, BASE_PRICE), era: eraId() };
     g.dip.trade = []; g.dip.embargo = [];
     for (const p of M.provs) {
@@ -186,6 +210,29 @@ const Economy = (function () {
       if (!c.eco || !c.eco.need) continue;
       for (const k of GOODS) c.eco.stock[k] = Math.round(c.eco.need[k] * START_DAYS);
     }
+  }
+  // opening harbours on every coastal city, bigger at capitals; forts where history built them
+  function seedInfra() {
+    const g = G(), M = MAP(), id = eraId();
+    g.inf = M.provs.map(() => null);
+    const coast = pid => typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(M.provs[pid]);
+    for (const p of M.provs) {
+      const d = COUNTRY_BY_TAG[g.owner[p.id]];
+      if (!d || d.unclaimed) continue;
+      if (p.city && coast(p.id)) setInfra(p.id, 'port', p.capital ? 2 : 1);
+      if (p.capital && id !== 'ww2-1936' && id !== 'greatwar-1914') setInfra(p.id, 'fort', id === 'napoleonic-1805' ? 1 : 2);
+    }
+    // nations with a coast but no coastal city still get one harbour
+    const hasPort = new Set();
+    for (const p of M.provs) if (infra(p.id, 'port')) hasPort.add(g.owner[p.id]);
+    for (const p of M.provs.slice().sort((a, b) => b.pop - a.pop)) {
+      const o = g.owner[p.id], d = COUNTRY_BY_TAG[o];
+      if (!d || d.unclaimed || hasPort.has(o) || !coast(p.id)) continue;
+      setInfra(p.id, 'port', 1); hasPort.add(o);
+    }
+    const wall = (tag, vs, lvl) => { for (const p of M.provs) if (g.owner[p.id] === tag && p.home && p.nb.some(n => g.owner[n] === vs)) setInfra(p.id, 'fort', lvl); };
+    if (id === 'ww2-1936') { wall('FRA', 'GER', 3); wall('CZE', 'GER', 2); wall('GER', 'FRA', 1); wall('FIN', 'SOV', 2); wall('BEL', 'GER', 1); }
+    if (id === 'greatwar-1914') { wall('FRA', 'GER', 2); wall('BEL', 'GER', 2); wall('GER', 'FRA', 1); wall('RUS', 'GER', 1); wall('AUH', 'ITA', 1); }
   }
   function seedDeals() {
     const g = G();
@@ -279,6 +326,7 @@ const Economy = (function () {
     const divsOf = {}, stratDivs = {}, upk = {};
     for (const ar of g.armies) for (const u of ar.units) { divsOf[ar.owner] = (divsOf[ar.owner] || 0) + 1; upk[ar.owner] = (upk[ar.owner] || 0) + 0.1 + (UNIT_TYPES[u.type] ? UNIT_TYPES[u.type].eq : 100) / 500; if (stratUnit(u.type)) stratDivs[ar.owner] = (stratDivs[ar.owner] || 0) + 1; }
     for (const c of Object.values(cs)) if (c.alive) for (const q of c.queue) if (stratUnit(q.type)) stratDivs[c.tag] = (stratDivs[c.tag] || 0) + 1;
+    for (const c of Object.values(cs)) if (c.alive) upk[c.tag] = (upk[c.tag] || 0) + (typeof Navy !== 'undefined' && g.fleets ? Navy.upkeep(c.tag) : 0) + (typeof Air !== 'undefined' && g.wings ? Air.upkeep(c.tag) : 0);
     const aStrat = E().arsenalStrat || 0;
     // needs
     const totProd = { food: 0, metal: 0, fuel: 0, strategic: 0, luxuries: 0 }, totNeed = Object.assign({}, totProd);
@@ -305,9 +353,12 @@ const Economy = (function () {
       if (!s || !b || !s.alive || !b.alive || !s.eco || !b.eco) continue;
       const avail = s.eco.prod[d.good] + s.eco.stock[d.good] + s.eco.imp[d.good] - s.eco.exp[d.good];
       const q = Math.max(0, Math.min(d.amount, avail));
-      d.delivered = q;
-      s.eco.exp[d.good] += q; b.eco.imp[d.good] += q;
-      const paid = d.price * (q / d.amount);
+      // goods shipped by sea can be sunk on the way; the buyer pays only for what arrives
+      const arrive = !setupOnly && typeof Navy !== 'undefined' && g.fleets ? q * Navy.convoyFactor(d) : q;
+      if (!setupOnly && typeof Navy !== 'undefined' && g.fleets) Navy.recordConvoy(d, q, arrive);
+      d.delivered = arrive;
+      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive;
+      const paid = d.price * (arrive / d.amount);
       b.eco.dealOut += paid; s.eco.dealIn += paid;
       const bonus = paid * tradeBonusRate(d.from);
       const bonusB = paid * tradeBonusRate(d.to);
@@ -395,13 +446,58 @@ const Economy = (function () {
   function tradeBonusRate(tag) { return 0.10 + mod(tag, 'tradeBonus') * 0.5; }
 
   // ---------- construction ----------
-  function buildCost(kind, tag) {
+  function buildCost(kind, tag, pid) {
+    if (INFRA[kind]) {
+      const k = INFRA[kind], lvl = pid >= 0 ? infra(pid, kind) : 0;
+      return { cp: Math.round(k.cp * (1 + lvl * 0.5)), gold: Math.round(k.gold * (1 + lvl * 0.5)) };
+    }
     const k = KINDS[kind];
     const n = G().ind.reduce((s, I, i) => s + (I && I[kind] && G().owner[i] === tag ? I[kind] : 0), 0);
     return { cp: Math.round(k.cp * (1 + n * 0.004)), gold: Math.round(k.gold * (1 + n * 0.01)) };
   }
+  function canInfra(tag, kind, pid) {
+    const g = G(), c = g.countries[tag], k = INFRA[kind];
+    if (!infraKinds().includes(kind) || (k.needs === 'air' && !(typeof Air !== 'undefined' && Air.available()))) return { ok: false, why: 'Not available in this era' };
+    if (!c || !c.eco || c.eco.none) return { ok: false, why: 'No economy' };
+    if (pid === undefined || pid < 0) { const p = bestInfra(tag, kind); if (!p) return { ok: false, why: k.coast ? 'No coastal province with room' : 'No province with room' }; pid = p.id; }
+    const cost = buildCost(kind, tag, pid);
+    if (c.eco.gold < cost.gold) return { ok: false, why: 'Needs ' + cost.gold + ' gold' };
+    if (c.eco.queue.length >= 6) return { ok: false, why: 'The construction queue is full (6)' };
+    if (g.owner[pid] !== tag) return { ok: false, why: 'Not your province' };
+    const p = MAP().provs[pid];
+    if (k.coast && !(typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(p))) return { ok: false, why: 'Needs a coast' };
+    if (kind === 'dock' && !infra(pid, 'port')) return { ok: false, why: 'Needs a ' + kindName('port').toLowerCase() + ' first' };
+    const queued = c.eco.queue.filter(q => q.prov === pid && q.kind === kind).length;
+    if (infra(pid, kind) + queued >= k.max) return { ok: false, why: k.max > 1 ? 'Already at level ' + k.max : 'Already built' };
+    return { ok: true, prov: pid, cost };
+  }
+  function bestInfra(tag, kind) {
+    const g = G(), c = g.countries[tag], k = INFRA[kind];
+    const cap = c.capital >= 0 ? MAP().provs[c.capital] : null;
+    let best = null, bs = -Infinity;
+    for (const p of MAP().provs) {
+      if (g.owner[p.id] !== tag) continue;
+      const queued = c.eco.queue.filter(q => q.prov === p.id && q.kind === kind).length;
+      if (infra(p.id, kind) + queued >= k.max) continue;
+      if (k.coast && !(typeof Seas !== 'undefined' ? Seas.isCoastal(p.id) : coastal(p))) continue;
+      if (kind === 'dock' && !infra(p.id, 'port')) continue;
+      const far = cap ? GEO.haversineKm(p.lon, p.lat, cap.lon, cap.lat) : 0;
+      const front = enemyNear(tag, p) ? 1 : 0;
+      const lvl = infra(p.id, kind);
+      let s;
+      if (kind === 'port') s = (p.city ? 5 : 0) + p.pop / 5e5 + (p.home ? 2 : 0) - lvl * 3;
+      else if (kind === 'dock') s = infra(p.id, 'port') * 2 + (p.home ? 3 : 0) + lvl - front * 5;
+      else if (kind === 'air') s = (p.city ? 3 : 0) + (p.home ? 2 : 0) + front * 2 - lvl * 3 - far / 3000;
+      else if (kind === 'hub') s = far / 400 + (p.city ? 2 : 0) + front * 3 - (p.core === tag ? 0 : 1);
+      else if (kind === 'fort') s = front * 6 + (p.capital ? 3 : 0) + (p.city ? 1 : 0) - lvl * 2 + (({ mountains: 2, hills: 1 })[p.terrain] || 0);
+      else s = (p.capital ? 4 : 0) + (p.city ? 2 : 0) + (typeof Seas !== 'undefined' && Seas.isCoastal(p.id) ? 1 : 0) + front * 2;
+      if (s > bs) { bs = s; best = p; }
+    }
+    return best;
+  }
   function canBuild(tag, kind, pid) {
     const g = G(), c = g.countries[tag];
+    if (INFRA[kind]) return canInfra(tag, kind, pid);
     if (!KINDS[kind]) return { ok: false, why: 'Unknown industry' };
     if (!c || !c.eco) return { ok: false, why: 'No economy' };
     const cost = buildCost(kind, tag);
@@ -437,14 +533,14 @@ const Economy = (function () {
     if (!chk.ok) return chk;
     const c = G().countries[tag];
     c.eco.gold -= chk.cost.gold;
-    c.eco.queue.push({ kind, prov: chk.prov, left: chk.cost.cp, total: chk.cost.cp });
+    c.eco.queue.push({ kind, prov: chk.prov, left: chk.cost.cp, total: chk.cost.cp, gold: chk.cost.gold });
     return { ok: true, prov: chk.prov, text: kindName(kind) + ' started in ' + MAP().provs[chk.prov].name + '.' };
   }
   function cancelBuild(tag, i) {
     const c = G().countries[tag], q = c.eco.queue[i];
     if (!q) return;
     c.eco.queue.splice(i, 1);
-    c.eco.gold += Math.round(buildCost(q.kind, tag).gold * 0.5);
+    c.eco.gold += Math.round((q.gold || buildCost(q.kind, tag).gold) * 0.5);
   }
   function stepQueue(c) {
     const g = G(), e = c.eco;
@@ -456,7 +552,8 @@ const Economy = (function () {
       const share = cp / active.length;
       q.left -= share;
       if (q.left <= 0) {
-        ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
+        if (INFRA[q.kind]) setInfra(q.prov, q.kind, infra(q.prov, q.kind) + 1);
+        else ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
         q.done = true;
         if (c.tag === g.player) Sim.notify(kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
       }
@@ -683,7 +780,7 @@ const Economy = (function () {
   }
 
   return {
-    GOODS, KINDS, KIND_KEYS, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
+    GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId

@@ -2,7 +2,7 @@
 // Automated playtest: drives the built game in a real browser like a player would,
 // clicking once per action and checking the action took effect. Reports dead clicks,
 // script errors, broken game-state invariants and frame-time spikes.
-//   node tests/playtest.js [--quick] [--seed N] [--browser chromium|firefox]
+//   node tests/playtest.js [--quick] [--seed N] [--browser chromium|firefox] [--only navy,eras]
 // Exit code 1 when any check fails. Run after every change: build, playtest, fix, repeat.
 'use strict';
 const path = require('path');
@@ -13,6 +13,7 @@ try { pw = require('playwright'); } catch { pw = require('/opt/node22/lib/node_m
 const args = process.argv.slice(2);
 const QUICK = args.includes('--quick');
 const SEED = +(args[args.indexOf('--seed') + 1] || 7) || 7;
+const ONLY = args.includes('--only') ? args[args.indexOf('--only') + 1] : null;
 const BROWSER = args.includes('--browser') ? args[args.indexOf('--browser') + 1] : 'chromium';
 const FILE = 'file://' + path.resolve(__dirname, '../dist/iron-meridian.html');
 let rnd = SEED; const rand = () => (rnd = (rnd * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -66,6 +67,28 @@ const ECO_INVARIANTS = `window.ecoInvariants = () => {
   }
   for (const t of Object.keys(G.countries)) if (G.countries[t].alive && Economy.dealsOf(t).length > Economy.tradeSlots(t) + 1) bad.push(t + ' has more deals than slots');
   G.ind.forEach((I, i) => { if (I) for (const k in I) if (!(I[k] >= 0)) bad.push('province ' + i + ' ' + k + ' count ' + I[k]); });
+  return bad.concat(navyInvariants());
+};
+window.navyInvariants = () => {
+  const G = Sim.G, bad = [];
+  if (!G.fleets) return bad;
+  const ids = new Set();
+  for (const f of G.fleets) {
+    if (ids.has(f.id)) bad.push('fleet ' + f.id + ' twice'); ids.add(f.id);
+    if (!G.countries[f.owner] || !G.countries[f.owner].alive) bad.push('fleet ' + f.id + ' of a dead nation');
+    if (!f.ships.length) bad.push('fleet ' + f.id + ' has no ships');
+    if (!(f.zone >= 0 && f.zone < Seas.all().length)) bad.push('fleet ' + f.id + ' in zone ' + f.zone);
+    for (const s of f.ships) if (!(s.str > 0 && s.str <= 1.0001) || !(s.org >= 0 && s.org <= 1.0001) || !Navy.ROLES[s.type]) bad.push('fleet ' + f.id + ' ship ' + s.type + ' str ' + s.str + ' org ' + s.org);
+    if (f.battle && !G.navBattles.some(b => b.id === f.battle)) bad.push('fleet ' + f.id + ' in a battle that is over');
+  }
+  for (const w of G.wings) {
+    if (!G.countries[w.owner] || !G.countries[w.owner].alive) bad.push('wing ' + w.id + ' of a dead nation');
+    if (!(w.str > 0 && w.str <= 1.0001)) bad.push('wing ' + w.id + ' str ' + w.str);
+    if (!Economy.infra(w.base, 'air')) bad.push('wing ' + w.id + ' based without an airbase');
+  }
+  for (const c of Object.values(G.countries)) if (c.alive && c.navy && Navy.freeTransports(c.tag) < 0) bad.push(c.tag + ' uses more transports than it has');
+  for (const a of G.armies) if (a.sea && !(a.sea.target >= 0 && a.sea.target < Sim.MAP.provs.length)) bad.push('army ' + a.id + ' at sea without a target');
+  (G.inf || []).forEach((I, i) => { if (I) for (const k in I) if (!(I[k] >= 0 && I[k] <= Economy.INFRA[k].max)) bad.push('province ' + i + ' ' + k + ' level ' + I[k]); });
   return bad;
 };`;
 
@@ -299,11 +322,12 @@ async function desktopRun(browser) {
       let a = null;
       for (const c of cands) {
         const lm = Sim.MAP.provs[c.prov].lm;
-        const targets = Sim.MAP.provs.filter(p => G.owner[p.id] === G.player && p.lm === lm && Sim.distKm(c.prov, p.id) > 250).sort((p, q) => Sim.distKm(c.prov, p.id) - Sim.distKm(c.prov, q.id)).slice(0, 12);
-        for (const t of targets) if (Sim.orderMove(c, t.id, 'redeploy') && c.path.length > 2) { a = c; break; }
+        const targets = Sim.MAP.provs.filter(p => G.owner[p.id] === G.player && p.lm === lm && Sim.distKm(c.prov, p.id) > 250).sort((p, q) => Sim.distKm(c.prov, p.id) - Sim.distKm(c.prov, q.id)).slice(0, 20);
+        // the AI may have taken much of the homeland by now (seaborne landings), so a two-step march is enough
+        for (const t of targets) if (Sim.orderMove(c, t.id, 'redeploy') && c.path.length >= 2) { a = c; break; }
         if (a) break;
       }
-      if (!a) return null;
+      if (!a) return { none: cands.map(c => [Sim.MAP.provs[c.prov].name, c.order, !!c.sea, c.path.length]).slice(0, 8), all: G.armies.filter(x => x.owner === G.player).length, wars: G.wars.map(w => w.name), home: [3, 190, 191, 192, 195, 196, 197, 198].map(i => Sim.MAP.provs[i].name + ':' + G.owner[i]) };
       const P = Sim.MAP.provs[a.prov];
       Render.flyTo(P.x, P.y, Render.minZoom() * 3);
       await new Promise(r => setTimeout(r, 1500));
@@ -333,8 +357,8 @@ async function desktopRun(browser) {
       const s = steps.filter(x => x > 0).sort((x, y) => x - y);
       return { frames: steps.length, still: steps.filter(x => x === 0).length, back, med: s[Math.floor(s.length / 2)] || 0, max: s[s.length - 1] || 0, crossed };
     });
-    check('movement: an army can be sent on a long march', !!smooth);
-    if (smooth) {
+    check('movement: an army can be sent on a long march', !!smooth && !smooth.none, smooth && smooth.none ? JSON.stringify(smooth) : '');
+    if (smooth && !smooth.none) {
       check('movement: marching troops move every frame', smooth.frames > 20 && smooth.still / smooth.frames < 0.15, `${smooth.frames - smooth.still}/${smooth.frames} frames moved`);
       check('movement: no jumps or stutters along the route', smooth.max < smooth.med * 6 + 0.02 && smooth.back === 0, `median step ${smooth.med.toFixed(3)}, largest ${smooth.max.toFixed(3)}, ${smooth.back} backward steps, crossed ${smooth.crossed} provinces`);
     }
@@ -511,6 +535,208 @@ async function economyRun(browser) {
   await page.close();
 }
 
+// ---------- navy, air force, supply and invasions: through the Navy tab and the map ----------
+async function navyRun(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(FILE);
+  await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
+  await clickEl(page, '#start .ncard[data-tag="ENG"]');
+  await clickEl(page, '#st-play');
+  await waitFor(page, () => Sim.G && !document.getElementById('hud').hidden);
+  const G = (fn, arg) => page.evaluate(fn, arg);
+  await G(() => { const c = Sim.G.countries.ENG; c.eco.gold = 8000; c.equipment = 20000; Sim.G.settings.autoPause = false; for (let h = 0; h < 24; h++) Sim.hourTick(); });
+  // a point in open water of a zone, clear of fleet counters, on screen
+  const seaPoint = async name => G(n => {
+    const z = Seas.all().find(x => x.name === n);
+    Render.flyTo(z.x, z.y, 6); Render.cam.x = z.x; Render.cam.y = z.y; Render.cam.z = 6; Render.cam.anim = false;
+    for (const [dx, dy] of [[0, 60], [60, 0], [-60, 0], [0, -60], [80, 50], [-80, 50], [40, 90], [-40, -90]]) {
+      const [sx, sy] = Render.worldToScreen(z.x, z.y); const px = sx + dx, py = sy + dy;
+      const [wx, wy] = Render.screenToWorld(px, py);
+      if (Seas.zoneAt(wx, wy) === z.id && Render.provinceAt(wx, wy) < 0 && !Render.fleetAt(px, py) && px > 320 && px < innerWidth - 420) return [px, py, z.id];
+    }
+    return null;
+  }, name);
+
+  // Navy tab: fleets, transports, shipyards and air wings
+  await clickEl(page, '.tab[data-tab="navy"]');
+  check('navy: tab lists fleets and air wings', await waitFor(page, () => document.querySelectorAll('#rp-body [data-fleet]').length >= 2 && document.querySelectorAll('#rp-body [data-wing]').length >= 2, null, 1500));
+  await clickEl(page, '#rp-body [data-fleet]');
+  const fid = await G(() => UI._sel().fleet);
+  check('navy: clicking a fleet opens its card', fid > 0 && await waitFor(page, () => !!document.querySelector('#rp-body [data-fm="patrol"]'), null, 1500));
+  await clickEl(page, '#rp-body [data-fm="patrol"]');
+  check('navy: a mission button sets the mission', await waitFor(page, id => Navy.fleet(id).mission === 'patrol', fid));
+  // Move, then click a sea zone on the map
+  const tgt = await seaPoint('Bay of Biscay');
+  await clickEl(page, '#rp-body [data-fo="move"]');
+  if (tgt) { await page.waitForTimeout(150); await page.mouse.click(tgt[0], tgt[1]); }
+  check('navy: Move then a sea click sets course', !!tgt && await waitFor(page, ([id, z]) => { const f = Navy.fleet(id); return f.area === z && (f.path.length > 0 || f.zone === z); }, [fid, tgt && tgt[2]], 1500), tgt ? '' : 'no clear water found');
+  // right-click another zone
+  const tgt2 = await seaPoint('Western Approaches');
+  if (tgt2) await page.mouse.click(tgt2[0], tgt2[1], { button: 'right' });
+  check('navy: right-click on the sea redirects the fleet', !!tgt2 && await waitFor(page, ([id, z]) => Navy.fleet(id).area === z, [fid, tgt2 && tgt2[2]], 1500));
+  // a left click on open water shows the sea zone
+  const tgt3 = await seaPoint('Norwegian Sea');
+  if (tgt3) await page.mouse.click(tgt3[0], tgt3[1]);
+  check('navy: clicking the sea opens the sea zone panel', !!tgt3 && await waitFor(page, z => UI._sel().zone === z && /Sea zone/.test(document.getElementById('leftpanel').textContent), tgt3 && tgt3[2], 1500));
+  // split and merge
+  await G(id => UI._selectFleet(id), fid);
+  const n0 = await G(() => Sim.G.fleets.filter(f => f.owner === 'ENG').length);
+  await clickEl(page, '#rp-body [data-fo="split"]');
+  check('navy: Split makes a second fleet', await waitFor(page, n => Sim.G.fleets.filter(f => f.owner === 'ENG').length === n + 1, n0));
+  await clickEl(page, '#rp-body [data-fo="merge"]');
+  check('navy: Merge joins them again', await waitFor(page, n => Sim.G.fleets.filter(f => f.owner === 'ENG').length <= n, n0));
+  // shipyard
+  await clickEl(page, '#rp-body [data-fo="back"]');
+  const sq = await G(() => Navy.nav(Sim.G.countries.ENG).queue.length);
+  await clickEl(page, '#rp-body [data-ship="destroyer"]:not([disabled])');
+  check('navy: a ship is laid down on one click', await waitFor(page, q => Navy.nav(Sim.G.countries.ENG).queue.length === q + 1, sq));
+  await clickEl(page, '#rp-body [data-unship]');
+  check('navy: cancelling a ship works', await waitFor(page, q => Navy.nav(Sim.G.countries.ENG).queue.length === q, sq));
+  const aq = await G(() => (Sim.G.countries.ENG.airQueue || []).length);
+  await clickEl(page, '#rp-body [data-plane="fighter"]:not([disabled])');
+  check('air: aircraft are ordered on one click', await waitFor(page, q => (Sim.G.countries.ENG.airQueue || []).length === q + 1, aq));
+  // air wing: superiority over a province picked on the map
+  await clickEl(page, '#rp-body [data-wing]');
+  const wid = await G(() => UI._sel().wing);
+  await clickEl(page, '#rp-body [data-wm="superiority"]');
+  const lille = await G(() => { const p = Sim.MAP.provs.find(q => q.name === 'Lille') || Sim.MAP.provs.find(q => Sim.G.owner[q.id] === 'FRA' && q.city); Render.cam.x = p.x; Render.cam.y = p.y; Render.cam.z = 9; Render.cam.anim = false; return [p.id, p.x, p.y]; });
+  await page.waitForTimeout(200);
+  await clickWorld(page, lille[1] + 0.3, lille[2] + 0.3);
+  check('air: a mission is flown over the province clicked', await waitFor(page, ([id, p]) => { const w = Air.wing(id); return w && w.mission === 'superiority' && Math.abs(Sim.MAP.provs[w.target].x - Sim.MAP.provs[p].x) < 3; }, [wid, lille[0]], 1500), await G(id => JSON.stringify(Air.wing(id)), wid));
+  await clickEl(page, '#rp-body [data-wo="idle"]');
+  check('air: Stand down brings the wing home', await waitFor(page, id => Air.wing(id).mission === 'idle', wid));
+
+  // seas map mode
+  await clickEl(page, '#mc-sea');
+  check('navy: the sea map mode shows', await waitFor(page, () => Render.state.mode === 'sea', null, 1500));
+  await G(() => Render.fitWorld()); await page.waitForTimeout(700);
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/sea-map.png') });
+  await clickEl(page, '#mc-pol');
+
+  // military works from the province panel: a fort on a chosen province, then it completes
+  const cands = await G(() => Sim.MAP.provs.filter(p => Sim.G.owner[p.id] === 'ENG' && p.home && !p.capital && Economy.canBuild('ENG', 'fort', p.id).ok).map(p => [p.id, p.x, p.y]).slice(0, 6));
+  let fortProv = null;
+  for (const c of cands) {
+    await G(p => { Render.cam.x = p[1]; Render.cam.y = p[2]; Render.cam.z = 10; Render.cam.anim = false; }, c);
+    await page.waitForTimeout(250);
+    await clickWorld(page, c[1], c[2]);
+    if (await waitFor(page, id => Render.state.selProv === id && !!document.querySelector('#leftpanel [data-pbuild="fort"]:not([disabled])'), c[0], 1500)) { fortProv = c[0]; break; }
+  }
+  const eq0 = await G(() => Sim.G.countries.ENG.eco.queue.length);
+  const fclick = fortProv !== null && await clickEl(page, '#leftpanel [data-pbuild="fort"]:not([disabled])');
+  check('works: the province panel builds a fort there', fclick && await waitFor(page, ([q, id]) => { const Q = Sim.G.countries.ENG.eco.queue; return Q.length === q + 1 && Q[Q.length - 1].prov === id && Q[Q.length - 1].kind === 'fort'; }, [eq0, fortProv]));
+  const fortDone = fortProv !== null && await G(id => { for (let d = 0; d < 200 && Sim.G.countries.ENG.eco.queue.some(q => q.kind === 'fort'); d++) for (let h = 0; h < 24; h++) Sim.hourTick(); return Economy.infra(id, 'fort'); }, fortProv);
+  check('works: the fort completes and strengthens defenders', fortDone >= 1 && await G(id => Sim.fortBonus('ENG', id) > 0.1, fortProv), 'fort level ' + fortDone);
+
+  // war with Germany: invasion by sea through the army panel and the map
+  await G(() => { Sim.declareWar('ENG', 'GER', true); Render.state.dirtyOwners = true; });
+  const inv = await G(() => {
+    const g = Sim.G, M = Sim.MAP;
+    const a = g.armies.filter(x => x.owner === 'ENG' && Seas.isCoastal(x.prov) && g.owner[x.prov] === 'ENG' && !x.battle).sort((x, y) => y.units.length - x.units.length)[0];
+    if (!a) return null;
+    while (a.units.length > 4) a.units.pop();
+    const t = M.provs.filter(p => g.owner[p.id] === 'GER' && Seas.isCoastal(p.id) && !Sim.hostilesAt('ENG', p.id).length).map(p => ({ p, plan: Navy.planInvasion(a, p.id) })).filter(o => o.plan.ok).sort((x, y) => x.plan.km - y.plan.km)[0];
+    if (!t) return { army: a.id, none: true };
+    UI._select([a.id]);
+    return { army: a.id, target: t.p.id, x: t.p.x, y: t.p.y, name: t.p.name };
+  });
+  let landed = null;
+  if (inv && !inv.none) {
+    await waitFor(page, () => !!document.querySelector('#rp-body [data-o="invade"]:not([disabled])'), null, 1500);
+    await clickEl(page, '#rp-body [data-o="invade"]');
+    await G(t => { Render.cam.x = t.x; Render.cam.y = t.y; Render.cam.z = 10; Render.cam.anim = false; }, inv);
+    await page.waitForTimeout(250);
+    await clickWorld(page, inv.x + 0.25, inv.y + 0.25);
+    check('invasion: Invade by sea then a coastal province starts planning', await waitFor(page, ([id, t]) => { const a = Sim.army(id); return a && a.sea && a.sea.phase === 'prep' && Sim.MAP.provs[a.sea.target].lm === Sim.MAP.provs[t].lm; }, [inv.army, inv.target], 1500), inv.name);
+    check('invasion: the army panel shows the progress bar', await waitFor(page, () => /Planning the invasion/.test(document.getElementById('rp-body').textContent) && !!document.querySelector('#rp-body .bar.prog'), null, 1500));
+    landed = await G(id => {
+      const a = Sim.army(id); if (!a || !a.sea) return { none: true };
+      const tgt = a.sea.target, seen = new Set();
+      for (let h = 0; h < 24 * 40 && Sim.army(id) && (Sim.army(id).sea || Sim.army(id).battle); h++) { Sim.hourTick(); if (Sim.army(id) && Sim.army(id).sea) seen.add(Sim.army(id).sea.phase); }
+      const b = Sim.army(id);
+      return { phases: [...seen], at: b ? Sim.MAP.provs[b.prov].name : 'destroyed', ashore: !!b && b.prov === tgt, owner: Sim.G.owner[tgt], alive: !!b, tgt: Sim.MAP.provs[tgt].name };
+    }, inv.army);
+    check('invasion: troops plan, sail and land', !landed.none && landed.phases.includes('prep') && landed.phases.includes('sail') && (landed.ashore || landed.owner === 'ENG' || !landed.alive), JSON.stringify(landed));
+  } else check('invasion: a target could be planned', false, JSON.stringify(inv));
+
+  // naval war: the Home Fleet hunts the German fleet; German submarines raid British shipping
+  const sea = await G(() => {
+    const g = Sim.G;
+    const gerShips = () => g.fleets.filter(f => f.owner === 'GER').reduce((s, f) => s + f.ships.length, 0);
+    const before = gerShips();
+    const home = g.fleets.filter(f => f.owner === 'ENG').sort((a, b) => Navy.power(b) - Navy.power(a))[0];
+    const gz = g.fleets.find(f => f.owner === 'GER' && !f.ships.every(s => s.type === 'submarine'));
+    if (gz) Navy.setMission(home, 'hunt', gz.zone);
+    let battles = 0;
+    for (let h = 0; h < 24 * 30; h++) { Sim.hourTick(); battles = Math.max(battles, g.navBattles.length); }
+    return { before, after: gerShips(), battles, sunk: Navy.nav(g.countries.ENG).sunk };
+  });
+  check('navy: fleets find each other and fight', sea.sunk > 0 && sea.after < sea.before, JSON.stringify(sea));
+  const raid = await G(() => {
+    const g = Sim.G;
+    // fresh German submarines raiding the Western Approaches, where British imports pass
+    const z = Seas.all().findIndex(x => x.name === 'Western Approaches');
+    const subs = Navy.newFleet('GER', z, Array.from({ length: 10 }, () => ({ type: 'submarine', str: 1, org: 1 })), 'raid');
+    subs.area = z;
+    Navy.daily();
+    const loss = Navy.lossIn('ENG', z);
+    const lane = g.dip.trade.filter(d => d.to === 'ENG').map(d => Navy.lane(d.from, d.to)).find(l => l && l.includes(z));
+    return { loss, lane: !!lane };
+  });
+  check('navy: submarines raiding a sea lane sink convoys', raid.loss > 0.1, JSON.stringify(raid));
+
+  // supply: ports and hubs are supply sources, and forts show in battle
+  const sup = await G(() => {
+    const g = Sim.G, M = Sim.MAP;
+    const port = M.provs.find(p => g.owner[p.id] === 'ENG' && !p.home && Navy.isPort(p.id) && Sim.sourceValue('ENG', p.id) > 0.3);
+    const far = M.provs.filter(p => g.owner[p.id] === 'ENG' && !p.home && !Navy.isPort(p.id) && p.core === 'ENG' && !p.city).sort((a, b) => Sim.supplyReach('ENG', a.id) - Sim.supplyReach('ENG', b.id))[0];
+    const r0 = far ? Sim.supplyReach('ENG', far.id) : 0;
+    if (far) Economy.setInfra(far.id, 'hub', 1);
+    const r1 = far ? Sim.supplyReach('ENG', far.id) : 0;
+    const maginot = M.provs.find(p => g.owner[p.id] === 'FRA' && Economy.infra(p.id, 'fort') === 3);
+    return { port: port && port.name, portValue: port && +Sim.sourceValue('ENG', port.id).toFixed(2), far: far && far.name, r0: +r0.toFixed(2), r1: +r1.toFixed(2), maginot: maginot && maginot.name, fort: maginot && Sim.fortBonus('FRA', maginot.id) };
+  });
+  check('supply: overseas ports feed armies', !!sup.port && sup.portValue > 0.3, JSON.stringify(sup));
+  check('supply: a supply hub makes a province a source', sup.r1 > sup.r0 && sup.r1 >= 0.99, `${sup.far}: ${sup.r0} → ${sup.r1}`);
+  check('works: the Maginot Line starts fortified', sup.fort >= 0.44, sup.maginot || 'none');
+  // air support shows in a land battle
+  const airB = await G(() => {
+    const g = Sim.G, M = Sim.MAP;
+    const b = g.battles.find(x => Sim.allied(x.atkTag, 'ENG') || Sim.allied(x.defTag, 'ENG')) || null;
+    const prov = b ? b.prov : M.provs.find(p => g.owner[p.id] === 'GER' && p.nb.some(n => g.owner[n] === 'FRA')).id;
+    const pt = [M.provs[prov].lon, M.provs[prov].lat];
+    for (const w of g.wings.filter(w => w.owner === 'ENG')) { const nb = Air.freeBase('ENG', prov); if (nb >= 0) Air.rebase(w, nb); Air.setMission(w, w.type === 'fighter' ? 'superiority' : 'cas', prov); }
+    return { sup: +Air.superiority('ENG', pt).toFixed(2), mul: +Air.battleBonus('ENG', prov).mul.toFixed(2), flying: g.wings.filter(w => w.owner === 'ENG' && w.mission !== 'idle').length };
+  });
+  check('air: planes over a battle change its odds', airB.mul > 1.02 && airB.flying > 0, JSON.stringify(airB));
+
+  // half a year of a world at war at sea: AI fleets, raiders, aircraft and landings, and the rules hold
+  const run = await G(() => {
+    const g = Sim.G, t0 = performance.now();
+    Sim.declareWar('ITA', 'FRA', true);
+    Sim.declareWar('JAP', 'USA', true);
+    const ships0 = {}; for (const c of Object.values(g.countries)) ships0[c.tag] = Navy.nav(c).lost;
+    let battles = 0, landings = 0, flying = 0; const seenInv = new Set();
+    for (let d = 0; d < 180; d++) {
+      for (let h = 0; h < 24; h++) { Sim.hourTick(); battles += g.navBattles.filter(b => b.start === g.hour).length; }
+      for (const a of g.armies) if (a.sea && a.owner !== 'ENG') seenInv.add(a.id);
+      flying = Math.max(flying, g.wings.filter(w => w.owner !== 'ENG' && w.mission !== 'idle').length);
+    }
+    const lost = Object.values(g.countries).reduce((s, c) => s + Navy.nav(c).lost, 0);
+    const built = Object.values(g.countries).reduce((s, c) => s + Navy.nav(c).queue.length, 0);
+    return { ms: Math.round((performance.now() - t0) / 180), battles, lost, invasions: seenInv.size, flying, queued: built, bad: ecoInvariants() };
+  });
+  check('navy: the AI fights at sea, raids, flies and lands troops', run.battles >= 3 && run.lost >= 3 && run.flying >= 3 && run.invasions >= 1, `${run.battles} sea battles, ${run.lost} ships lost, ${run.invasions} AI landings, ${run.flying} AI wings flying, ${run.ms} ms per game day`);
+  check('navy: rules hold after half a year of war', run.bad.length === 0, run.bad.slice(0, 4).join('; '));
+  await clickEl(page, '.tab[data-tab="navy"]');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/navy.png') });
+  check('navy: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.close();
+}
+
 // ---------- diplomacy: every action through the Nations tab, AI answers, then a long AI run ----------
 async function diplomacyRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -671,6 +897,8 @@ async function erasRun(browser) {
     const bad = res.units.filter(u => modern.includes(u));
     const eco = await page.evaluate(() => { const c = Sim.G.countries[Sim.G.player]; return { goods: document.querySelectorAll('.tab[data-tab="econ"]').length, prod: Object.values(c.eco.prod).reduce((s, v) => s + v, 0), branches: Tech.branchesFor(Sim.G.player).length, bad: ecoInvariants() }; });
     check(`eras: ${era.label} has an economy and a tech tree`, eco.prod > 0 && eco.branches === 5 && eco.bad.length === 0, `${eco.branches} branches` + (eco.bad.length ? ' · ' + eco.bad.slice(0, 3).join('; ') : ''));
+    const nv = await page.evaluate(() => ({ fleets: Sim.G.fleets.length, ships: Sim.G.fleets.reduce((s, f) => s + f.ships.length, 0), types: [...new Set(Sim.G.fleets.flatMap(f => f.ships.map(s => Navy.typeName(s.type))))], wings: Sim.G.wings.length, air: Air.available(), ports: (Sim.G.inf || []).filter(I => I && I.port).length }));
+    check(`eras: ${era.label} has period navies${nv.air ? ' and aircraft' : ''}`, nv.fleets > 3 && nv.ports > 20 && (nv.air ? nv.wings > 0 : nv.wings === 0), `${nv.ships} ships in ${nv.fleets} fleets: ${nv.types.join(', ')}; ${nv.wings} air wings; ${nv.ports} ports`);
     if (era.id.startsWith('greatwar')) {
       // Landships wait for September 1916 even when fully researched
       const gate = await page.evaluate(() => {
@@ -726,7 +954,8 @@ async function mobileRun(browser) {
   browser.newPage = async o => { const p = await np(o); await p.addInitScript(ECO_INVARIANTS); return p; };
   browser.newContext = async o => { const c = await nc(o); await c.addInitScript(ECO_INVARIANTS); return c; };
   console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''})`);
-  try { await desktopRun(browser); await economyRun(browser); await diplomacyRun(browser); await erasRun(browser); await mobileRun(browser); }
+  const runs = { desktop: desktopRun, economy: economyRun, navy: navyRun, diplomacy: diplomacyRun, eras: erasRun, mobile: mobileRun };
+  try { for (const [k, fn] of Object.entries(runs)) if (!ONLY || ONLY.split(',').includes(k)) await fn(browser); }
   catch (e) { check('harness: completed without crashing', false, e.message.split('\n')[0]); }
   await browser.close();
   const failed = results.filter(r => !r.ok);

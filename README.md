@@ -21,6 +21,9 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 | `js/economy.js` | Goods, industries, stockpiles, gold, construction, trade deals, dependence, supply shocks, AI trade and building |
 | `js/tech.js` | Research slots, tree states, tier-3 choices, date gates, `Tech.mod()` modifiers, AI research |
 | `js/tech-data.js` | Tech trees for all six eras, national and culture branches, historical deposits per era |
+| `js/seas.js` | 62 sea zones, straits and canals (closed to enemies of the owner), sea routes |
+| `js/navy.js` | Ship roles per era, fleets, missions, naval battles, sea control, convoys, naval invasions, naval AI |
+| `js/air.js` | Air wings, airbases, missions, air superiority, close air support, bombing, naval strikes |
 | `js/render.js` | Canvas renderer with cached layers, camera, picking |
 | `js/ui.js` | Start screen, top bar, panels, army tray, orders, input |
 | `js/main.js` | Boot and game loop |
@@ -30,7 +33,7 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 2. Armies, counters, movement, combat, conquest — done (plus frontline/offensive orders, supply, recruitment, basic war AI)
 3. Economy: goods, industries, construction, trade deals, embargoes — done
 4. Research and diplomacy, factions, fuller AI — done (tech trees for every era, full diplomacy)
-5. Navy, air force, supply network, naval invasions
+5. Navy, air force, supply network, naval invasions — done
 6. Events, peace conferences, save/load, polish
 
 ## Playtest loop
@@ -105,3 +108,13 @@ Designed in `rts-game-design/ECONOMY-AND-TRADE.md`. Six goods with era names (Fo
 
 ## Research
 Designed in `rts-game-design/TECH-TREES.md`. Every era has four branches (Military, Industry, Trade, Statecraft) with a locked choice at tier 3, plus a national branch for the major nations and a culture branch for everyone else. Two research slots; progress on a stopped tech is kept. Some techs wait for their real date (Landships from September 1916, which also unlocks a tank unit in 1914). Every effect is a modifier from `Tech.mod()` that combat, movement, supply, production, trade and stability read.
+
+## Navy, air force and supply
+- **Seas:** the oceans are split into 62 sea zones. Straits and canals (Bosporus, Danish Straits, Gibraltar, Suez from 1869, Panama from 1914, Bab-el-Mandeb, Hormuz, Malacca) are held by a province and closed to anyone at war with its owner. The Seas map mode shows who controls each zone.
+- **Ships:** battleships, carriers, cruisers, destroyers and submarines, with period names in every era (triremes in 431 BC, ships of the line in 1805). Transports are a pool. Ships are laid down at dockyards.
+- **Missions:** hold, patrol, search and destroy, convoy escort, convoy raiding, invasion support and repair. Fleets spot each other by search power and fight in salvos, and a battered fleet runs for port.
+- **Convoys:** trade deals that cross the sea lose part of each delivery to raiders in the zones they pass. Submarines are the best raiders and escorts cut the losses.
+- **Invasions:** select an army, press Invade by sea, then click a coastal province. The army needs free transports and a sea route. It prepares (faster from a port), sails, and waits offshore for 40% naval superiority. It then lands with an attack penalty. A progress pill on the map and a bar in the army panel track it.
+- **Air:** fighters, close air support, bombers and naval bombers (1936; 1914 has early fighters and bombers). Wings fly air superiority, CAS, bombing and naval strike within range of their airbase. Air superiority boosts battles and cuts enemy supply. Bombing lowers a province's output. Radar strengthens fighters.
+- **Military works:** ports, dockyards, airbases, supply hubs, forts and radar, built from the province panel on the same construction queue as industry. The Maginot Line starts fortified.
+- **Supply:** supply flows from the capital, core cities, supply hubs and ports (ports only while the sea lanes are held). It fades with distance. Poor supply lowers attack, defence and organisation, slows movement and causes attrition.

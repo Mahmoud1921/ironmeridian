@@ -8,8 +8,8 @@ const Render = (function () {
   let lmClips = [], lmProvs = [], lmBorders = [], lmCountryBorders = [];
   let fillCache = [], labels = [];
   let provGrid = null;
-  const state = { mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), dirtyOwners: true, frontEdges: null, pendingHint: null };
-  let counterHits = [], battleHits = [];
+  const state = { mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), selFleet: 0, selWing: 0, selZone: -1, dirtyOwners: true, frontEdges: null, pendingHint: null };
+  let counterHits = [], battleHits = [], fleetHits = [], wingHits = [];
   const stripeCache = {};
   let cityOrder = null;
 
@@ -173,6 +173,12 @@ const Render = (function () {
   // where an army is right now: along its current leg, including the part of the hour already elapsed
   function armyPos(a) {
     const p = MAP.provs[a.prov];
+    if (a.sea && a.sea.phase !== 'prep') {
+      // afloat: somewhere between the port it left and the beach it is heading for
+      const s = a.sea, q = MAP.provs[s.target];
+      const t = s.phase === 'sail' ? Math.min(0.85, (s.t + (state.hourFrac || 0)) / Math.max(1, s.sail) * 0.85) : s.phase === 'wait' ? 0.85 : Math.max(0, 0.85 - s.t / Math.max(12, s.sail / 2) * 0.85);
+      return [p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t];
+    }
     if (a.path.length) {
       const n = MAP.provs[a.path[0]];
       const prog = a.progress + (a.battle ? 0 : (a.rate || 0) * (state.hourFrac || 0));
@@ -318,11 +324,14 @@ const Render = (function () {
     });
 
     if (G && state.mode === 'trade') drawTrade(z, vx0, vy0, vx1, vy1);
+    if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawSeaTint(z);
+    if (G && state.selZone >= 0 && typeof Seas !== 'undefined') drawZoneOutline(z, state.selZone);
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
-    if (G) { drawPaths(z); drawArmies(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+    if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
+    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
   }
 
   // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
@@ -620,6 +629,196 @@ const Render = (function () {
     }
   }
 
+  // ---------- the sea: zone control tint, fleets, air wings, invasions ----------
+  let seaTint = null, seaTintAt = -1e9, seaClip = null;
+  function buildSeaTint() {
+    const g = Seas.grid, G = Sim.G;
+    if (!seaTint) { seaTint = document.createElement('canvas'); seaTint.width = g.NX; seaTint.height = g.NY; }
+    const cx = seaTint.getContext('2d'), img = cx.createImageData(g.NX, g.NY), d = img.data;
+    const col = Seas.all().map(z => { const t = Navy.controller(z.id); return t && G.countries[t] ? hexToRgb(G.countries[t].color) : null; });
+    for (let k = 0; k < g.cell.length; k++) {
+      const z = g.cell[k]; if (z < 0) continue;
+      const c = col[z], o = k * 4;
+      // zone edges show as a faint line of lighter cells
+      const i = k % g.NX, edge = (i + 1 < g.NX && g.cell[k + 1] >= 0 && g.cell[k + 1] !== z) || (k + g.NX < g.cell.length && g.cell[k + g.NX] >= 0 && g.cell[k + g.NX] !== z);
+      if (c) { d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = edge ? 190 : 120; }
+      else if (edge) { d[o] = 170; d[o + 1] = 200; d[o + 2] = 220; d[o + 3] = 60; }
+    }
+    cx.putImageData(img, 0, 0);
+    seaTintAt = performance.now();
+  }
+  function drawSeaTint(z) {
+    if (performance.now() - seaTintAt > 1500) buildSeaTint();
+    if (!seaClip) { seaClip = new Path2D(); seaClip.rect(WORLD.x0, WORLD.y0, WORLD.x1 - WORLD.x0, WORLD.y1 - WORLD.y0); seaClip.addPath(coastPath); }
+    const g = Seas.grid;
+    ctx.save(); ctx.clip(seaClip, 'evenodd');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(seaTint, g.X0, g.Y0, g.NX * g.RES, g.NY * g.RES);
+    ctx.restore();
+  }
+  function drawZoneOutline(z, id) {
+    const g = Seas.grid;
+    ctx.save(); ctx.clip(seaClip || (seaClip = (() => { const p = new Path2D(); p.rect(WORLD.x0, WORLD.y0, WORLD.x1 - WORLD.x0, WORLD.y1 - WORLD.y0); p.addPath(coastPath); return p; })()), 'evenodd');
+    ctx.fillStyle = 'rgba(255,236,170,0.16)';
+    ctx.beginPath();
+    for (let k = 0; k < g.cell.length; k++) if (g.cell[k] === id) ctx.rect(g.X0 + (k % g.NX) * g.RES, g.Y0 + Math.floor(k / g.NX) * g.RES, g.RES, g.RES);
+    ctx.fill();
+    ctx.restore();
+  }
+  function drawZoneLabels(z) {
+    const rel = z / minZoom();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'italic 600 ' + (rel < 1.8 ? 10 : 12) + 'px "Barlow Semi Condensed", sans-serif';
+    for (const zn of Seas.all()) {
+      if (rel < 1.4 && zn.cells < 150) continue;
+      const [sx, sy] = worldToScreen(zn.x, zn.y);
+      if (sx < -80 || sx > W + 80 || sy < -20 || sy > H + 20) continue;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(10,25,35,0.7)'; ctx.strokeText(zn.name, sx, sy + 18);
+      ctx.fillStyle = 'rgba(175,210,230,0.9)'; ctx.fillText(zn.name, sx, sy + 18);
+    }
+  }
+  function zonePt(id) { const zn = Seas.zone(id); return [zn.x, zn.y]; }
+  function fleetPos(f) {
+    const [ax, ay] = zonePt(f.zone);
+    if (!f.path.length) return [ax, ay];
+    let [bx, by] = zonePt(f.path[0]);
+    if (bx - ax > 180) bx -= 360; else if (ax - bx > 180) bx += 360;   // across the date line
+    const za = Seas.zone(f.zone), zb = Seas.zone(f.path[0]);
+    const km = GEO.haversineKm(za.lon, za.lat, zb.lon, zb.lat) || 1;
+    const t = Math.min(1, (f.progress + (f.battle ? 0 : (f.rate || 0) * (state.hourFrac || 0))) / km);
+    return [ax + (bx - ax) * t, ay + (by - ay) * t];
+  }
+  function hull(x, y, w, h, sub) {
+    ctx.beginPath();
+    if (sub) { ctx.ellipse(x + w / 2, y + h * 0.62, w * 0.46, h * 0.22, 0, 0, Math.PI * 2); ctx.rect(x + w * 0.44, y + h * 0.18, w * 0.14, h * 0.3); }
+    else { ctx.moveTo(x, y + h * 0.5); ctx.lineTo(x + w, y + h * 0.5); ctx.lineTo(x + w * 0.84, y + h * 0.85); ctx.lineTo(x + w * 0.12, y + h * 0.85); ctx.closePath(); ctx.rect(x + w * 0.34, y + h * 0.2, w * 0.26, h * 0.3); }
+    ctx.fill();
+  }
+  function drawFleets(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, pl = G.player;
+    fleetHits = [];
+    const rel = z / minZoom();
+    const groups = new Map();
+    for (const f of G.fleets) {
+      const [x, y] = fleetPos(f);
+      if (x < vx0 - 3 || x > vx1 + 3 || y < vy0 - 3 || y > vy1 + 3) continue;
+      if (rel < 1.8 && f.owner !== pl && !Sim.atWar(f.owner, pl) && !Sim.allied(f.owner, pl)) continue;
+      const key = f.zone + '>' + (f.path[0] ?? '') + ':' + f.owner;
+      if (!groups.has(key)) groups.set(key, { x, y, list: [] });
+      groups.get(key).list.push(f);
+    }
+    // groups in the same spot fan out
+    const spots = new Map();
+    const sorted = [...groups.values()].sort((a, b) => (a.list[0].owner === pl) - (b.list[0].owner === pl));
+    for (const g of sorted) {
+      const k = Math.round(g.x * 4) + ':' + Math.round(g.y * 4);
+      const n = spots.get(k) || 0; spots.set(k, n + 1);
+      let [sx, sy] = worldToScreen(g.x, g.y);
+      sx += (n % 3 - 1) * 42 * (n ? 1 : 0); sy += Math.floor(n / 3) * 20 - 6;
+      const f = g.list[0], mine = f.owner === pl, hostile = Sim.atWar(f.owner, pl);
+      const ships = g.list.reduce((s, x) => s + x.ships.length, 0);
+      const subs = g.list.every(x => x.ships.every(s => s.type === 'submarine'));
+      const sel = g.list.some(x => x.id === state.selFleet);
+      const w = 40, h = 16, x = sx - w / 2, y = sy - h / 2;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 1.5, y + 2, w, h);
+      ctx.fillStyle = mine ? '#1d2a33' : hostile ? '#3a1d1a' : '#20262b'; ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = COUNTRY_BY_TAG[f.owner].color; ctx.fillRect(x + 2, y + 2, 17, h - 4);
+      ctx.fillStyle = '#10161a'; hull(x + 3, y + 2, 15, h - 4, subs);
+      ctx.font = '700 11px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e6eef2'; ctx.fillText(String(ships), x + 30, y + h / 2 + 0.5);
+      const busy = g.list.some(x => x.battle);
+      ctx.lineWidth = sel ? 2.2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : busy ? '#ff9a5a' : hostile ? '#c2493d' : mine ? '#7fa6bf' : '#4d5a63';
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      if (mine && g.list.some(x => x.mission !== 'hold')) { ctx.fillStyle = '#9fd0ea'; ctx.fillRect(x + w - 5, y + 2, 3, 3); }
+      fleetHits.push({ x, y, w, h, fleets: g.list });
+    }
+    // the selected fleet's course
+    const sf = state.selFleet && G.fleets.find(x => x.id === state.selFleet);
+    if (sf && sf.path.length) {
+      const pts = [fleetPos(sf), ...sf.path.map(zonePt)].map(p => worldToScreen(p[0], p[1]));
+      ctx.setLineDash([5, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(140,200,235,0.9)';
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // naval battles
+    for (const b of G.navBattles) {
+      const [sx, sy] = worldToScreen(...zonePt(b.zone));
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+      ctx.beginPath(); ctx.arc(sx, sy - 22, 9 + pulse * 2, 0, 7); ctx.fillStyle = 'rgba(190,90,40,0.92)'; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#f0e2b0'; ctx.stroke();
+      ctx.strokeStyle = '#f4ecd0'; ctx.lineWidth = 1.6; ctx.beginPath();
+      for (let i = -1; i <= 1; i += 2) { ctx.moveTo(sx - 5, sy - 22 + i * 2.5); ctx.quadraticCurveTo(sx - 2, sy - 25 + i * 2.5, sx, sy - 22 + i * 2.5); ctx.quadraticCurveTo(sx + 2, sy - 19 + i * 2.5, sx + 5, sy - 22 + i * 2.5); }
+      ctx.stroke();
+    }
+  }
+  function fleetAt(sx, sy) { for (let i = fleetHits.length - 1; i >= 0; i--) { const h = fleetHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.fleets; } return null; }
+  const MISSION_COL = { superiority: '120,180,235', cas: '230,150,70', bomb: '220,90,70', naval: '120,210,200' };
+  function drawWings(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, pl = G.player;
+    wingHits = [];
+    if (!G.wings.length) return;
+    const rel = z / minZoom();
+    // mission lines for the player's wings
+    for (const w of G.wings) {
+      if (w.owner !== pl || w.mission === 'idle' || w.target < 0) continue;
+      const b = MAP.provs[w.base];
+      const t = w.sea ? zonePt(w.target) : [MAP.provs[w.target].x, MAP.provs[w.target].y];
+      const [ax, ay] = worldToScreen(b.x, b.y), [bx, by] = worldToScreen(t[0], t[1]);
+      const col = MISSION_COL[w.mission] || '200,200,200', sel = w.id === state.selWing;
+      ctx.setLineDash([3, 5]); ctx.lineWidth = sel ? 2.5 : 1.5; ctx.strokeStyle = 'rgba(' + col + ',' + (sel ? 0.95 : 0.55) + ')';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2, Math.min(ay, by) - 30, bx, by); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(bx, by, sel ? 7 : 5, 0, 7); ctx.strokeStyle = 'rgba(' + col + ',0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+      if (sel) { const r = Air.range(w.type, w.owner) / 111 * z * 0.9; ctx.beginPath(); ctx.arc(ax, ay, r, 0, 7); ctx.setLineDash([2, 6]); ctx.strokeStyle = 'rgba(' + col + ',0.35)'; ctx.stroke(); ctx.setLineDash([]); }
+    }
+    if (rel < 1.8) return;
+    const groups = new Map();
+    for (const w of G.wings) {
+      const p = MAP.provs[w.base];
+      if (p.x < vx0 - 2 || p.x > vx1 + 2 || p.y < vy0 - 2 || p.y > vy1 + 2) continue;
+      const k = w.base + ':' + w.owner;
+      if (!groups.has(k)) groups.set(k, []); groups.get(k).push(w);
+    }
+    for (const list of groups.values()) {
+      const p = MAP.provs[list[0].base];
+      let [sx, sy] = worldToScreen(p.x, p.y); sx += 26; sy -= 30;
+      const mine = list[0].owner === pl, sel = list.some(w => w.id === state.selWing);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 1, sy - 1, 30, 14);
+      ctx.fillStyle = COUNTRY_BY_TAG[list[0].owner].color; ctx.fillRect(sx, sy, 12, 12);
+      // a small plane
+      ctx.fillStyle = '#10161a'; ctx.beginPath();
+      ctx.moveTo(sx + 6, sy + 1.5); ctx.lineTo(sx + 7, sy + 5); ctx.lineTo(sx + 11, sy + 6.5); ctx.lineTo(sx + 7, sy + 7); ctx.lineTo(sx + 6.6, sy + 9.5); ctx.lineTo(sx + 8, sy + 10.5);
+      ctx.lineTo(sx + 4, sy + 10.5); ctx.lineTo(sx + 5.4, sy + 9.5); ctx.lineTo(sx + 5, sy + 7); ctx.lineTo(sx + 1, sy + 6.5); ctx.lineTo(sx + 5, sy + 5); ctx.closePath(); ctx.fill();
+      ctx.font = '700 10px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#e6eef2'; ctx.fillText(String(list.length), sx + 21, sy + 6.5);
+      ctx.lineWidth = sel ? 2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : mine ? '#9fb8c8' : '#4d5a63'; ctx.strokeRect(sx - 0.5, sy - 0.5, 29, 13);
+      wingHits.push({ x: sx - 1, y: sy - 1, w: 30, h: 14, wings: list });
+    }
+  }
+  function wingAt(sx, sy) { for (const h of wingHits) if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.wings; return null; }
+  function drawInvasions(z) {
+    const G = Sim.G, pl = G.player;
+    for (const a of G.armies) {
+      if (!a.sea) continue;
+      if (a.owner !== pl && !Sim.atWar(a.owner, pl) && !Sim.allied(a.owner, pl)) continue;
+      const p = MAP.provs[a.sea.origin ?? a.prov], q = MAP.provs[a.sea.target];
+      const [ax, ay] = worldToScreen(p.x, p.y), [bx, by] = worldToScreen(q.x, q.y);
+      const col = a.owner === pl ? '140,200,235' : Sim.atWar(a.owner, pl) ? '224,90,70' : '160,200,140';
+      ctx.setLineDash([7, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(' + col + ',0.85)';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]);
+      const ang = Math.atan2(by - ay, bx - ax);
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx - Math.cos(ang - 0.45) * 12, by - Math.sin(ang - 0.45) * 12); ctx.lineTo(bx - Math.cos(ang + 0.45) * 12, by - Math.sin(ang + 0.45) * 12); ctx.closePath();
+      ctx.fillStyle = 'rgba(' + col + ',0.95)'; ctx.fill();
+      // progress pill: planning, sailing, waiting for the sea to clear
+      const pr = Navy.progress(a), mx = (ax + bx) / 2, my = (ay + by) / 2 - 14;
+      const label = (a.sea.phase === 'wait' ? 'Waiting ' : a.sea.hostile ? 'Invasion ' : 'Transport ') + Math.round(pr * 100) + '%';
+      ctx.font = '700 11px "Barlow Semi Condensed", sans-serif';
+      const tw = ctx.measureText(label).width + 12;
+      ctx.fillStyle = 'rgba(16,22,26,0.9)'; ctx.fillRect(mx - tw / 2, my - 9, tw, 18);
+      ctx.fillStyle = 'rgba(' + col + ',0.45)'; ctx.fillRect(mx - tw / 2, my + 6, tw * pr, 3);
+      ctx.strokeStyle = 'rgba(' + col + ',0.9)'; ctx.lineWidth = 1; ctx.strokeRect(mx - tw / 2 + 0.5, my - 8.5, tw - 1, 17);
+      ctx.fillStyle = '#e6eef2'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, mx, my);
+    }
+  }
+
   function setFrontEdges(pairs) {
     if (!pairs || !pairs.size) { state.frontEdges = null; return; }
     const path = new Path2D();
@@ -629,5 +828,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
