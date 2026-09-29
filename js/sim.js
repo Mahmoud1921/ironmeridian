@@ -6,7 +6,7 @@ const Sim = (function () {
   let nbDist = [];  // km between adjacent provinces
   const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {} };
 
-  const START = Date.UTC(1936, 0, 1, 0, 0, 0);
+  let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const ORD = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
   let rng = mulberry32(42);
@@ -14,7 +14,8 @@ const Sim = (function () {
   function dateOf(hour) { return new Date(START + hour * 3600e3); }
   function dateStr(hour, withTime) {
     const d = dateOf(hour);
-    const s = d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+    const y = d.getUTCFullYear();
+    const s = d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()] + ' ' + (typeof Eras !== 'undefined' ? Eras.yearLabel(y) : y);
     return withTime ? String(d.getUTCHours()).padStart(2, '0') + ':00, ' + s : s;
   }
 
@@ -29,6 +30,7 @@ const Sim = (function () {
   }
 
   function newGame(playerTag) {
+    START = typeof Eras !== 'undefined' ? Eras.startTime() : START;
     rng = mulberry32(1936 + playerTag.charCodeAt(0) * 7 + playerTag.charCodeAt(1));
     G = {
       hour: 0, speed: 2, paused: true, player: playerTag, over: false, ownVer: 0,
@@ -50,14 +52,24 @@ const Sim = (function () {
       };
     }
     for (const d of COUNTRY_DEFS) spawnInitialArmies(d);
-    declareWar('ITA', 'ETH', true);
+    if (typeof Eras !== 'undefined' && !Eras.isBase()) {
+      // the era's opening wars: [attacker, defender, attacker allies, defender allies, name]
+      for (const [a, d, aAll, dAll, name] of Eras.wars()) {
+        const w = G.countries[a] && G.countries[d] && declareWar(a, d, true);
+        if (!w) continue;
+        for (const [side, list] of [[w.attackers, aAll], [w.defenders, dAll]])
+          for (const t of list) if (G.countries[t]) for (const x of coalition(t)) if (!w.attackers.includes(x) && !w.defenders.includes(x)) side.push(x);
+        if (name) w.name = name;
+      }
+    } else declareWar('ITA', 'ETH', true);
     return G;
   }
 
   function commanderFor(c) {
     const pool = NAME_POOLS[c.culture] || NAME_POOLS.oth;
     const initial = 'ABCDEFGHJKLMNOPRSTVW'[Math.floor(rng() * 20)];
-    return { name: 'Gen. ' + initial + '. ' + pool[Math.floor(rng() * pool.length)], skill: 1 + Math.floor(rng() * 4) };
+    const rank = typeof Eras !== 'undefined' ? Eras.rankFor(c.culture) : 'Gen.';
+    return { name: rank + ' ' + initial + '. ' + pool[Math.floor(rng() * pool.length)], skill: 1 + Math.floor(rng() * 4) };
   }
   function makeUnit(type, str) { return { type, str: str === undefined ? 1 : str, org: 1 }; }
   function newArmy(tag, prov, units) {
@@ -74,6 +86,8 @@ const Sim = (function () {
     if (!d.divs || c.capital < 0) return;
     const types = [];
     for (let i = 0; i < d.divs; i++) {
+      const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(d, rng) : null;
+      if (eraType) { types.push(eraType); continue; }
       const r = rng();
       if (d.mil >= 8 && r < 0.10) types.push('tanks');
       else if (d.mil >= 8 && r < 0.20) types.push('motorized');
@@ -150,7 +164,9 @@ const Sim = (function () {
     return s;
   }
   function isAtWar(tag) { return G.wars.some(w => sideOf(w, tag)); }
-  function canEnter(tag, prov) { const o = G.owner[prov]; return o === tag || allied(tag, o) || atWar(tag, o); }
+  // unclaimed land in the historical eras (tag UNC) is open to anyone and taken by marching in
+  const wild = o => !!(COUNTRY_BY_TAG[o] && COUNTRY_BY_TAG[o].unclaimed);
+  function canEnter(tag, prov) { const o = G.owner[prov]; return o === tag || allied(tag, o) || atWar(tag, o) || wild(o); }
 
   function declareWar(att, def, silent, opts) {
     if (att === def || atWar(att, def) || allied(att, def)) return null;
@@ -521,6 +537,7 @@ const Sim = (function () {
   // ---------- recruitment ----------
   function canRecruit(tag, type) {
     const c = G.countries[tag], t = UNIT_TYPES[type];
+    if (!t || (typeof Eras !== 'undefined' && !Eras.isBase() && !Eras.unitsFor(tag).includes(type))) return false;
     return c.manpower >= t.mp && c.equipment >= t.eq;
   }
   function recruit(tag, type, armyId) {
@@ -551,7 +568,8 @@ const Sim = (function () {
     let guard = 0;
     while (divs + guard < want && guard < 3) {
       const r = rng();
-      const type = c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry';
+      const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(COUNTRY_BY_TAG[c.tag], rng) : null;
+      const type = eraType || (c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry');
       if (!recruit(c.tag, type, 0)) break;
       guard++;
     }
@@ -679,7 +697,7 @@ const Sim = (function () {
         const over = a.progress - distKm(a.prov, next);
         a.prov = next; a.path.shift(); a.progress = a.path.length ? Math.min(over, distKm(next, a.path[0]) * 0.9) : 0;
         const o = G.owner[next];
-        if (o !== a.owner && atWar(a.owner, o)) capture(next, a.owner);
+        if (o !== a.owner && (atWar(a.owner, o) || wild(o))) capture(next, a.owner);
         if (!a.path.length) a.retreating = false;
       }
     }
@@ -705,7 +723,7 @@ const Sim = (function () {
     for (const c of Object.values(G.countries)) {
       if (!c.alive) continue;
       const war = isAtWar(c.tag);
-      c.pp += 1 + (c.gov === 'Authoritarian' ? 0.2 : 0);
+      c.pp += 1 + ((typeof Eras !== 'undefined' ? Eras.govClass(c.gov) : c.gov) === 'Authoritarian' ? 0.2 : 0);
       const d = COUNTRY_DEFS.find(x => x.tag === c.tag);
       c.manpower += Math.round(d.pop * 1e6 * 0.00003 * (0.5 + c.stab) * (war ? 1.5 : 1));
       c.equipment += c.mil * 12 * (0.7 + 0.5 * c.stab);

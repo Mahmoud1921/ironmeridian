@@ -45,14 +45,10 @@ const UI = (function () {
   // ---------- flags (original abstract designs) ----------
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
   function shade(hex, f) { const n = parseInt(hex.slice(1), 16); const r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255; const m = v => Math.max(0, Math.min(255, Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f))); return 'rgb(' + m(r) + ',' + m(g) + ',' + m(b) + ')'; }
-  let flagCache = {};
+  const flagCache = {};
   function flagSVG(tag) {
     if (flagCache[tag]) return flagCache[tag];
-    // in a historical era the era's own flag wins; the 1936 flags must not leak onto a tag reused by another era
-    const inEra = typeof Eras !== 'undefined' && !Eras.isBase();
-    const eraFlag = inEra && Eras.flagFor(tag);
-    if (eraFlag) return (flagCache[tag] = eraFlag);
-    if (!inEra && typeof FLAGS !== 'undefined' && FLAGS[tag]) return (flagCache[tag] = `<svg class="flag" viewBox="0 0 30 20" preserveAspectRatio="none" aria-hidden="true">${FLAGS[tag]}</svg>`);
+    if (typeof FLAGS !== 'undefined' && FLAGS[tag]) return (flagCache[tag] = `<svg class="flag" viewBox="0 0 30 20" preserveAspectRatio="none" aria-hidden="true">${FLAGS[tag]}</svg>`);
     const c = COUNTRY_BY_TAG[tag].color, h = hash(tag);
     const L = '#ece4cc', D = shade(c, -0.55), A = shade(c, 0.35);
     const pick = h % 8;
@@ -122,19 +118,7 @@ const UI = (function () {
   }
 
   // ---------- start screen ----------
-  const MAJORS_1936 = ['GER', 'FRA', 'ENG', 'SOV', 'ITA', 'USA', 'JAP', 'CHI', 'POL', 'SPA', 'TUR', 'ROM'];
-  let MAJORS = MAJORS_1936;
-  // the twelve strongest nations of an era, by armies and industry
-  const majorsFor = () => typeof Eras === 'undefined' || Eras.isBase() ? MAJORS_1936
-    : COUNTRY_DEFS.filter(d => d.divs > 0 && !d.unclaimed).sort((a, b) => (b.divs + b.mil * 2 + b.civ) - (a.divs + a.mil * 2 + a.civ)).slice(0, 12).map(d => d.tag);
-  function pickEra(id) {
-    Sim.G = null; // eras are picked before a game starts; drop any finished game
-    Eras.apply(MAP, id);
-    flagCache = {}; MAJORS = majorsFor(); startPick = MAJORS[0];
-    if (typeof Figures !== 'undefined' && Figures.reset) Figures.reset();
-    Render.refreshAll();
-    showStart();
-  }
+  const MAJORS = ['GER', 'FRA', 'ENG', 'SOV', 'ITA', 'USA', 'JAP', 'CHI', 'POL', 'SPA', 'TUR', 'ROM'];
   function countryFacts(tag) {
     const d = COUNTRY_BY_TAG[tag];
     const provs = MAP.provs.filter(p => p.owner === tag);
@@ -144,13 +128,6 @@ const UI = (function () {
   }
   function showStart() {
     $('#start').hidden = false;
-    if (typeof Eras !== 'undefined') {
-      const cur = Eras.isBase() ? Eras.BASE_ID : Eras.info().id;
-      $('#st-eras').innerHTML = Eras.list().map(e => `<button data-era="${e.id}" class="${e.id === cur ? 'sel' : ''}" title="${esc(e.name)}">${esc(e.label)}</button>`).join('');
-      document.querySelectorAll('#st-eras button').forEach(b => b.onclick = () => { if (b.dataset.era !== cur) pickEra(b.dataset.era); });
-      const e = Eras.list().find(x => x.id === cur);
-      $('#st-year').textContent = 'THE WORLD · ' + (e ? e.label : '1936') + (e && e.id !== Eras.BASE_ID ? ' · ' + e.name.toUpperCase() : '');
-    }
     const majors = $('#st-majors');
     majors.innerHTML = MAJORS.map(t => `<button class="ncard" data-tag="${t}">${flagSVG(t)}<span><b>${esc(COUNTRY_BY_TAG[t].name)}</b><small>${COUNTRY_BY_TAG[t].gov}</small></span></button>`).join('');
     const renderAll = q => {
@@ -403,9 +380,7 @@ const UI = (function () {
     const target = myArmiesSel().length === 1 ? myArmiesSel()[0] : null;
     let html = `<dl class="kv"><dt>Manpower</dt><dd>${fmtN(c.manpower)}</dd><dt>Equipment</dt><dd>${fmtN(c.equipment)} (+${Math.round(c.mil * 12 * (0.7 + 0.5 * c.stab))}/day)</dd></dl>
       <p class="note">New divisions ${target ? 'join <b>' + esc(target.name) + '</b> if it is inside your borders when training ends, otherwise they' : ''} gather in a reserve army at ${esc(MAP.provs[c.capital]?.name || 'the capital')}.</p><div class="list">`;
-    // an era may reserve units for some nations (Spartans for Sparta, legionaries for Rome)
-    const trainable = typeof Eras !== 'undefined' && !Eras.isBase() ? Eras.unitsFor(G.player) : LAND_TYPES;
-    for (const t of trainable) {
+    for (const t of LAND_TYPES) {
       const u = UNIT_TYPES[t];
       html += `<div class="row">${unitIcon(t, COUNTRY_BY_TAG[G.player].color).replace('<svg', '<svg style="width:34px;height:22px;flex:none"')}<div class="grow"><div>${u.name}</div>
         <div class="sub">Atk ${u.atk} · Def ${u.def} · ${u.speed} km/h · Org ${u.org}</div><div class="sub">${fmtN(u.mp)} men · ${u.eq} equipment · ${u.days} days</div></div>

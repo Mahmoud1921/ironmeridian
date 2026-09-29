@@ -473,6 +473,39 @@ async function diplomacyRun(browser) {
   await page.close();
 }
 
+// ---------- historical eras: pick each on the start screen, play it for a while, check it holds ----------
+async function erasRun(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const boot = async () => { await page.goto(FILE); await waitFor(page, () => document.getElementById('loading').hidden, null, 15000); };
+  await boot();
+  const eras = await page.evaluate(() => Eras.list().map(e => ({ id: e.id, label: e.label, base: e.id === Eras.BASE_ID })));
+  check('eras: era choices shown on the start screen', eras.length >= 6 && await page.locator('#st-eras button').count() === eras.length, eras.map(e => e.label).join(', '));
+  const modern = ['tanks', 'motorized', 'mechanized', 'paratroopers', 'recon'];
+  for (const era of eras) {
+    if (era.base) continue;
+    await clickEl(page, `#st-eras button[data-era="${era.id}"]`);
+    const picked = await waitFor(page, id => document.querySelector(`#st-eras button[data-era="${id}"]`)?.classList.contains('sel'), era.id, 3000);
+    const tag = await page.evaluate(() => document.querySelector('#st-majors .ncard')?.dataset.tag);
+    if (tag) await clickEl(page, `#start .ncard[data-tag="${tag}"]`);
+    await clickEl(page, '#st-play');
+    const started = await waitFor(page, () => Sim.G && !document.getElementById('hud').hidden, null, 3000);
+    const res = await page.evaluate(async () => {
+      const G = Sim.G; G.settings.autoPause = false; G.speed = 5; G.paused = false;
+      await new Promise(r => setTimeout(r, 5000));
+      const units = new Set(); G.armies.forEach(a => a.units.forEach(u => units.add(u.type)));
+      return { date: document.getElementById('tb-date').textContent, days: G.hour / 24, units: [...units], armies: G.armies.length, flag: !!document.querySelector('#tb-nation svg') };
+    });
+    const bad = res.units.filter(u => modern.includes(u));
+    check(`eras: ${era.label} plays`, picked && started && res.days > 5 && res.armies > 0 && res.flag, `${res.date}, ${res.armies} armies`);
+    if (!era.id.startsWith('greatwar')) check(`eras: ${era.label} has only period units`, bad.length === 0, bad.join(', '));
+    await boot();
+  }
+  check('eras: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.close();
+}
+
 async function mobileRun(browser) {
   const ctx = await browser.newContext({ viewport: { width: 400, height: 820 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
@@ -500,7 +533,7 @@ async function mobileRun(browser) {
   let browser;
   try { browser = await launcher.launch(); } catch (e) { console.error('Cannot launch ' + BROWSER + ': ' + e.message.split('\n')[0]); process.exit(2); }
   console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''})`);
-  try { await desktopRun(browser); await diplomacyRun(browser); await mobileRun(browser); }
+  try { await desktopRun(browser); await diplomacyRun(browser); await erasRun(browser); await mobileRun(browser); }
   catch (e) { check('harness: completed without crashing', false, e.message.split('\n')[0]); }
   await browser.close();
   const failed = results.filter(r => !r.ok);

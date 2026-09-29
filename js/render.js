@@ -439,7 +439,7 @@ const Render = (function () {
   function mainType(a) {
     const cnt = {};
     for (const u of a.units) cnt[u.type] = (cnt[u.type] || 0) + (u.type === 'tanks' ? 2.5 : u.type === 'artillery' ? 0.5 : 1);
-    return Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x])[0] || 'infantry';
+    return Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x])[0] || LAND_TYPES[0];
   }
 
   // smoothed on-screen positions and headings, so figures glide between hourly simulation steps
@@ -603,5 +603,7 @@ const Render = (function () {
     state.frontEdges = path;
   }
 
-  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  // repaint every province, e.g. after an era change recolours nations that keep their tags
+  function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
+  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

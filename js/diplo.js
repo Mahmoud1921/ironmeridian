@@ -17,10 +17,12 @@ const Diplo = (function () {
     Communist: { Democratic: -30, Authoritarian: -40, Communist: 35, Neutral: -5 },
     Neutral: { Democratic: 5, Authoritarian: 0, Communist: -5, Neutral: 10 }
   };
+  // era governments (Kingdom, Sultanate, ...) behave as one of the four blocs above
+  const bloc = gov => typeof Eras !== 'undefined' ? Eras.govClass(gov) : gov;
   function rel(a, b) {
     const g = G(), A = g.countries[a], B = g.countries[b];
     if (!A || !B || a === b) return 100;
-    let v = GOV_REL[A.gov][B.gov] + (g.dip.rel[Sim.pairKey(a, b)] || 0);
+    let v = GOV_REL[bloc(A.gov)][bloc(B.gov)] + (g.dip.rel[Sim.pairKey(a, b)] || 0);
     if (Sim.root(a) === Sim.root(b)) v += 60;
     else if (Sim.allied(a, b)) v += 30;
     if (Sim.atWar(a, b)) v -= 60;
@@ -73,7 +75,7 @@ const Diplo = (function () {
   };
   function pickFactionName(gov) {
     const used = new Set(G().dip.factions.map(f => f.name));
-    for (const n of FACTION_NAMES[gov]) if (!used.has(n)) return n;
+    for (const n of (typeof Eras !== 'undefined' && Eras.factionNames(bloc(gov))) || FACTION_NAMES[bloc(gov)]) if (!used.has(n)) return n;
     return 'League of ' + (G().dip.nextFac + 1);
   }
   // provinces a demand asks for: land along the shared border, the demander's own cores first
@@ -487,7 +489,7 @@ const Diplo = (function () {
     const partner = others.filter(o => rel(tag, o.tag) >= 20 && !(g.dip.trade[Sim.pairKey(tag, o.tag)] > g.hour) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 6)];
     if (partner && R() < 0.4 && (partner.tag !== g.player || R() < 0.3)) aiDo('trade', tag, partner.tag);
     // expansionist regimes press claims on weak neighbours, and go to war when refused
-    if ((c.gov === 'Authoritarian' || c.gov === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12) {
+    if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12) {
       const mine = sidePower(Sim.coalition(tag));
       const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0)
         .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) })).filter(x => x.v * 1.8 < mine).sort((a, b) => a.v - b.v)[0];

@@ -62,9 +62,7 @@
 
   <div id="start" hidden>
     <section id="st-left">
-      <div id="st-title">IRON<br>MERIDIAN<small id="st-year">THE WORLD · 1936</small></div>
-      <div class="label">Era</div>
-      <div class="eras" id="st-eras"></div>
+      <div id="st-title">IRON<br>MERIDIAN<small>THE WORLD · 1936</small></div>
       <p class="note">Choose a nation to lead. Click a card, or click any country on the map.</p>
       <div class="label">Great powers and contenders</div>
       <div class="majors" id="st-majors"></div>
@@ -97,13 +95,6 @@
 <script src="js/flags.js"></script>
 <script src="js/mapgen.js"></script>
 <script src="js/units.js"></script>
-<script src="js/eras-flags.js"></script>
-<script src="js/era-m431-greece.js"></script>
-<script src="js/era-0117-rome.js"></script>
-<script src="js/era-1200-medieval.js"></script>
-<script src="js/era-1805-napoleonic.js"></script>
-<script src="js/era-1914-greatwar.js"></script>
-<script src="js/eras.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/diplo.js"></script>
 <script src="js/figures.js"></script>

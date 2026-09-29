@@ -45,6 +45,7 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
   - guarantees, peace, pacts and demands
   - answering an AI proposal
 - It then lets the AI run its own diplomacy for months, and checks that the treaty rules still hold.
+- It picks each historical era on the start screen, plays it at top speed, and checks that it runs with period units only.
 - It repeats the key taps on a phone-sized screen.
 
 Options: `--quick`, `--seed N`, `--browser firefox` (where Firefox is installed). It exits non-zero on any failure, writes `tests/last-report.json`, and saves screenshots to `tests/shots/`.
@@ -75,3 +76,14 @@ The actions are:
 ## Flags
 
 `js/flags.js` draws each nation's real 1936 flag as a small SVG. Flags that carried extremist symbols in 1936 use a non-extremist historical variant; for Germany that is the black, white and red tricolour.
+
+## Historical eras
+
+The start screen offers six start dates: 431 BC, 117 AD, 1200, 1805, 1914 and 1936. Each era reuses the same map with its own nations, cities, flags, units and troop models.
+
+- **Loader:** `js/eras.js`.
+- **Data:** one `js/era-*.js` file per era.
+- **Flags:** `js/eras-flags.js` draws each era's flags.
+- **Background:** research notes and sources are in `../rts-game-eras/`.
+
+To add an era, add a data file and a `<script>` line; no other code changes are needed.
