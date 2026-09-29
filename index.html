@@ -34,8 +34,10 @@
     <aside id="rightpanel" class="panel">
       <nav id="rp-tabs">
         <button class="tab on" data-tab="army">Army</button>
-        <button class="tab" data-tab="recruit">Recruit</button>
+        <button class="tab" data-tab="recruit">Train</button>
         <button class="tab" data-tab="diplo">Nations</button>
+        <button class="tab" data-tab="econ">Economy<span class="dot" id="tab-econ-dot" hidden></span></button>
+        <button class="tab" data-tab="tech">Tech</button>
         <button class="tab" data-tab="wars">Wars<span class="badge" id="tab-wars-badge" hidden></span></button>
         <button class="tab" data-tab="log">Log</button>
       </nav>
@@ -45,6 +47,7 @@
     <div id="mapctl">
       <button class="btn sm active" id="mc-pol" title="Political map">Political</button>
       <button class="btn sm" id="mc-ter" title="Terrain map">Terrain</button>
+      <button class="btn sm" id="mc-trade" title="Trade routes between nations">Trade</button>
       <button class="btn sm" id="mc-in" aria-label="Zoom in">+</button>
       <button class="btn sm" id="mc-out" aria-label="Zoom out">−</button>
       <button class="btn sm" id="mc-world" title="Show the whole world">World</button>
@@ -58,6 +61,7 @@
     <div id="toasts" aria-live="polite"></div>
     <div id="hint" hidden></div>
     <div id="battle" class="panel" hidden></div>
+    <div id="techtree" class="panel" hidden></div>
   </div>
 
   <div id="start" hidden>
@@ -104,8 +108,11 @@
 <script src="js/era-1805-napoleonic.js"></script>
 <script src="js/era-1914-greatwar.js"></script>
 <script src="js/eras.js"></script>
+<script src="js/tech-data.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/diplo.js"></script>
+<script src="js/economy.js"></script>
+<script src="js/tech.js"></script>
 <script src="js/figures.js"></script>
 <script src="js/render.js"></script>
 <script src="js/ui.js"></script>

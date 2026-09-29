@@ -17,6 +17,10 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 | `js/mapgen.js` | Deterministic province generation (Voronoi per landmass), terrain, ownership, population, factories |
 | `js/units.js` | Unit catalogue and government baselines |
 | `js/sim.js` | Game state, clock, movement, combat, supply, recruitment, wars, capitulation, AI |
+| `js/diplo.js` | Relations, factions, pacts, guarantees, trade deals, embargoes, aid, demands, peace, AI diplomacy |
+| `js/economy.js` | Goods, industries, stockpiles, gold, construction, trade deals, dependence, supply shocks, AI trade and building |
+| `js/tech.js` | Research slots, tree states, tier-3 choices, date gates, `Tech.mod()` modifiers, AI research |
+| `js/tech-data.js` | Tech trees for all six eras, national and culture branches, historical deposits per era |
 | `js/render.js` | Canvas renderer with cached layers, camera, picking |
 | `js/ui.js` | Start screen, top bar, panels, army tray, orders, input |
 | `js/main.js` | Boot and game loop |
@@ -24,8 +28,8 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 ## Phases
 1. Map, countries, provinces, zoom/pan, country selection, clock — done
 2. Armies, counters, movement, combat, conquest — done (plus frontline/offensive orders, supply, recruitment, basic war AI)
-3. Economy, factories, production lines, resources, construction — next
-4. Research, diplomacy, factions, fuller AI
+3. Economy: goods, industries, construction, trade deals, embargoes — done
+4. Research and diplomacy, factions, fuller AI — done (tech trees for every era, full diplomacy)
 5. Navy, air force, supply network, naval invasions
 6. Events, peace conferences, save/load, polish
 
@@ -45,7 +49,9 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
   - guarantees, peace, pacts and demands
   - answering an AI proposal
 - It then lets the AI run its own diplomacy for months, and checks that the treaty rules still hold.
-- It picks each historical era on the start screen, plays it at top speed, and checks that it runs with period units only.
+- It works the economy through the new tabs: builds from the Economy tab and from a province, signs, uses and cancels a deal through the trade form, embargoes a nation, cuts a deal to check the buyer's stockpile drains, researches a tech, opens the tree and checks the tier-3 choice closes the other path, and switches to the trade map.
+- It lets the AI trade, build and research on its own for a year, and checks the economy rules (no negative stocks, no deals at war or under embargo, never both tier-3 paths).
+- It picks each historical era on the start screen, plays it at top speed, and checks that it runs with period units only, has an economy and a tech tree, and that a date-gated tech (Landships, 1914) waits for its date.
 - It repeats the key taps on a phone-sized screen.
 
 Options: `--quick`, `--seed N`, `--browser firefox` (where Firefox is installed). It exits non-zero on any failure, writes `tests/last-report.json`, and saves screenshots to `tests/shots/`.
@@ -87,3 +93,15 @@ The start screen offers six start dates: 431 BC, 117 AD, 1200, 1805, 1914 and 19
 - **Background:** research notes and sources are in `../rts-game-eras/`.
 
 To add an era, add a data file and a `<script>` line; no other code changes are needed.
+
+## Economy and trade
+Designed in `rts-game-design/ECONOMY-AND-TRADE.md`. Six goods with era names (Food, Metal, Fuel, one strategic good, Luxuries and Arms): the strategic good is Tin in 431 BC, Horses in 117 and 1200, Saltpetre in 1805, Nitrates in 1914 and Rubber in 1936.
+- Provinces hold industries (farm, mine, fuel works, strategic works, workshop, arsenal) up to their slots. The old civilian and military factories become workshops and arsenals; farms, mines and works are placed by land and deposits at the start.
+- Each day nations produce, consume, fill or drain a 90-day stockpile, and sell what nobody buys on a world market that only takes so much. Shortages scale smoothly: no food cuts manpower and stability, no metal or fuel slows arsenals and construction, no strategic good slows and wears down the units that need it. Economic health multiplies research and taxes.
+- Gold comes from taxes, exports, the trade bonus and world market sales, and goes to army upkeep, imports and construction. In debt you cannot build or buy.
+- Trade deals ("Netherlands sells 8 oil a day to Germany for 16 gold") need a shared border or coasts on both sides and a free trade slot. Nations start with opening deals. Cutting a deal gives the buyer a 60-day supply shock and costs the seller relations and trust. An embargo cuts every deal and can give a strangled victim a reason for war.
+- The AI buys what it lacks, sells what it has spare, cancels deals a month before it attacks, and builds what it is short of.
+- Screens: the Economy tab, the province panel's Build buttons, the trade form on each nation page, and the Trade map mode.
+
+## Research
+Designed in `rts-game-design/TECH-TREES.md`. Every era has four branches (Military, Industry, Trade, Statecraft) with a locked choice at tier 3, plus a national branch for the major nations and a culture branch for everyone else. Two research slots; progress on a stopped tech is kept. Some techs wait for their real date (Landships from September 1916, which also unlocks a tank unit in 1914). Every effect is a modifier from `Tech.mod()` that combat, movement, supply, production, trade and stability read.

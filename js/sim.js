@@ -11,6 +11,7 @@ const Sim = (function () {
   const ORD = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
   let rng = mulberry32(42);
 
+  function dateTime() { return START + G.hour * 3600e3; }
   function dateOf(hour) { return new Date(START + hour * 3600e3); }
   function dateStr(hour, withTime) {
     const d = dateOf(hour);
@@ -31,6 +32,7 @@ const Sim = (function () {
 
   function newGame(playerTag) {
     START = typeof Eras !== 'undefined' ? Eras.startTime() : START;
+    if (typeof Tech !== 'undefined') Tech.registerUnlocks();
     rng = mulberry32(1936 + playerTag.charCodeAt(0) * 7 + playerTag.charCodeAt(1));
     G = {
       hour: 0, speed: 2, paused: true, player: playerTag, over: false, ownVer: 0,
@@ -39,7 +41,7 @@ const Sim = (function () {
       log: [], stats: { captured: 0, lost: 0, battlesWon: 0, battlesLost: 0 },
       settings: { autoPause: true, pauseWar: true, pauseBattle: false, pauseLoss: true, pauseCapitulation: true },
       // diplomacy: relation changes, factions, pacts, guarantees, trade deals, cooldowns and war claims
-      dip: { rel: {}, factions: [], facOf: {}, nextFac: 1, pacts: {}, guar: [], trade: {}, cd: {}, claims: {} }
+      dip: { rel: {}, factions: [], facOf: {}, nextFac: 1, pacts: {}, guar: [], trade: [], embargo: [], plan: {}, cd: {}, claims: {} }
     };
     for (const d of COUNTRY_DEFS) {
       const capital = MAP.provs.find(p => p.capital && p.cityTag === d.tag);
@@ -62,6 +64,8 @@ const Sim = (function () {
         if (name) w.name = name;
       }
     } else declareWar('ITA', 'ETH', true);
+    if (typeof Tech !== 'undefined') Tech.setup();
+    if (typeof Economy !== 'undefined') Economy.setup();
     return G;
   }
 
@@ -178,7 +182,7 @@ const Sim = (function () {
       for (const t of coalition(g.by)) if (!A.includes(t) && !D.includes(t)) D.push(t);
     }
     // a war ends every pact between the two sides and sours relations
-    for (const a of A) for (const d of D) { delete G.dip.pacts[pairKey(root(a), root(d))]; delete G.dip.trade[pairKey(a, d)]; }
+    for (const a of A) for (const d of D) { delete G.dip.pacts[pairKey(root(a), root(d))]; if (typeof Economy !== 'undefined') Economy.endDealsBetween(a, d, 'war'); }
     const rk = pairKey(att, def); G.dip.rel[rk] = (G.dip.rel[rk] || 0) - 50;
     const war = { id: G.nextWar++, attackers: A, defenders: D, leaderA: att, leaderD: def, goal: 'Conquer ' + G.countries[def].name, start: G.hour };
     const total = A.length + D.length;
@@ -228,8 +232,13 @@ const Sim = (function () {
   function armiesAt(prov) { return G.armies.filter(a => a.prov === prov); }
   function hostilesAt(tag, prov) { return G.armies.filter(a => a.prov === prov && !a.retreating && atWar(a.owner, tag)); }
   function armySpeed(a) {
-    let s = Infinity; for (const u of a.units) s = Math.min(s, UNIT_TYPES[u.type].speed);
+    let s = Infinity, slow = null;
+    for (const u of a.units) { const v = UNIT_TYPES[u.type].speed; if (v < s) { s = v; slow = u.type; } }
     s *= 0.6 + 0.4 * a.supply;
+    if (slow && typeof Tech !== 'undefined') s *= 1 + Tech.modFast(a.owner, 'speed', slow, a.prov);
+    // motor units crawl without fuel
+    const eco = G.countries[a.owner].eco;
+    if (slow && eco && eco.sat && typeof Economy !== 'undefined' && Economy.eraId() === 'ww2-1936' && (Tech.unitClass(slow) === 'motorised' || UNIT_TYPES[slow].armor)) s *= 0.5 + 0.5 * eco.sat.fuel;
     if (a.order === 'redeploy') s *= 2.5;
     if (a.retreating) s *= 1.3;
     return s;
@@ -242,13 +251,16 @@ const Sim = (function () {
   function armyPower(a, role, terrain) {
     let v = 0;
     const T = TERRAIN[terrain];
+    const TX = typeof Tech !== 'undefined';
     for (const u of a.units) {
       const t = UNIT_TYPES[u.type];
-      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1);
-      else v += t.def * u.str * (0.4 + 0.6 * u.org);
+      const m = TX ? 1 + Tech.modFast(a.owner, role === 'atk' ? 'attack' : 'defence', u.type, a.prov) : 1;
+      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1) * m;
+      else v += t.def * u.str * (0.4 + 0.6 * u.org) * m;
     }
     const c = G.countries[a.owner];
-    v *= c.tech * (1 + 0.05 * a.commander.skill) * (0.5 + 0.5 * a.supply);
+    const skill = a.commander.skill + (TX ? Tech.modFast(a.owner, 'commander', '', -1) : 0);
+    v *= c.tech * (1 + 0.05 * skill) * (0.5 + 0.5 * a.supply);
     if (role === 'def') v *= 1 + a.entrench;
     return v;
   }
@@ -358,7 +370,7 @@ const Sim = (function () {
     const apply = (list, hit, key) => {
       for (const a of list) for (const u of a.units) {
         const t = UNIT_TYPES[u.type];
-        const orgLoss = hit * (0.7 + rng() * 0.6) * 50 / t.org;
+        const orgLoss = hit * (0.7 + rng() * 0.6) * 50 / t.org / (1 + (typeof Tech !== 'undefined' ? Math.max(-0.5, Tech.modFast(a.owner, 'org', u.type, a.prov)) : 0));
         u.org = Math.max(0, u.org - orgLoss);
         const sl = Math.min(u.str, orgLoss * 0.22);
         u.str -= sl;
@@ -500,7 +512,7 @@ const Sim = (function () {
     D.factions = D.factions.filter(f => { if (!f.members.length) return false; if (!f.members.includes(f.leader)) f.leader = f.members[0]; return true; });
     D.guar = D.guar.filter(g => g.by !== tag && g.of !== tag);
     for (const k of Object.keys(D.pacts)) if (k.split('|').includes(tag)) delete D.pacts[k];
-    for (const k of Object.keys(D.trade)) if (k.split('|').includes(tag)) delete D.trade[k];
+    if (typeof Economy !== 'undefined') Economy.dropNation(tag);
   }
 
   // ---------- supply ----------
@@ -531,22 +543,25 @@ const Sim = (function () {
     let demand = 0;
     for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
-    return Math.max(0.05, Math.min(1, base * distF * capF));
+    const tm = typeof Tech !== 'undefined' ? 1 + Tech.mod(a.owner, 'supply', { prov: a.prov }) : 1;
+    return Math.max(0.05, Math.min(1, base * distF * capF * tm));
   }
 
   // ---------- recruitment ----------
   function canRecruit(tag, type) {
     const c = G.countries[tag], t = UNIT_TYPES[type];
     if (!t || (typeof Eras !== 'undefined' && !Eras.isBase() && !Eras.unitsFor(tag).includes(type))) return false;
-    return c.manpower >= t.mp && c.equipment >= t.eq;
+    if (t.locked && !(typeof Tech !== 'undefined' && Tech.unlocked(tag, type))) return false;
+    return c.manpower >= mpCost(tag, type) && c.equipment >= t.eq;
   }
   function recruit(tag, type, armyId) {
     const c = G.countries[tag], t = UNIT_TYPES[type];
     if (!canRecruit(tag, type)) return false;
-    c.manpower -= t.mp; c.equipment -= t.eq;
+    c.manpower -= mpCost(tag, type); c.equipment -= t.eq;
     c.queue.push({ type, hours: t.days * 24, total: t.days * 24, armyId: armyId || 0 });
     return true;
   }
+  function mpCost(tag, type) { return Math.round(UNIT_TYPES[type].mp * Math.max(0.5, 1 + (typeof Tech !== 'undefined' ? Tech.mod(tag, 'recruitCost', { unit: type }) : 0))); }
   function finishRecruit(c, item) {
     const target = item.armyId ? army(item.armyId) : null;
     const u = makeUnit(item.type, 1); u.org = 0.5;
@@ -705,7 +720,7 @@ const Sim = (function () {
     // queue
     for (const c of Object.values(G.countries)) {
       if (!c.alive || !c.queue.length) continue;
-      for (const item of c.queue) item.hours--;
+      for (const item of c.queue) item.hours -= typeof Economy !== 'undefined' ? Economy.recruitRate(c.tag, item.type) : 1;
       const done = c.queue.filter(i => i.hours <= 0);
       c.queue = c.queue.filter(i => i.hours > 0);
       for (const d of done) finishRecruit(c, d);
@@ -715,20 +730,28 @@ const Sim = (function () {
   }
   function recoverOrg(a, f) {
     const c = G.countries[a.owner];
-    const rate = 0.006 * f * a.supply * (0.8 + 0.4 * c.ws);
+    const rate = 0.006 * f * a.supply * (0.8 + 0.4 * c.ws) * (typeof Tech !== 'undefined' && a.units.length ? 1 + Math.max(-0.5, Tech.modFast(a.owner, 'org', a.units[0].type, -1)) : 1);
     for (const u of a.units) u.org = Math.min(1, u.org + rate);
   }
 
   function dayTick() {
+    const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
+    if (ECO) Economy.daily();
+    if (TX) Tech.daily();
+    if (ECO && Math.floor(G.hour / 24) % 30 === 0) Economy.monthly();
     for (const c of Object.values(G.countries)) {
       if (!c.alive) continue;
       const war = isAtWar(c.tag);
-      c.pp += 1 + ((typeof Eras !== 'undefined' ? Eras.govClass(c.gov) : c.gov) === 'Authoritarian' ? 0.2 : 0);
+      const M = (n, ctx) => TX ? Tech.mod(c.tag, n, ctx) : 0;
+      c.pp += (1 + ((typeof Eras !== 'undefined' ? Eras.govClass(c.gov) : c.gov) === 'Authoritarian' ? 0.2 : 0)) * (1 + M('pp'));
       const d = COUNTRY_DEFS.find(x => x.tag === c.tag);
-      c.manpower += Math.round(d.pop * 1e6 * 0.00003 * (0.5 + c.stab) * (war ? 1.5 : 1));
-      c.equipment += c.mil * 12 * (0.7 + 0.5 * c.stab);
-      if (!war) c.ws += (GOV_BASE[c.gov].ws - c.ws) * 0.01;
-      c.stab += (GOV_BASE[c.gov].stab - c.stab) * 0.005 - (war && c.ws < 0.3 ? 0.001 : 0);
+      const fed = c.eco && c.eco.sat ? c.eco.sat.food : 1;
+      c.manpower += Math.round(d.pop * 1e6 * 0.00003 * (0.5 + c.stab) * (war ? 1.5 : 1) * fed * Math.max(0.2, 1 + M('manpower')));
+      if (!ECO) c.equipment += c.mil * 12 * (0.7 + 0.5 * c.stab);
+      const wsT = Math.min(1, GOV_BASE[c.gov].ws + M('warSupport'));
+      const stT = Math.max(0, Math.min(1, GOV_BASE[c.gov].stab + (c.eco ? c.eco.stabAdj || 0 : 0)));
+      if (!war) c.ws += (wsT - c.ws) * 0.01;
+      c.stab += (stT - c.stab) * 0.005 - (war && c.ws < 0.3 ? 0.001 : 0);
       c.stab = Math.max(0, Math.min(1, c.stab)); c.ws = Math.max(0, Math.min(1, c.ws));
     }
     for (const a of G.armies) {
@@ -739,7 +762,7 @@ const Sim = (function () {
         const c = G.countries[a.owner];
         for (const u of a.units) {
           if (u.str >= 1) continue;
-          const need = Math.min(0.03, 1 - u.str);
+          const need = Math.min(0.03, 1 - u.str) * (typeof Economy !== 'undefined' ? Economy.recruitRate(c.tag, u.type) : 1);
           const mp = need * UNIT_TYPES[u.type].mp, eq = need * UNIT_TYPES[u.type].eq;
           if (c.manpower >= mp && c.equipment >= eq) { c.manpower -= mp; c.equipment -= eq; u.str += need; }
         }
@@ -764,7 +787,7 @@ const Sim = (function () {
   }
 
   return {
-    init, newGame, hourTick, dateStr, hooks,
+    init, newGame, hourTick, dateStr, dateTime, hooks, mpCost,
     get G() { return G; }, set G(v) { G = v; },
     get MAP() { return MAP; },
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,

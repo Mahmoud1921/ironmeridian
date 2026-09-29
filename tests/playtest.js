@@ -47,6 +47,28 @@ async function clickWorld(page, wx, wy, button = 'left') {
 }
 const waitFor = async (page, fn, arg, ms = 400) => { try { await page.waitForFunction(fn, arg, { timeout: ms }); return true; } catch { return false; } };
 
+// economy rules, evaluated inside the page
+const ECO_INVARIANTS = `window.ecoInvariants = () => {
+  const G = Sim.G, bad = [];
+  for (const c of Object.values(G.countries)) {
+    if (!c.alive || !c.eco || c.eco.none) continue;
+    if (!Number.isFinite(c.eco.gold)) bad.push(c.tag + ' gold is ' + c.eco.gold);
+    for (const k of Economy.GOODS) if (!(c.eco.stock[k] >= 0) || !Number.isFinite(c.eco.stock[k])) bad.push(c.tag + ' ' + k + ' stock is ' + c.eco.stock[k]);
+    if (!Number.isFinite(c.equipment)) bad.push(c.tag + ' arms is ' + c.equipment);
+    if ((c.techs || []).length !== new Set(c.techs).size) bad.push(c.tag + ' has a tech twice');
+    for (const id of c.techs || []) { const x = Tech.info(id); if (x && x.alt && c.techs.includes(x.alt)) bad.push(c.tag + ' took both tier-3 paths ' + id + '/' + x.alt); }
+  }
+  for (const d of G.dip.trade) {
+    if (!G.countries[d.from] || !G.countries[d.to] || !G.countries[d.from].alive || !G.countries[d.to].alive) bad.push('deal ' + d.id + ' with a dead nation');
+    if (Sim.atWar(d.from, d.to)) bad.push('deal ' + d.id + ' between nations at war');
+    if (Economy.embargoed(d.from, d.to)) bad.push('deal ' + d.id + ' under embargo');
+    if (!(d.amount > 0) || !(d.price >= 0)) bad.push('deal ' + d.id + ' has bad terms');
+  }
+  for (const t of Object.keys(G.countries)) if (G.countries[t].alive && Economy.dealsOf(t).length > Economy.tradeSlots(t) + 1) bad.push(t + ' has more deals than slots');
+  G.ind.forEach((I, i) => { if (I) for (const k in I) if (!(I[k] >= 0)) bad.push('province ' + i + ' ' + k + ' count ' + I[k]); });
+  return bad;
+};`;
+
 async function desktopRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
@@ -337,12 +359,155 @@ async function desktopRun(browser) {
     for (const b of G.battles) if (!b.attackers.length) bad.push('battle ' + b.id + ' has no attackers');
     for (const c of Object.values(G.countries)) for (const k of ['pp', 'stab', 'ws', 'manpower']) if (!Number.isFinite(c[k])) bad.push(c.tag + '.' + k + ' is ' + c[k]);
     for (const w of G.wars) if (!w.attackers.length || !w.defenders.length) bad.push('war ' + w.name + ' has an empty side');
+    bad.push(...ecoInvariants());
     return bad;
   });
   check('state: invariants hold', inv.length === 0, inv.slice(0, 5).join('; '));
   check('errors: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   fs.mkdirSync(path.resolve(__dirname, 'shots'), { recursive: true });
   await page.screenshot({ path: path.resolve(__dirname, 'shots/desktop.png') });
+  await page.close();
+}
+
+// ---------- economy, trade and research: through the new tabs, then a year of AI trading ----------
+async function economyRun(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(FILE);
+  await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
+  await clickEl(page, '#start .ncard[data-tag="GER"]');
+  await clickEl(page, '#st-play');
+  await waitFor(page, () => Sim.G && !document.getElementById('hud').hidden);
+  const G = (fn, arg) => page.evaluate(fn, arg);
+  await G(() => { const c = Sim.G.countries.GER; c.pp = 900; c.eco.gold = 5000; Sim.G.settings.autoPause = false; });
+  // one game day so every nation has figures to show
+  await G(() => { for (let h = 0; h < 24; h++) Sim.hourTick(); });
+
+  // Economy tab
+  await clickEl(page, '.tab[data-tab="econ"]');
+  check('economy: tab shows the six goods', await waitFor(page, () => document.querySelectorAll('#rp-body table.goods tbody tr[data-good]').length === 5 && /Gold/.test(document.getElementById('tb-stats').textContent), null, 1500));
+  const q0 = await G(() => Sim.G.countries.GER.eco.queue.length), g0 = await G(() => Sim.G.countries.GER.eco.gold);
+  await clickEl(page, '[data-build="farm"]:not([disabled])');
+  check('economy: Build queues an industry on one click', await waitFor(page, q => Sim.G.countries.GER.eco.queue.length === q + 1, q0) && await G(g => Sim.G.countries.GER.eco.gold < g, g0));
+
+  // build in a chosen province from the province panel: click one of your provinces on the map
+  // (an army counter drawn over the spot takes the click instead, so try a few provinces)
+  const cands = await G(() => { const g = Sim.G; return Sim.MAP.provs.filter(p => g.owner[p.id] === 'GER' && p.core === 'GER' && Economy.canBuild('GER', 'mine', p.id).ok && !p.capital).map(p => [p.id, p.x, p.y]).slice(0, 6); });
+  let picked = null;
+  for (const c of cands) {
+    await G(p => Render.flyTo(p[1], p[2], 10), c);
+    await page.waitForTimeout(900);
+    const [sx, sy] = await page.evaluate(([x, y]) => Render.worldToScreen(x, y), [c[1], c[2]]);
+    await page.mouse.click(sx, sy);
+    if (await waitFor(page, id => Render.state.selProv === id && !!document.querySelector('#leftpanel [data-pbuild]:not([disabled])'), c[0], 1500)) { picked = c[0]; break; }
+  }
+  const q1 = await G(() => Sim.G.countries.GER.eco.queue.length);
+  const clicked = picked !== null && await clickEl(page, '#leftpanel [data-pbuild]:not([disabled])');
+  check('economy: province panel builds in that province', clicked && await waitFor(page, ([q, id]) => { const Q = Sim.G.countries.GER.eco.queue; return Q.length === q + 1 && Q[Q.length - 1].prov === id; }, [q1, picked]), picked === null ? 'no province of ' + cands.length + ' could be picked' : '');
+
+  // construction finishes and adds output
+  const done = await G(() => { const c = Sim.G.countries.GER; const before = Sim.G.ind.reduce((s, I, i) => s + (I && Sim.G.owner[i] === 'GER' ? (I.farm || 0) : 0), 0); for (let d = 0; d < 120 && c.eco.queue.some(q => q.kind === 'farm'); d++) for (let h = 0; h < 24; h++) Sim.hourTick(); return Sim.G.ind.reduce((s, I, i) => s + (I && Sim.G.owner[i] === 'GER' ? (I.farm || 0) : 0), 0) - before; });
+  check('economy: construction completes', done >= 1, done + ' farm(s) built');
+
+  // buy fuel from a nation with a surplus, through the Nations tab trade form (after freeing a trade slot)
+  await G(() => { for (const d of Economy.dealsOf('GER')) Economy.cancel(d.id, null, 'gone'); });
+  const seller = await G(() => { const t = Object.values(Sim.G.countries).filter(c => c.alive && c.tag !== 'GER' && !c.eco.none && !Sim.atWar(c.tag, 'GER') && Economy.balance(c.tag, 'fuel') > 3 && Economy.canDeal('GER', c.tag, null).ok).sort((a, b) => Economy.balance(b.tag, 'fuel') - Economy.balance(a.tag, 'fuel'))[0]; if (!t) return null; Sim.G.dip.rel[Sim.pairKey('GER', t.tag)] = 60; return t.tag; });
+  if (seller) {
+    await clickEl(page, '.tab[data-tab="diplo"]');
+    await clickEl(page, `[data-dip="${seller}"]`);
+    await waitFor(page, () => !!document.querySelector('[data-tf]'), null, 1500);
+    await clickEl(page, '[data-tf="buy"]');
+    await clickEl(page, '[data-tfg="fuel"]');
+    for (let i = 0; i < 3; i++) await clickEl(page, '[data-tfp="0.05"]');
+    const form = await G(() => document.querySelector('[data-act="trade"]')?.disabled === false);
+    await clickEl(page, '[data-act="trade"]:not([disabled])');
+    const deal = await waitFor(page, t => Sim.G.dip.trade.some(d => d.from === t && d.to === 'GER' && d.good === 'fuel'), seller, 1500);
+    check('trade: a deal is signed through the trade form', deal, deal ? '' : (form ? await G(() => Sim.G.log[0]?.text) : 'offer button disabled: ' + await G(() => document.querySelector('[data-act="trade"]')?.nextElementSibling?.textContent)));
+    if (deal) {
+      await G(() => { for (let h = 0; h < 24; h++) Sim.hourTick(); });
+      const got = await G(t => { const d = Sim.G.dip.trade.find(d => d.from === t && d.to === 'GER' && d.good === 'fuel'); return { delivered: d && d.delivered, imp: Sim.G.countries.GER.eco.imp.fuel }; }, seller);
+      check('trade: the deal delivers goods', got.delivered > 0 && got.imp >= got.delivered - 0.01, JSON.stringify(got));
+      await clickEl(page, '.tab[data-tab="econ"]');
+      await waitFor(page, () => !!document.querySelector('[data-canceldeal]'));
+      await clickEl(page, '[data-canceldeal]');
+      check('trade: Cancel ends the deal on one click', await waitFor(page, t => !Sim.G.dip.trade.some(d => d.from === t && d.to === 'GER' && d.good === 'fuel'), seller));
+    }
+    // embargo from the nation page
+    await clickEl(page, '.tab[data-tab="diplo"]');
+    if (!(await page.locator('[data-dipback]').count())) await clickEl(page, `[data-dip="${seller}"]`);
+    await clickEl(page, '[data-act="embargo"]:not([disabled])');
+    check('trade: embargo blocks new deals', await waitFor(page, t => Sim.G.dip.embargo.some(x => x.by === 'GER' && x.of === t) && !Economy.canDeal('GER', t, null).ok, seller));
+  }
+
+  // a cut deal: the buyer's stockpile drains and it suffers a supply shock
+  const cut = await G(() => {
+    const g = Sim.G, cs = Object.values(g.countries).filter(c => c.alive && !c.eco.none && c.tag !== 'GER');
+    const buyer = cs.filter(c => Economy.balance(c.tag, 'food') < 0 || c.eco.need.food > 2).sort((a, b) => a.eco.prod.food / a.eco.need.food - b.eco.prod.food / b.eco.need.food)[0];
+    const seller = cs.filter(c => c !== buyer && Economy.balance(c.tag, 'food') > buyer.eco.need.food * 0.5 && !Sim.atWar(c.tag, buyer.tag)).sort((a, b) => Economy.balance(b.tag, 'food') - Economy.balance(a.tag, 'food'))[0];
+    if (!buyer || !seller) return null;
+    for (const d of Economy.dealsOf(buyer.tag).filter(d => d.to === buyer.tag && d.good === 'food')) Economy.cancel(d.id, null, 'gone');
+    const amt = +(buyer.eco.need.food * 0.8).toFixed(1);
+    const d = Economy.sign(seller.tag, buyer.tag, { good: 'food', amount: amt, price: Economy.fairPrice('food', amt), sell: true });
+    for (let h = 0; h < 48; h++) Sim.hourTick();
+    const dep = Economy.dependence(buyer.tag, 'food', seller.tag);
+    const rel0 = Diplo.rel(seller.tag, buyer.tag), stock0 = buyer.eco.stock.food, bal0 = Economy.balance(buyer.tag, 'food');
+    seller.pp = 50;
+    const r = Diplo.act('canceltrade', seller.tag, buyer.tag, { id: d.id });
+    // the next day: the supply is gone and the stockpile starts to drain (the AI will look for a new seller later)
+    for (let h = 0; h < 24; h++) Sim.hourTick();
+    const bal1 = Economy.balance(buyer.tag, 'food');
+    return { buyer: buyer.tag, seller: seller.tag, dep: +dep.toFixed(2), ok: r.ok, shock: buyer.eco.shocks.some(s => s.good === 'food' && s.from === seller.tag), rel: Diplo.rel(seller.tag, buyer.tag) < rel0,
+      drained: buyer.eco.stock.food < stock0 && bal1 < bal0 - amt * 0.7, stock0: Math.round(stock0), stock: Math.round(buyer.eco.stock.food), bal0: +bal0.toFixed(1), bal1: +bal1.toFixed(1) };
+  });
+  if (!seller) check('trade: a nation with fuel to spare exists', false);
+  check('trade: cutting a deal drains the buyer and costs relations', cut && cut.ok && cut.shock && cut.rel && cut.drained && cut.dep > 0.3, JSON.stringify(cut));
+
+  // research: pick a tech, open the tree, check the tier-3 choice locks the other path
+  await clickEl(page, '.tab[data-tab="tech"]');
+  await waitFor(page, () => !!document.querySelector('#rp-body .tcard.open'), null, 1500);
+  const first = await G(() => document.querySelector('#rp-body .tcard.open')?.dataset.tech);
+  await clickEl(page, '#rp-body .tcard.open');
+  check('research: a tech starts on one click', await waitFor(page, id => Sim.G.countries.GER.rs.slots.some(s => s && s.id === id), first));
+  await clickEl(page, '[data-opentree]');
+  check('research: the tech tree opens with five columns', await waitFor(page, () => !document.getElementById('techtree').hidden && document.querySelectorAll('#techtree .tcol').length === 5));
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/techtree.png') });
+  const choice = await G(() => {
+    const me = 'GER', c = Sim.G.countries[me], b = Tech.branchesFor(me)[1];
+    c.rs.slots = [null, null];
+    c.techs.push(b.tiers[0].id, b.tiers[1].id); Tech.invalidate(me);
+    const [a, z] = b.tiers[2];
+    Tech.start(me, a.id); c.rs.slots[0].pts = Tech.info(a.id).cost; Tech.daily();
+    return { took: c.techs.includes(a.id), other: Tech.state(me, z.id), next: Tech.state(me, b.tiers[3].id), start: Tech.start(me, z.id).ok };
+  });
+  check('research: the tier-3 choice closes the other path', choice.took && choice.other === 'closed' && choice.next === 'open' && !choice.start, JSON.stringify(choice));
+  await clickEl(page, '#tt-close');
+  check('research: the tree closes', await waitFor(page, () => document.getElementById('techtree').hidden));
+
+  // trade map mode
+  await clickEl(page, '#mc-trade');
+  check('trade: the trade map mode shows', await waitFor(page, () => Render.state.mode === 'trade', null, 2500), await G(() => { const b = document.getElementById('mc-trade').getBoundingClientRect(); const e = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); return Render.state.mode + ' · button at ' + Math.round(b.x) + ',' + Math.round(b.y) + ' under ' + (e && (e.id || e.className || e.tagName)); }));
+  await G(() => Render.fitWorld());
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/trade-map.png') });
+  await clickEl(page, '#mc-pol');
+
+  // a year of AI economy: nations trade, build and research on their own, and the rules hold
+  const year = await G(() => {
+    const g = Sim.G, t0 = performance.now();
+    const built0 = g.ind.reduce((s, I) => s + (I ? Object.values(I).reduce((a, b) => a + b, 0) : 0), 0);
+    for (let d = 0; d < 365; d++) for (let h = 0; h < 24; h++) Sim.hourTick();
+    const cs = Object.values(g.countries).filter(c => c.alive && !c.eco.none && c.tag !== 'GER');
+    return { ms: Math.round((performance.now() - t0) / 365), deals: g.dip.trade.filter(d => d.from !== 'GER' && d.to !== 'GER').length,
+      built: g.ind.reduce((s, I) => s + (I ? Object.values(I).reduce((a, b) => a + b, 0) : 0), 0) - built0,
+      techs: +(cs.reduce((s, c) => s + c.techs.length, 0) / cs.length).toFixed(1), bad: ecoInvariants() };
+  });
+  check('economy: the AI trades, builds and researches for a year', year.deals >= 15 && year.built >= 20 && year.techs >= 2, `${year.deals} AI deals, ${year.built} industries built, ${year.techs} techs per nation, ${year.ms} ms per game day`);
+  check('economy: rules hold after a year', year.bad.length === 0, year.bad.slice(0, 4).join('; '));
+  await clickEl(page, '.tab[data-tab="econ"]');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/economy.png') });
+  check('economy: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await page.close();
 }
 
@@ -390,8 +555,11 @@ async function diplomacyRun(browser) {
   await act('aid');
   check('diplomacy: military aid ships equipment', await G(() => Sim.G.countries.ITA.equipment) > 0 && await G(() => Sim.G.countries.GER.equipment < 5000));
 
+  // free a trade slot (nations start with their opening deals), then propose
+  await G(() => { for (const d of Economy.dealsOf('GER').slice(0, 2)) Economy.cancel(d.id, null, 'gone'); });
+  await openNation('ITA');
   await act('trade');
-  check('diplomacy: trade proposal gets an answer', await G(() => Sim.G.dip.trade[Sim.pairKey('GER', 'ITA')] > Sim.G.hour || Sim.G.dip.cd['trade|GER|ITA'] > Sim.G.hour));
+  check('diplomacy: trade proposal gets an answer', await G(() => Sim.G.dip.trade.some(d => [d.from, d.to].includes('GER') && [d.from, d.to].includes('ITA')) || Sim.G.dip.cd['trade|GER|ITA'] > Sim.G.hour));
 
   // faction: create, invite a friend (relations raised so the answer is yes), and check they fight together
   await openNation('ITA');
@@ -439,11 +607,14 @@ async function diplomacyRun(browser) {
   }
 
   // an AI proposal to the player opens a dialog; accepting it takes effect
-  const prop = await G(() => { const t = Object.values(Sim.G.countries).find(c => c.alive && c.tag !== 'GER' && !Sim.atWar(c.tag, 'GER') && !(Sim.G.dip.trade[Sim.pairKey(c.tag, 'GER')] > Sim.G.hour) && Diplo.can('trade', c.tag, 'GER').ok); if (!t) return null; t.pp = 50; Diplo.act('trade', t.tag, 'GER'); return t.tag; });
+  const prop = await G(() => {
+    const terms = { good: 'fuel', amount: 2, price: Economy.fairPrice('fuel', 2), sell: true };
+    const t = Object.values(Sim.G.countries).find(c => c.alive && c.tag !== 'GER' && !Sim.atWar(c.tag, 'GER') && Economy.balance(c.tag, 'fuel') > 2 && Diplo.can('trade', c.tag, 'GER', terms).ok);
+    if (!t) return null; t.pp = 50; Diplo.act('trade', t.tag, 'GER', terms); return t.tag; });
   if (prop) {
     check('diplomacy: an AI proposal shows a card to answer', await waitFor(page, () => !document.getElementById('offer').hidden));
     await clickEl(page, '#offer [data-x="yes"]');
-    check('diplomacy: accepting the proposal takes effect', await waitFor(page, t => Sim.G.dip.trade[Sim.pairKey(t, 'GER')] > Sim.G.hour, prop));
+    check('diplomacy: accepting the proposal takes effect', await waitFor(page, t => Sim.G.dip.trade.some(d => d.from === t && d.to === 'GER'), prop));
   }
 
   // let the AI run its own diplomacy for a while, answering any dialogs, then check the rules still hold
@@ -464,7 +635,7 @@ async function diplomacyRun(browser) {
     for (const k of Object.keys(g.dip.pacts)) { const [a, b] = k.split('|'); if (g.dip.pacts[k] > g.hour && Sim.atWar(a, b)) bad.push('pact ' + k + ' but at war'); }
     for (const a of Object.keys(g.countries)) for (const b of Object.keys(g.countries)) if (a < b && g.countries[a].alive && g.countries[b].alive && Sim.atWar(a, b) && Sim.allied(a, b)) bad.push(a + ' and ' + b + ' are allied and at war');
     for (const a of g.armies) { const o = g.owner[a.prov]; if (o !== a.owner && !Sim.allied(o, a.owner) && !Sim.atWar(o, a.owner)) bad.push('army of ' + a.owner + ' stands in neutral ' + o); }
-    return { bad, factions: g.dip.factions.map(f => f.name + ' (' + f.members.length + ')'), pacts: Object.keys(g.dip.pacts).length, trades: Object.keys(g.dip.trade).length };
+    return { bad, factions: g.dip.factions.map(f => f.name + ' (' + f.members.length + ')'), pacts: Object.keys(g.dip.pacts).length, trades: g.dip.trade.length };
   });
   check('diplomacy: the AI forms factions and treaties', dip.factions.length > 1 || dip.pacts + dip.trades > 3, dip.factions.join(', ') + ` · ${dip.pacts} pacts · ${dip.trades} trade deals`);
   check('diplomacy: rules hold after a long AI run', dip.bad.length === 0, dip.bad.slice(0, 4).join('; '));
@@ -498,6 +669,24 @@ async function erasRun(browser) {
       return { date: document.getElementById('tb-date').textContent, days: G.hour / 24, units: [...units], armies: G.armies.length, flag: !!document.querySelector('#tb-nation svg') };
     });
     const bad = res.units.filter(u => modern.includes(u));
+    const eco = await page.evaluate(() => { const c = Sim.G.countries[Sim.G.player]; return { goods: document.querySelectorAll('.tab[data-tab="econ"]').length, prod: Object.values(c.eco.prod).reduce((s, v) => s + v, 0), branches: Tech.branchesFor(Sim.G.player).length, bad: ecoInvariants() }; });
+    check(`eras: ${era.label} has an economy and a tech tree`, eco.prod > 0 && eco.branches === 5 && eco.bad.length === 0, `${eco.branches} branches` + (eco.bad.length ? ' · ' + eco.bad.slice(0, 3).join('; ') : ''));
+    if (era.id.startsWith('greatwar')) {
+      // Landships wait for September 1916 even when fully researched
+      const gate = await page.evaluate(() => {
+        const me = Sim.G.player, c = Sim.G.countries[me];
+        const land = Tech.branchesFor(me)[0].tiers[3];
+        const x = Tech.info(land.id);
+        c.techs.push(...Tech.branchesFor(me)[0].tiers.slice(0, 3).map(t => Array.isArray(t) ? t[0].id : t.id)); Tech.invalidate(me);
+        c.rs.slots = [{ id: land.id, pts: x.cost }, null];
+        Tech.daily();
+        const waits = c.rs.slots[0] && c.rs.slots[0].id === land.id && !c.techs.includes(land.id);
+        Sim.G.hour += Math.ceil((Date.UTC(1916, 8, 16) - Sim.dateTime()) / 3600e3);
+        Tech.daily();
+        return { name: land.name, waits, done: c.techs.includes(land.id), unit: Sim.canRecruit(me, 'landships') || Tech.unlocked(me, 'landships') };
+      });
+      check('eras: a date-gated tech waits for its date', gate.waits && gate.done && gate.unit, JSON.stringify(gate));
+    }
     check(`eras: ${era.label} plays`, picked && started && res.days > 5 && res.armies > 0 && res.flag, `${res.date}, ${res.armies} armies`);
     if (!era.id.startsWith('greatwar')) check(`eras: ${era.label} has only period units`, bad.length === 0, bad.join(', '));
     await boot();
@@ -532,8 +721,12 @@ async function mobileRun(browser) {
   const launcher = pw[BROWSER];
   let browser;
   try { browser = await launcher.launch(); } catch (e) { console.error('Cannot launch ' + BROWSER + ': ' + e.message.split('\n')[0]); process.exit(2); }
+  // every page gets the economy invariant checker
+  const np = browser.newPage.bind(browser), nc = browser.newContext.bind(browser);
+  browser.newPage = async o => { const p = await np(o); await p.addInitScript(ECO_INVARIANTS); return p; };
+  browser.newContext = async o => { const c = await nc(o); await c.addInitScript(ECO_INVARIANTS); return c; };
   console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''})`);
-  try { await desktopRun(browser); await diplomacyRun(browser); await erasRun(browser); await mobileRun(browser); }
+  try { await desktopRun(browser); await economyRun(browser); await diplomacyRun(browser); await erasRun(browser); await mobileRun(browser); }
   catch (e) { check('harness: completed without crashing', false, e.message.split('\n')[0]); }
   await browser.close();
   const failed = results.filter(r => !r.ok);

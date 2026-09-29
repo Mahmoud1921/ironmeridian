@@ -312,7 +312,7 @@ const Eras = (function () {
     elephant: 'elephant',
     ballista: 'engine', trebuchet: 'engine', siege: 'engine',
     cannon: 'cannon', horseartillery: 'cannon', fieldgun: 'cannon', howitzer: 'cannon',
-    armoredcar: 'car',
+    armoredcar: 'car', landship: 'tank',
   };
   function figureKind(unitType, available) {
     const u = UNIT_TYPES[unitType];

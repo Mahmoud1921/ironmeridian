@@ -7,7 +7,7 @@ const Diplo = (function () {
   const DAY = 24, YEAR = 24 * 365;
   const hooks = { offer: null };   // UI hook: (offer, respond) => void, for proposals made to the player
 
-  const COST = { improve: 10, guarantee: 15, pact: 15, trade: 5, aid: 0, create: 25, join: 10, invite: 10, demand: 20, peace: 0 };
+  const COST = { improve: 10, guarantee: 15, pact: 15, trade: 5, aid: 0, create: 25, join: 10, invite: 10, demand: 20, peace: 0, embargo: 10 };
   const AID_EQ = 500;
 
   // ---------- relations ----------
@@ -27,7 +27,7 @@ const Diplo = (function () {
     else if (Sim.allied(a, b)) v += 30;
     if (Sim.atWar(a, b)) v -= 60;
     if (Sim.hasPact(a, b)) v += 10;
-    if (g.dip.trade[Sim.pairKey(a, b)] > g.hour) v += 10;
+    if (typeof Economy !== 'undefined' && Economy.trading(a, b)) v += 10;
     return Math.max(-100, Math.min(100, Math.round(v)));
   }
   function addRel(a, b, d) { const k = Sim.pairKey(a, b), R = G().dip.rel; R[k] = Math.max(-150, Math.min(150, (R[k] || 0) + d)); }
@@ -88,7 +88,7 @@ const Diplo = (function () {
 
   // ---------- what can be done ----------
   // returns { ok, why } for the player (or any nation) acting on a target
-  function can(action, from, to) {
+  function can(action, from, to, terms) {
     const g = G(), me = g.countries[from];
     if (g.over) return { ok: false, why: 'The game is over' };
     if (to && !alive(to)) return { ok: false, why: 'That nation no longer exists' };
@@ -117,12 +117,20 @@ const Diplo = (function () {
         if (Sim.hasPact(from, to)) return need('A pact is already in force');
         { const d = cdLeft('pact|' + from + '|' + to); if (d) return need('They will not talk again for ' + d + ' days'); }
         return { ok: true };
-      case 'trade':
-        if (war) return need('You are at war');
-        if (g.dip.trade[Sim.pairKey(from, to)] > g.hour) return need('A trade deal is already running');
+      case 'trade': {
         { const d = cdLeft('trade|' + from + '|' + to); if (d) return need('They will not talk again for ' + d + ' days'); }
+        return Economy.canDeal(from, to, terms || null);
+      }
+      case 'canceltrade': {
+        const id = terms && terms.id;
+        const d = g.dip.trade.find(x => x.id === id && (x.from === from || x.to === from) && (!to || x.from === to || x.to === to));
+        return d ? { ok: true } : need('No such trade deal');
+      }
+      case 'embargo':
+        if (Sim.allied(from, to)) return need('They are your ally');
+        if (g.dip.embargo.some(x => x.by === from && x.of === to)) return need('Your embargo is already in force');
         return { ok: true };
-      case 'canceltrade': return g.dip.trade[Sim.pairKey(from, to)] > g.hour ? { ok: true } : need('No trade deal');
+      case 'lift': return g.dip.embargo.some(x => x.by === from && x.of === to) ? { ok: true } : need('No embargo to lift');
       case 'aid':
         if (war) return need('You are at war');
         if (me.equipment < AID_EQ * 1.5) return need('Needs ' + Math.round(AID_EQ * 1.5) + ' equipment in stock');
@@ -172,9 +180,7 @@ const Diplo = (function () {
         const score = r + (pf > pt * 1.5 ? 25 : 0) + (threatened && threatened !== from ? 15 : 0) - (threatened === from ? 0 : 0);
         return score >= 0 ? say(true, 'Relations are good enough') : say(false, 'Relations are too poor (' + r + ')');
       }
-      case 'trade':
-        if (g.wars.some(w => Sim.sideOf(w, to) && [...Sim.enemiesOf(to)].some(e => Sim.allied(e, from)))) return say(false, 'You are allied with their enemies');
-        return r >= -20 ? say(true, 'They welcome the trade') : say(false, 'Relations are too poor (' + r + ')');
+      case 'trade': return Economy.answerDeal(from, to, terms);
       case 'join': {
         const fac = terms.fac, leader = fac.leader;
         const rl = rel(leader, from);
@@ -248,7 +254,7 @@ const Diplo = (function () {
   function act(action, from, to, terms) {
     terms = terms || {};
     const g = G(), me = g.countries[from];
-    const chk = can(action, from, to);
+    const chk = can(action, from, to, terms);
     if (!chk.ok) return { ok: false, text: chk.why };
     me.pp -= COST[action] || 0;
     const res = (accepted, text) => ({ ok: true, accepted, text });
@@ -263,9 +269,23 @@ const Diplo = (function () {
       case 'unguarantee':
         g.dip.guar = g.dip.guar.filter(x => !(x.by === from && x.of === to)); addRel(from, to, -20);
         return res(true, 'Guarantee of ' + name(to) + ' revoked.');
-      case 'canceltrade':
-        delete g.dip.trade[Sim.pairKey(from, to)]; addRel(from, to, -10);
-        return res(true, 'Trade deal with ' + name(to) + ' cancelled.');
+      case 'canceltrade': {
+        const r = Economy.cancel(terms.id, from);
+        const d = r.d, other = d.from === from ? d.to : d.from;
+        if (d.from === from && r.depn > 0.05 && (involvesPlayer(from, d.to) || r.depn > 0.3)) log(name(from) + ' cut its ' + Economy.goodName(d.good).toLowerCase() + ' exports to ' + name(d.to) + '.', g.countries[d.to].capital);
+        return res(true, 'Deal with ' + name(other) + ' cancelled.' + (d.from === from && r.depn > 0.05 ? ' ' + name(other) + ' got ' + Math.round(r.depn * 100) + '% of its ' + Economy.goodName(d.good).toLowerCase() + ' from you.' : ''));
+      }
+      case 'embargo': {
+        const r = Economy.embargo(from, to);
+        const joined = [];
+        const f = Sim.factionOf(from);
+        if (f && f.leader === from) for (const m of f.members) if (m !== from && m !== g.player && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
+        log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', to === g.player);
+        return res(true, 'Embargo on ' + name(to) + ' in force' + (joined.length ? '. Joined by ' + joined.join(', ') : '') + '.' + (r.strangled ? ' It strangles them: they now have a reason for war against you.' : ''));
+      }
+      case 'lift':
+        Economy.liftEmbargo(from, to); addRel(from, to, 5);
+        return res(true, 'Embargo on ' + name(to) + ' lifted.');
       case 'aid': {
         const amt = AID_EQ;
         me.equipment -= amt; g.countries[to].equipment += amt;
@@ -300,7 +320,11 @@ const Diplo = (function () {
     const f = name(from);
     switch (action) {
       case 'pact': return f + ' proposes a non-aggression pact for two years.';
-      case 'trade': return f + ' proposes a trade agreement for one year.';
+      case 'trade': {
+        const good = Economy.goodName(t.good).toLowerCase();
+        return t.sell ? f + ' offers to sell you ' + t.amount + ' ' + good + ' a day for ' + t.price + ' gold a day.'
+          : f + ' wants to buy ' + t.amount + ' ' + good + ' a day from you for ' + t.price + ' gold a day.';
+      }
       case 'join': return f + ' asks to join the ' + t.fac.name + '.';
       case 'invite': return f + ' invites you to join the ' + t.fac.name + '.';
       case 'demand': return f + ' demands ' + demandTargets(from, to).map(id => MAP().provs[id].name).join(', ') + '. Refusing may mean war.';
@@ -327,10 +351,12 @@ const Diplo = (function () {
         g.dip.pacts[Sim.pairKey(Sim.root(from), Sim.root(to))] = g.hour + 2 * YEAR; addRel(from, to, 10);
         log(name(from) + ' and ' + name(to) + ' signed a non-aggression pact.', g.countries[to].capital);
         return res(true, name(to) + ' signed a non-aggression pact. Neither of you can declare war on the other for two years without breaking it.');
-      case 'trade':
-        g.dip.trade[Sim.pairKey(from, to)] = g.hour + YEAR; addRel(from, to, 10);
-        log(name(from) + ' and ' + name(to) + ' signed a trade agreement.', g.countries[to].capital);
-        return res(true, name(to) + ' agreed to trade. Both of you produce 10% more equipment for a year.');
+      case 'trade': {
+        const d = Economy.sign(from, to, t); addRel(from, to, 5);
+        const good = Economy.goodName(d.good).toLowerCase();
+        if (from === g.player || to === g.player) log(name(d.from) + ' now sells ' + d.amount + ' ' + good + ' a day to ' + name(d.to) + ' for ' + d.price + ' gold.', g.countries[to].capital);
+        return res(true, name(to) + ' agreed: ' + name(d.from) + ' sells ' + d.amount + ' ' + good + ' a day to ' + name(d.to) + ' for ' + d.price + ' gold a day.');
+      }
       case 'join':
         joinFaction(from, t.fac);
         return res(true, 'You joined the ' + t.fac.name + '.');
@@ -442,11 +468,6 @@ const Diplo = (function () {
   // ---------- daily upkeep and AI diplomacy ----------
   function dayTick() {
     const g = G(), day = Math.floor(g.hour / DAY);
-    // trade: both partners produce 10% more equipment
-    for (const k of Object.keys(g.dip.trade)) {
-      if (g.dip.trade[k] <= g.hour) { delete g.dip.trade[k]; continue; }
-      for (const t of k.split('|')) { const c = g.countries[t]; if (c && c.alive) c.equipment += c.mil * 12 * 0.1; }
-    }
     for (const k of Object.keys(g.dip.pacts)) if (g.dip.pacts[k] <= g.hour) delete g.dip.pacts[k];
     // relation changes fade slowly
     if (day % 30 === 0) for (const k of Object.keys(g.dip.rel)) { g.dip.rel[k] *= 0.97; if (Math.abs(g.dip.rel[k]) < 0.5) delete g.dip.rel[k]; }
@@ -459,6 +480,8 @@ const Diplo = (function () {
   }
   function aiThink(c) {
     const g = G(), tag = c.tag, R = Sim.rng;
+    // trade: buy what it lacks, sell what it has spare, and build (puppets too)
+    if (typeof Economy !== 'undefined') Economy.aiTrade(c);
     if (Sim.root(tag) !== tag) return;                  // puppets follow their overlord
     const others = Object.values(g.countries).filter(o => o.alive && o.tag !== tag);
     // warm up to like-minded neighbours
@@ -485,17 +508,29 @@ const Diplo = (function () {
       if (prot && rel(tag, prot.leader) >= 25) aiDo('join', tag, prot.leader);
       else if (rel(tag, threat) > -40) aiDo('pact', tag, threat);
     }
-    // trade with a friendly partner
-    const partner = others.filter(o => rel(tag, o.tag) >= 20 && !(g.dip.trade[Sim.pairKey(tag, o.tag)] > g.hour) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 6)];
-    if (partner && R() < 0.4 && (partner.tag !== g.player || R() < 0.3)) aiDo('trade', tag, partner.tag);
+    // a nation strangled by an embargo may fight over it
+    for (const k of Object.keys(g.dip.claims)) {
+      const [a, b] = k.split('>');
+      if (a !== tag || g.dip.claims[k] <= g.hour || !alive(b) || Sim.atWar(tag, b)) continue;
+      if (g.dip.embargo.some(x => x.by === b && x.of === tag) && sidePower(Sim.coalition(tag)) > sidePower(Sim.coalition(b)) * 1.2 && R() < 0.3) { Sim.declareWar(tag, b, false, { breakPact: true }); break; }
+    }
+    // embargo a hated rival that buys from it, if it is a major power
+    if (isMajor(tag) && R() < 0.05) {
+      const foe = others.find(o => rel(tag, o.tag) < -50 && !Sim.atWar(tag, o.tag) && g.dip.trade.some(d => d.from === tag && d.to === o.tag));
+      if (foe) aiDo('embargo', tag, foe.tag);
+    }
     // expansionist regimes press claims on weak neighbours, and go to war when refused
     if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12) {
       const mine = sidePower(Sim.coalition(tag));
       const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0)
         .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) })).filter(x => x.v * 1.8 < mine).sort((a, b) => a.v - b.v)[0];
-      if (victim) {
-        aiDo('demand', tag, victim.o.tag);
-      }
+      if (victim && !g.dip.plan[tag]) g.dip.plan[tag] = { victim: victim.o.tag, at: g.hour + 30 * DAY };
+    }
+    // a month after deciding, cut the trade (done in Economy.aiTrade) and make the demand
+    const plan = g.dip.plan[tag];
+    if (plan && g.hour >= plan.at) {
+      delete g.dip.plan[tag];
+      if (alive(plan.victim) && !Sim.atWar(tag, plan.victim)) aiDo('demand', tag, plan.victim);
     }
     // losing wars: sue for peace
     for (const e of Sim.enemiesOf(tag)) {
@@ -503,10 +538,10 @@ const Diplo = (function () {
     }
   }
   function aiDo(action, from, to, terms) {
-    if (!can(action, from, to).ok) return null;
+    if (!can(action, from, to, terms).ok) return null;
     const r = act(action, from, to, terms);
     return r.ok ? r : null;
   }
 
-  return { hooks, COST, AID_EQ, rel, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy };
+  return { hooks, COST, AID_EQ, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy };
 })();

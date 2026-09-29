@@ -93,6 +93,7 @@ const UI = (function () {
     document.querySelectorAll('.tab').forEach(t => t.onclick = () => { const same = sel.tab === t.dataset.tab; sel.collapsed = same && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); if (!same) $('#rp-body').scrollTop = 0; });
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
+    $('#mc-trade').onclick = () => setMode(Render.state.mode === 'trade' ? 'political' : 'trade');
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
@@ -108,9 +109,13 @@ const UI = (function () {
         if (war) return false;
         if (o.action === 'invite') return !Sim.factionOf(G.player) && G.dip.factions.includes(o.terms.fac);
         if (o.action === 'join') return G.dip.factions.includes(o.terms.fac) && !Sim.factionOf(o.from);
+        if (o.action === 'trade') return Economy.canDeal(o.from, o.to, o.terms).ok;
         return true;
       };
-      offers.push({ o, respond: yes => yes && !valid() ? (respond(false), { text: 'That offer is no longer valid.' }) : respond(yes) });
+      // offers from an earlier game are dropped, never answered
+      const game = Sim.G;
+      for (let i = offers.length - 1; i >= 0; i--) if (offers[i].game !== game) offers.splice(i, 1);
+      offers.push({ o, game, respond: yes => Sim.G !== game ? null : yes && !valid() ? (respond(false), { text: 'That offer is no longer valid.' }) : respond(yes) });
       // ignored offers lapse: keep only the three newest
       while (offers.length > 3) offers.splice(1, 1)[0].respond(false);
       showOffer();
@@ -118,7 +123,7 @@ const UI = (function () {
   }
   function setMode(m) {
     Render.state.mode = m; Render.state.dirtyOwners = true;
-    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain');
+    $('#mc-pol').classList.toggle('active', m === 'political'); $('#mc-ter').classList.toggle('active', m === 'terrain'); $('#mc-trade').classList.toggle('active', m === 'trade');
   }
 
   // ---------- start screen ----------
@@ -188,6 +193,7 @@ const UI = (function () {
   }
   function startGame(tag) {
     Sim.newGame(tag);
+    offers.length = 0; $('#offer').hidden = true; sel.tf = null; sel.dip = null;
     $('#start').hidden = true;
     $('#hud').hidden = false;
     Render.state.dirtyOwners = true;
@@ -212,12 +218,14 @@ const UI = (function () {
       ['Stability', pct(c.stab), c.stab < 0.4 ? 'bad' : c.stab < 0.55 ? 'warn' : '', 'Raises manpower growth and factory output.'],
       ['War support', pct(c.ws), c.ws < 0.25 ? 'warn' : '', 'Speeds up organisation recovery.'],
       ['Manpower', fmtN(c.manpower), c.manpower < 20000 ? 'bad' : '', 'Available recruits. Losses so far: ' + fmtN(c.losses)],
-      ['Equipment', fmtN(c.equipment), c.equipment < 300 ? 'warn' : '', 'Produced by military factories each day.'],
-      ['Factories', c.civ + ' / ' + c.mil, '', 'Civilian / military factories.'],
+      ['Gold', fmtN(c.eco ? c.eco.gold : 0) + (c.eco && c.eco.goldDelta ? ' <small>' + (c.eco.goldDelta >= 0 ? '+' : '−') + fmtN(Math.abs(c.eco.goldDelta)) + '</small>' : ''), c.eco && c.eco.gold < 0 ? 'bad' : '', 'Treasury in ' + Economy.coin() + ', and the change per day. Taxes and exports bring it in; armies and imports cost it.'],
+      [Economy.goodName('arms'), fmtN(c.equipment), c.equipment < 300 ? 'warn' : '', 'Made by your ' + Economy.kindName('arsenal').toLowerCase() + 's each day from ' + Economy.goodName('metal').toLowerCase() + ' and ' + Economy.goodName('fuel').toLowerCase() + '.'],
       ['Divisions', divs + (c.queue.length ? ' +' + c.queue.length : ''), '', 'Fielded divisions (+ in training).'],
       ['Wars', G.wars.filter(w => w.attackers.includes(c.tag) || w.defenders.includes(c.tag)).length, Sim.isAtWar(c.tag) ? 'bad' : '', 'Wars you are fighting.']
     ];
-    setHTML($('#tb-stats'), stats.map(s => `<div class="stat ${s[2]}" title="${esc(s[3])}"><span class="v">${s[1]}</span><span class="k">${s[0]}</span></div>`).join(''));
+    setHTML($('#tb-stats'), stats.map(s => `<div class="stat ${s[2]}" title="${esc(s[3])}"><span class="v">${s[1]}</span><span class="k">${esc(s[0])}</span></div>`).join(''));
+    const short = Economy.anyShort(c.tag);
+    $('#tab-econ-dot').hidden = !short;
     $('#tb-date').textContent = Sim.dateStr(G.hour, true);
     $('#tb-play').classList.toggle('paused', G.paused);
     setHTML($('#tb-play'), G.paused ? '<svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z" fill="currentColor"/></svg>' : '<svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z" fill="currentColor"/></svg>');
@@ -261,8 +269,11 @@ const UI = (function () {
     el.hidden = false;
     const p = MAP.provs[sel.prov];
     const owner = G.owner[p.id], oc = G.countries[owner];
-    const resNames = { steel: 'Steel', oil: 'Oil', coal: 'Coal', aluminium: 'Aluminium', rubber: 'Rubber', rare: 'Rare materials' };
-    const res = Object.keys(p.res).map(k => `<dt>${resNames[k]}</dt><dd>${p.res[k]}</dd>`).join('') || '<dt>Resources</dt><dd>None</dd>';
+    const I = (G.ind && G.ind[p.id]) || {};
+    const indList = Economy.KIND_KEYS.filter(k => I[k]).map(k => esc(Economy.kindName(k)) + (I[k] > 1 ? ' ×' + I[k] : '')).join(', ') || 'None';
+    const deps = Economy.GOODS.filter(k => Economy.dep(p.id, k)).map(k => goodDot(k) + esc(Economy.goodName(k))).join(', ') || 'None';
+    const res = `<dt>Industry</dt><dd>${indList}</dd><dt>Slots</dt><dd>${Economy.freeSlots(p.id)} free of ${Economy.slots(p)}${Economy.built(p.id) > Economy.slots(p) ? ' (' + Economy.built(p.id) + ' built)' : ''}</dd><dt>Deposits</dt><dd>${deps}</dd>`;
+    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>` : '';
     const armies = G.armies.filter(a => a.prov === p.id);
     const armyRows = armies.map(a => {
       const comp = compStr(a);
@@ -278,8 +289,8 @@ const UI = (function () {
       <div class="owner">${flagSVG(owner)}<div><div>${esc(oc.name)}</div>${relationPill(owner)}</div></div>
       ${p.core !== owner ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
-      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd><dt>Factories</dt><dd>${p.civ} civ · ${p.mil} mil</dd>${res}
-      <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>
+      <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}
+      <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
       <div class="list">${armyRows}</div>
       <hr class="sep">
       <div class="label">Nation</div>
@@ -289,6 +300,7 @@ const UI = (function () {
       ${owner !== G.player ? `<div style="display:flex;gap:6px"><button class="btn" id="lp-dip" style="flex:1">Diplomacy</button>${canDeclare ? `<button class="btn danger" id="lp-war" style="flex:1" ${G.countries[G.player].pp < warCost(owner) ? 'disabled' : ''}>Declare war${warCost(owner) ? ' · ' + warCost(owner) + ' PP' : ''}</button>` : ''}</div>` : ''}`)) return;
     $('#lp-close').onclick = () => { selectProvince(-1); };
     el.querySelectorAll('[data-army]').forEach(r => r.onclick = () => selectArmies([+r.dataset.army], false));
+    el.querySelectorAll('[data-pbuild]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.pbuild, p.id); toast(r.ok ? r.text : r.why, p.id, 'info'); renderLeft(); renderRight(); refreshTop(); });
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
   }
@@ -345,7 +357,7 @@ const UI = (function () {
     const body = $('#rp-body');
     body.hidden = !!sel.collapsed;
     $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
-    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
+    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
     if (setHTML(body, html)) bindRight();
   }
   function meter(label, v, cls) { return `<div class="meter"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`; }
@@ -401,14 +413,15 @@ const UI = (function () {
   function recruitPanel() {
     const G = Sim.G, c = G.countries[G.player];
     const target = myArmiesSel().length === 1 ? myArmiesSel()[0] : null;
-    let html = `<dl class="kv"><dt>Manpower</dt><dd>${fmtN(c.manpower)}</dd><dt>Equipment</dt><dd>${fmtN(c.equipment)} (+${Math.round(c.mil * 12 * (0.7 + 0.5 * c.stab))}/day)</dd></dl>
+    let html = `<dl class="kv"><dt>Manpower</dt><dd>${fmtN(c.manpower)}</dd><dt>${esc(Economy.goodName('arms'))}</dt><dd>${fmtN(c.equipment)} (+${Math.round(c.eco ? c.eco.arms : 0)}/day)</dd></dl>
       <p class="note">New divisions ${target ? 'join <b>' + esc(target.name) + '</b> if it is inside your borders when training ends, otherwise they' : ''} gather in a reserve army at ${esc(MAP.provs[c.capital]?.name || 'the capital')}.</p><div class="list">`;
     // an era may reserve units for some nations (Spartans for Sparta, legionaries for Rome)
-    const trainable = typeof Eras !== 'undefined' && !Eras.isBase() ? Eras.unitsFor(G.player) : LAND_TYPES;
+    const trainable = (typeof Eras !== 'undefined' && !Eras.isBase() ? Eras.unitsFor(G.player) : LAND_TYPES).filter(t => !UNIT_TYPES[t].locked || Tech.unlocked(G.player, t));
     for (const t of trainable) {
       const u = UNIT_TYPES[t];
+      const strat = Economy.stratUnit(t) ? `<div class="sub">Needs ${esc(Economy.goodName('strategic').toLowerCase())}${c.eco && c.eco.sat.strategic < 0.99 ? ': trains at ' + pct(c.eco.sat.strategic) + ' speed' : ''}</div>` : '';
       html += `<div class="row">${unitIcon(t, COUNTRY_BY_TAG[G.player].color).replace('<svg', '<svg style="width:34px;height:22px;flex:none"')}<div class="grow"><div>${u.name}</div>
-        <div class="sub">Atk ${u.atk} · Def ${u.def} · ${u.speed} km/h · Org ${u.org}</div><div class="sub">${fmtN(u.mp)} men · ${u.eq} equipment · ${u.days} days</div></div>
+        <div class="sub">Atk ${u.atk} · Def ${u.def} · ${u.speed} km/h · Org ${u.org}</div><div class="sub">${fmtN(Sim.mpCost(G.player, t))} men · ${u.eq} ${esc(Economy.goodName('arms').toLowerCase())} · ${u.days} days</div>${strat}</div>
         <button class="btn sm" data-rec="${t}" ${Sim.canRecruit(G.player, t) ? '' : 'disabled'}>Train</button></div>`;
     }
     html += '</div>';
@@ -426,7 +439,8 @@ const UI = (function () {
     else if (Sim.allied(tag, G.player)) out.push('<span class="pill ally">Ally</span>');
     if (f) out.push(`<span class="pill">${esc(f.name)}</span>`);
     if (Sim.hasPact(tag, G.player)) out.push('<span class="pill">Pact</span>');
-    if (G.dip.trade[Sim.pairKey(tag, G.player)] > G.hour) out.push('<span class="pill">Trade</span>');
+    if (Economy.trading(tag, G.player)) out.push('<span class="pill">Trade</span>');
+    if (Economy.embargoed(tag, G.player)) out.push('<span class="pill war">Embargo</span>');
     if (G.dip.guar.some(x => x.by === G.player && x.of === tag)) out.push('<span class="pill">Guaranteed</span>');
     if (G.dip.guar.some(x => x.by === tag && x.of === G.player)) out.push('<span class="pill">Guarantees you</span>');
     return out.join(' ');
@@ -473,7 +487,6 @@ const UI = (function () {
       acts.push(act('peacekeep', 'Demand they cede occupied land', { as: 'peace', hint: 'You keep what you hold' }));
     } else {
       acts.push(act('improve', 'Improve relations', { hint: '+15 relations' }));
-      acts.push(G.dip.trade[Sim.pairKey(me, tag)] > G.hour ? act('canceltrade', 'Cancel trade deal') : act('trade', 'Propose trade', { hint: '+10% equipment for both, one year' }));
       acts.push(act('aid', 'Send military aid', { hint: Diplo.AID_EQ + ' equipment from your stock' }));
       if (!Sim.allied(me, tag)) acts.push(act('pact', 'Non-aggression pact', { hint: 'No war between you for two years' }));
       acts.push(G.dip.guar.some(x => x.by === me && x.of === tag) ? act('unguarantee', 'Revoke guarantee') : act('guarantee', 'Guarantee independence', { hint: 'You join any war against them' }));
@@ -491,12 +504,14 @@ const UI = (function () {
       <div class="owner" style="margin:10px 0 4px">${flagSVG(tag)}<div><h3 class="display" style="font-size:20px;margin:0">${esc(c.name)}</h3><div class="sub note" style="margin:0">${c.gov} · ${divs} divisions</div></div></div>
       <div class="meter"><span>Relations</span><div class="bar ${r >= 0 ? 'str' : 'bad'}"><i style="width:${Math.abs(r)}%"></i></div><span>${r > 0 ? '+' : ''}${r}</span></div>
       <div style="margin:6px 0 10px;display:flex;flex-wrap:wrap;gap:4px">${dipStatus(tag) || '<span class="pill">No treaties</span>'}</div>
-      <div class="dacts">${acts.join('')}</div>`;
+      <div class="dacts">${acts.join('')}</div>${war ? '' : tradeSection(tag, act)}`;
   }
   function doDiplo(key, tag) {
     const G = Sim.G;
     const action = key === 'peacekeep' ? 'peace' : key;
-    const r = Diplo.act(action, G.player, tag, key === 'peacekeep' ? { keep: true } : {});
+    let terms = key === 'peacekeep' ? { keep: true } : {};
+    if (key === 'trade') { const f = tradeForm(tag); terms = { good: f.good, amount: f.amount, price: +(Economy.fairPrice(f.good, f.amount) * (1 + f.adj)).toFixed(1), sell: f.sell }; }
+    const r = Diplo.act(action, G.player, tag, terms);
     toast(r.text, -1, r.accepted === false ? 'loss' : r.accepted ? 'win' : 'info');
     Render.state.dirtyOwners = true;
     renderRight(); renderLeft(); refreshTop();
@@ -521,6 +536,144 @@ const UI = (function () {
       Render.state.dirtyOwners = true; renderRight(); renderLeft(); refreshTop();
       setTimeout(showOffer, 250);
     });
+  }
+
+  // ---------- economy ----------
+  const f1 = n => { n = +n || 0; const a = Math.abs(n); return a >= 100 ? String(Math.round(n)) : a >= 10 ? n.toFixed(0) : n.toFixed(1); };
+  const sgn = n => (n >= 0 ? '+' : '−') + f1(Math.abs(n));
+  const GOOD_COL = { food: '#9ec46b', metal: '#a9b4bf', fuel: '#8a7a5c', strategic: '#d48a4a', luxuries: '#c790d8', arms: '#c9a55a' };
+  const goodDot = k => `<i class="gdot" style="background:${GOOD_COL[k]}"></i>`;
+  const shortGood = k => Economy.goodName(k).split(/[ ,]/)[0];
+  function econPanel() {
+    const G = Sim.G, c = G.countries[G.player], e = c.eco;
+    if (!e || !e.need) return '<p class="note">No economy.</p>';
+    const inc = e.income || {};
+    const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Army upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
+    let html = `<div class="goldline"><div><div class="label">Gold · ${esc(Economy.coin())}</div><div class="big num ${e.gold < 0 ? 'neg' : ''}">${fmtN(e.gold)}</div></div>
+      <div class="num ${e.goldDelta < 0 ? 'neg' : 'pos'}">${sgn(e.goldDelta || 0)} a day</div></div>
+      <div class="mods">${parts.map(x => `<span>${x[0]}</span><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span>`).join('')}</div>
+      ${e.gold < 0 ? '<div class="why bad">In debt: you cannot build or buy, and stability falls.</div>' : ''}
+      ${meter('Economic health', e.health, e.health < 0.8 ? 'bad' : 'str')}
+      <div class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes.</div>
+      <table class="goods"><thead><tr><th>Good</th><th>Made</th><th>Used</th><th>Trade</th><th>Stock</th></tr></thead><tbody>`;
+    for (const k of Economy.GOODS) {
+      const net = Economy.balance(G.player, k), days = Economy.daysLeft(G.player, k);
+      const tr = e.imp[k] - e.exp[k], short = net < -0.05;
+      const cls = short ? (days < 30 ? 'bad' : 'warn') : '';
+      html += `<tr class="${cls}" data-good="${k}"><td>${goodDot(k)}${esc(Economy.goodName(k))}</td><td class="num">${f1(e.prod[k])}</td><td class="num">${f1(e.need[k])}</td><td class="num">${Math.abs(tr) < 0.05 ? '–' : sgn(tr)}</td>
+        <td class="num">${fmtN(e.stock[k])} <span class="tr">${net > 0.05 ? '▲' : short ? '▼' : '•'}</span></td></tr>`;
+      if (short) html += `<tr class="${cls} sub"><td colspan="5">${e.stock[k] > 0.5 ? 'Runs out in ' + days + ' days' : 'Short by ' + f1(-net) + ' a day: ' + Math.round((1 - e.sat[k]) * 100) + '% missing'}</td></tr>`;
+    }
+    html += `<tr><td>${goodDot('arms')}${esc(Economy.goodName('arms'))}</td><td class="num">${f1(e.arms)}</td><td class="num">–</td><td class="num">–</td><td class="num">${fmtN(c.equipment)}</td></tr></tbody></table>`;
+    html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
+    if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
+    html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
+    const deals = Economy.dealsOf(G.player);
+    html += `<hr class="sep"><div class="label">Trade deals · ${deals.length} of ${Economy.tradeSlots(G.player)} slots</div>`;
+    html += deals.length ? '<div class="list" style="margin-top:6px">' + deals.map(d => dealRow(d)).join('') + '</div>' : '<div class="note">No deals yet. Open a nation in the Nations tab to buy or sell.</div>';
+    const emb = G.dip.embargo.filter(x => x.by === G.player || x.of === G.player);
+    if (emb.length) html += '<div class="list" style="margin-top:6px">' + emb.map(x => `<div class="row">${flagSVG(x.by === G.player ? x.of : x.by)}<div class="grow">${x.by === G.player ? 'Your embargo on ' + esc(G.countries[x.of].name) : esc(G.countries[x.by].name) + ' embargoes you'}</div>${x.by === G.player ? `<button class="btn sm" data-lift="${x.of}">Lift</button>` : ''}</div>`).join('') + '</div>';
+    html += `<div class="label" style="margin-top:10px">World prices</div><div class="mods">${Economy.GOODS.map(k => `<span>${goodDot(k)}${esc(Economy.goodName(k))}</span><span class="num">${Economy.worldPrice(k).toFixed(2)}</span>`).join('')}</div>`;
+    return html;
+  }
+  function dealRow(d) {
+    const G = Sim.G, me = G.player, sell = d.from === me, other = sell ? d.to : d.from;
+    const good = Economy.goodName(d.good).toLowerCase();
+    const dep = Economy.dependence(d.to, d.good, d.from);
+    const txt = sell ? `You sell ${d.amount} ${good} a day to ${G.countries[other].name} for ${d.price} gold` : `${G.countries[other].name} sells you ${d.amount} ${good} a day for ${d.price} gold`;
+    const depTxt = sell ? `${G.countries[other].name} gets ${Math.round(dep * 100)}% of its ${good} from you` : `You get ${Math.round(dep * 100)}% of your ${good} from ${G.countries[other].name}`;
+    const short = d.delivered !== undefined && d.delivered < d.amount - 0.05 ? ` · only ${f1(d.delivered)} delivered` : '';
+    return `<div class="row deal">${flagSVG(other)}<div class="grow"><div>${goodDot(d.good)}${esc(txt)}</div><div class="sub">${esc(depTxt + short)}</div></div><button class="btn sm" data-canceldeal="${d.id}" data-with="${other}">Cancel</button></div>`;
+  }
+  const AMOUNTS = [1, 2, 3, 5, 8, 10, 15, 20, 30, 40, 60, 80];
+  function tradeForm(tag) {
+    if (sel.tf && sel.tf.tag === tag) return sel.tf;
+    const G = Sim.G, me = G.player;
+    const b = (t, k) => Economy.balance(t, k);
+    let best = null, bv = 0;
+    for (const k of Economy.GOODS) {
+      const buy = Math.min(-b(me, k), b(tag, k)), sell = Math.min(b(me, k), -b(tag, k));
+      if (buy > bv) { bv = buy; best = { good: k, sell: false }; }
+      if (sell > bv) { bv = sell; best = { good: k, sell: true }; }
+    }
+    best = best || { good: 'food', sell: false };
+    const amt = AMOUNTS.filter(a => a <= Math.max(1, bv)).pop() || 1;
+    return (sel.tf = { tag, good: best.good, sell: best.sell, amount: amt, adj: 0 });
+  }
+  function tradeSection(tag, act) {
+    const G = Sim.G, me = G.player;
+    const deals = Economy.dealBetween(me, tag);
+    const bal = k => Economy.balance(tag, k);
+    const spare = Economy.GOODS.filter(k => bal(k) > 0.5).map(k => Economy.goodName(k) + ' ' + sgn(bal(k)));
+    const needs = Economy.GOODS.filter(k => bal(k) < -0.5).map(k => Economy.goodName(k) + ' ' + sgn(bal(k)));
+    const f = tradeForm(tag);
+    const price = +(Economy.fairPrice(f.good, f.amount) * (1 + f.adj)).toFixed(1);
+    const chk = Diplo.can('trade', me, tag, { good: f.good, amount: f.amount, price, sell: f.sell });
+    const emb = G.dip.embargo.some(x => x.by === me && x.of === tag);
+    const gname = Economy.goodName(f.good).toLowerCase();
+    return `<hr class="sep"><div class="label">Trade</div>
+      ${deals.length ? '<div class="list" style="margin:6px 0">' + deals.map(d => dealRow(d)).join('') + '</div>' : ''}
+      <div class="note">They have spare: ${spare.length ? esc(spare.join(', ')) : 'nothing'}.<br>They lack: ${needs.length ? esc(needs.join(', ')) : 'nothing'}.</div>
+      <div class="tform">
+        <div class="seg"><button class="chip ${!f.sell ? 'on' : ''}" data-tf="buy">Buy from them</button><button class="chip ${f.sell ? 'on' : ''}" data-tf="sell">Sell to them</button></div>
+        <div class="seg">${Economy.GOODS.map(k => `<button class="chip ${f.good === k ? 'on' : ''}" data-tfg="${k}" title="${esc(Economy.goodName(k))}">${goodDot(k)}${esc(shortGood(k))}</button>`).join('')}</div>
+        <div class="stepper"><span>Amount a day</span><button class="btn sm" data-tfa="-1" aria-label="Less">−</button><b class="num">${f.amount}</b><button class="btn sm" data-tfa="1" aria-label="More">+</button></div>
+        <div class="stepper"><span>Gold a day</span><button class="btn sm" data-tfp="-0.05" aria-label="Lower price">−</button><b class="num">${price}</b><button class="btn sm" data-tfp="0.05" aria-label="Higher price">+</button><small>${f.adj === 0 ? 'world price' : (f.adj > 0 ? '+' : '') + Math.round(f.adj * 100) + '%'}</small></div>
+      </div>
+      <div class="dacts"><div class="dact"><button class="btn" data-act="trade" ${chk.ok ? '' : 'disabled'}>${f.sell ? 'Offer to sell' : 'Offer to buy'} <small>${Diplo.COST.trade} PP</small></button>
+        <div class="why">${chk.ok ? esc((f.sell ? 'You sell ' : 'You buy ') + f.amount + ' ' + gname + ' a day for ' + price + ' gold a day.') : esc(chk.why)}</div></div>
+      ${emb ? act('lift', 'Lift embargo') : act('embargo', 'Embargo', { cls: 'danger', hint: 'Cut every deal with them and refuse new ones' + (Sim.factionOf(me) && Sim.factionOf(me).leader === me ? '. Your faction is asked to join.' : '') })}</div>`;
+  }
+
+  // ---------- research ----------
+  let treeOpen = false;
+  function techCard(tag, t) {
+    const st = Tech.state(tag, t.id), x = Tech.info(t.id), c = Sim.G.countries[tag];
+    const slot = c.rs.slots.find(s => s && s.id === t.id);
+    const pts = slot ? slot.pts : (c.rs.saved[t.id] || 0);
+    const rate = Math.max(0.01, c.rs.rate || Tech.rate(tag));
+    const days = Math.ceil((x.cost - pts) / rate);
+    const gate = t.from && !Tech.dateReady(x) ? `<em>Available from ${esc(Tech.fromLabel(x))}</em>` : '';
+    const foot = st === 'done' ? 'Researched' : st === 'closed' ? 'Other path chosen' : st === 'locked' ? 'Needs the tier before' : st === 'active' ? Math.round(pts / x.cost * 100) + '% · ' + days + ' d' : x.cost + ' points · about ' + days + ' days';
+    return `<button class="tcard ${st}" data-tech="${t.id}" ${st === 'open' ? '' : 'aria-disabled="true"'}><b>${esc(t.name)}</b><span>${esc(t.desc || '')}</span>${gate}<small>${foot}</small>${st === 'active' ? `<i class="tp" style="width:${Math.round(pts / x.cost * 100)}%"></i>` : ''}</button>`;
+  }
+  function pickTech(id) {
+    const G = Sim.G, st = Tech.state(G.player, id);
+    if (st !== 'open') return;
+    const r = Tech.start(G.player, id);
+    if (!r.ok) toast(r.why + (r.why.includes('busy') ? ': stop one in the Research tab first.' : '.'), -1, 'info');
+    renderRight(); renderTree();
+  }
+  function techPanel() {
+    const G = Sim.G, c = G.countries[G.player];
+    if (!c.rs || !Tech.branchesFor(G.player).length) return '<p class="note">No technologies for this era.</p>';
+    let html = `<dl class="kv"><dt>Research</dt><dd>${f1(Tech.rate(G.player))} points a day</dd><dt>Researched</dt><dd>${c.techs.length}</dd></dl><div class="label">Research slots</div><div class="list" style="margin:6px 0">`;
+    c.rs.slots.forEach((s, i) => {
+      if (!s) { html += `<div class="row"><div class="grow note">Empty slot: pick a technology below.</div></div>`; return; }
+      const x = Tech.info(s.id);
+      const days = Math.ceil((x.cost - s.pts) / Math.max(0.01, c.rs.rate || Tech.rate(G.player)));
+      const gate = x.t.from && !Tech.dateReady(x) ? ' · waits for ' + Tech.fromLabel(x) : '';
+      html += `<div class="row"><div class="grow"><div>${esc(x.t.name)}</div><div class="bar prog"><i style="width:${Math.round(s.pts / x.cost * 100)}%"></i></div><div class="sub">${s.pts >= x.cost ? 'Ready' : days + ' days'}${esc(gate)}</div></div><button class="btn sm" data-stopr="${i}">Stop</button></div>`;
+    });
+    html += `</div><button class="btn" data-opentree style="width:100%">Open the tech tree</button><div class="label" style="margin-top:10px">Available now</div><div class="tlist">`;
+    for (const b of Tech.branchesFor(G.player)) for (const tier of b.tiers) for (const t of (Array.isArray(tier) ? tier : [tier]))
+      if (Tech.state(G.player, t.id) === 'open') html += techCard(G.player, t).replace('<b>', `<u>${esc(b.name)}</u><b>`);
+    return html + '</div>';
+  }
+  function renderTree() {
+    const el = $('#techtree'), G = Sim.G;
+    if (!treeOpen || !G) { el.hidden = true; return; }
+    el.hidden = false;
+    const me = G.player, c = G.countries[me];
+    const cols = Tech.branchesFor(me).map(b => `<div class="tcol ${b.id.includes(':') ? 'own' : ''}"><div class="label">${esc(b.name)}${b.id.startsWith('nat:') ? ' · national' : b.id.startsWith('cul:') ? ' · culture' : ''}</div>${b.tiers.map((tier, i) =>
+      Array.isArray(tier) ? `<div class="tchoice"><div class="tier">Tier ${i + 1} · choose one</div>${tier.map(t => techCard(me, t)).join('<div class="or">or</div>')}</div>` : `<div class="tier">Tier ${i + 1}</div>` + techCard(me, tier)).join('')}</div>`).join('');
+    const slots = c.rs.slots.map(s => s ? esc(Tech.info(s.id).t.name) : 'empty').join(' · ');
+    if (!setHTML(el, `<div class="tt-head"><div><div class="label">Technology · ${esc(typeof Eras !== 'undefined' ? (Eras.list().find(e => e.id === (Eras.isBase() ? Eras.BASE_ID : Eras.info().id)) || {}).name || '' : '')}</div>
+      <div class="note" style="margin:0">Researching: ${slots}. ${f1(Tech.rate(me))} points a day. Tier 3 is a choice: taking one path closes the other for good.</div></div><button class="close" aria-label="Close" id="tt-close">×</button></div>
+      <div class="tcols">${cols}</div>`)) return;
+    $('#tt-close').onclick = () => { treeOpen = false; renderTree(); };
+    el.querySelectorAll('[data-tech]').forEach(b => b.onclick = () => pickTech(b.dataset.tech));
   }
 
   function warsPanel() {
@@ -555,6 +708,17 @@ const UI = (function () {
     body.querySelectorAll('[data-act]').forEach(b => b.onclick = () => doDiplo(b.dataset.act, sel.dip));
     body.querySelectorAll('[data-cap]').forEach(b => b.onclick = () => selectProvince(+b.dataset.cap, true));
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
+    body.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.sell = b.dataset.tf === 'sell'; renderRight(); });
+    body.querySelectorAll('[data-tfg]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.good = b.dataset.tfg; renderRight(); });
+    body.querySelectorAll('[data-tfa]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); const i = AMOUNTS.indexOf(f.amount); f.amount = AMOUNTS[Math.max(0, Math.min(AMOUNTS.length - 1, (i < 0 ? 3 : i) + +b.dataset.tfa))]; renderRight(); });
+    body.querySelectorAll('[data-tfp]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.adj = Math.max(-0.25, Math.min(0.25, Math.round((f.adj + +b.dataset.tfp) * 100) / 100)); renderRight(); });
+    body.querySelectorAll('[data-canceldeal]').forEach(b => b.onclick = () => { const r = Diplo.act('canceltrade', G.player, b.dataset.with, { id: +b.dataset.canceldeal }); toast(r.text, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-lift]').forEach(b => b.onclick = () => { const r = Diplo.act('lift', G.player, b.dataset.lift); toast(r.text, -1, 'info'); renderRight(); });
+    body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
+    body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-tech]').forEach(b => b.onclick = () => pickTech(b.dataset.tech));
+    body.querySelectorAll('[data-stopr]').forEach(b => b.onclick = () => { Tech.stop(G.player, +b.dataset.stopr); renderRight(); renderTree(); });
+    body.querySelectorAll('[data-opentree]').forEach(b => b.onclick = () => { treeOpen = true; renderTree(); });
     const s = $('#dp-search');
     if (s) s.oninput = e => { diploQuery = e.target.value; renderRight(); const n = $('#dp-search'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
   }
@@ -687,7 +851,7 @@ const UI = (function () {
   function backToStart() {
     Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; pending = null; showHint();
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
-    $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true;
+    $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true;
     showStart();
   }
   function gameOver(won) {
@@ -807,6 +971,7 @@ const UI = (function () {
         run($('#bottombar'), renderTrays);
         if (document.activeElement?.id !== 'dp-search') run($('#rightpanel'), renderRight);
         if (!$('#leftpanel').hidden) run($('#leftpanel'), renderLeft);
+        if (treeOpen) run($('#techtree'), renderTree);
         if (sel.battle) renderBattle();
       }
     }

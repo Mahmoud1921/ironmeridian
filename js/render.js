@@ -317,11 +317,35 @@ const Render = (function () {
       ctx.lineWidth = 2.2 / z; ctx.strokeStyle = 'rgba(255,236,170,0.95)'; ctx.stroke(provPaths[state.selProv]);
     });
 
+    if (G && state.mode === 'trade') drawTrade(z, vx0, vy0, vx1, vy1);
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G) { drawPaths(z); drawArmies(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+  }
+
+  // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
+  const TRADE_COL = { food: '#a6d46e', metal: '#d3dbe2', fuel: '#c9a86e', strategic: '#f0a060', luxuries: '#dba6ec' };
+  function drawTrade(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G;
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,14,18,0.35)'; ctx.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+    ctx.lineCap = 'round';
+    const cap = t => { const c = G.countries[t]; return c && c.alive && c.capital >= 0 ? MAP.provs[c.capital] : null; };
+    const arc = (d, bend) => {
+      const a = cap(d.from), b = cap(d.to); if (!a || !b) return;
+      const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, off = len * bend;
+      const cx = (a.x + b.x) / 2 - dy / len * off, cy = (a.y + b.y) / 2 + dx / len * off;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(cx, cy, b.x, b.y); ctx.stroke();
+      // a dot at the buyer's end shows the direction
+      ctx.beginPath(); ctx.arc(b.x, b.y, 2.6 / z, 0, Math.PI * 2); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+    };
+    ctx.setLineDash([6 / z, 5 / z]); ctx.strokeStyle = 'rgba(226,80,62,0.9)'; ctx.lineWidth = 1.8 / z;
+    for (const d of (G.eco && G.eco.cut) || []) if (d.cutAt > G.hour - 60 * 24) arc(d, 0.18);
+    ctx.setLineDash([]);
+    for (const d of G.dip.trade) { ctx.strokeStyle = TRADE_COL[d.good] || '#ccc'; ctx.lineWidth = (1 + Math.min(5, Math.sqrt(d.amount))) / z; arc(d, 0.12); }
+    ctx.restore();
   }
 
   function drawLabels(z) {
