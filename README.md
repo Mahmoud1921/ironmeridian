@@ -28,3 +28,17 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 4. Research, diplomacy, factions, fuller AI
 5. Navy, air force, supply network, naval invasions
 6. Events, peace conferences, save/load, polish
+
+## Playtest loop
+
+`python3 build.py && node tests/playtest.js` plays the built game in headless Chromium:
+- It picks a nation and runs the clock.
+- It clicks army cards, tabs, order buttons, provinces and counters, and counts every click that needed a second try.
+- It declares a war and orders an attack.
+- It runs 20 seconds at top speed while panning and zooming, and measures frame times.
+- It checks state invariants and script errors.
+- It repeats the key taps on a phone-sized screen.
+
+Options: `--quick`, `--seed N`, `--browser firefox` (where Firefox is installed). It exits non-zero on any failure, writes `tests/last-report.json`, and saves screenshots to `tests/shots/`.
+
+Run it after every change and every phase. Fix what fails, then run it again until it is clean. Try a few seeds (`--seed 3`, `--seed 11`) before calling it done.

@@ -22,7 +22,14 @@ const UI = (function () {
   // only touch the DOM when content changed, so buttons stay put under the cursor
   function setHTML(el, html) { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; }
   let lockUntil = 0;
-  document.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('.panel, #hud header')) lockUntil = performance.now() + 700; }, true);
+  // While a button is held down, nothing on screen is rebuilt: otherwise the periodic refresh swaps the
+  // element between press and release, the browser drops the click, and the player has to click twice.
+  document.addEventListener('pointerdown', e => { if (e.target.id !== 'map') lockUntil = Infinity; }, true);
+  const unlock = () => { if (lockUntil === Infinity) lockUntil = performance.now() + 250; };
+  document.addEventListener('pointerup', unlock, true);
+  document.addEventListener('pointercancel', unlock, true);
+  // a mouse-clicked button must not keep focus, or Space (pause) would press it again
+  document.addEventListener('click', e => { if (e.detail > 0) { const b = e.target.closest && e.target.closest('button'); if (b) setTimeout(() => b.blur(), 0); } }, true);
 
   // ---------- flags (original abstract designs) ----------
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -66,11 +73,12 @@ const UI = (function () {
     $('#tb-faster').onclick = () => setSpeed(Sim.G.speed + 1);
     $('#tb-menu').onclick = openMenu;
     $('#tb-nation').onclick = () => { const G = Sim.G; if (!G) return; selectProvince(G.countries[G.player].capital, true); };
-    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { sel.tab = t.dataset.tab; renderRight(); });
+    // clicking the open tab folds the panel away; any tab opens it again
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { sel.collapsed = sel.tab === t.dataset.tab && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); });
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
-    $('#mc-in').onclick = () => Render.zoomAt(Render.size[0] / 2, Render.size[1] / 2, 1.5);
-    $('#mc-out').onclick = () => Render.zoomAt(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
+    $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
+    $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
     Sim.hooks.notify = toast;
     Sim.hooks.pause = () => refreshTop();
@@ -110,6 +118,7 @@ const UI = (function () {
     const d = COUNTRY_BY_TAG[tag];
     if (!d.divs) return;
     startPick = tag;
+    $('#st-play').textContent = 'Play as ' + d.name;
     document.querySelectorAll('#start .ncard').forEach(b => b.classList.toggle('sel', b.dataset.tag === tag));
     const f = countryFacts(tag);
     const dl = ['Very easy', 'Easy', 'Normal', 'Hard', 'Very hard'].indexOf(d.diff);
@@ -134,6 +143,7 @@ const UI = (function () {
     const cap = MAP.provs[Sim.G.countries[tag].capital];
     Render.flyTo(cap.x, cap.y, 9);
     sel.armies = []; sel.prov = -1;
+    sel.collapsed = innerWidth <= 820; // small screens start with the map clear
     renderTrays(); renderRight(); refreshTop(); renderLeft();
     toast('You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap.id, 'info');
   }
@@ -170,7 +180,6 @@ const UI = (function () {
     const el = document.createElement('div');
     el.className = 'toast ' + (kind || 'info');
     el.innerHTML = `<span class="d">${G ? Sim.dateStr(G.hour) : ''}</span>${esc(text)}`;
-    el.onclick = () => { if (prov >= 0) selectProvince(prov, true); el.remove(); };
     const box = $('#toasts');
     box.prepend(el);
     while (box.children.length > 4) box.lastChild.remove();
@@ -262,7 +271,7 @@ const UI = (function () {
     // only own armies can be multi-selected
     if (sel.armies.length > 1) sel.armies = sel.armies.filter(id => { const a = Sim.army(id); return a && a.owner === G.player; });
     Render.state.selArmies = new Set(sel.armies);
-    if (sel.armies.length) sel.tab = 'army';
+    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; }
     renderRight(); renderTrays();
   }
   function selectedArmies() { return sel.armies.map(Sim.army).filter(Boolean); }
@@ -275,6 +284,8 @@ const UI = (function () {
     const wars = G.wars.filter(w => w.attackers.includes(G.player) || w.defenders.includes(G.player)).length;
     $('#tab-wars-badge').textContent = wars || ''; $('#tab-wars-badge').hidden = !wars;
     const body = $('#rp-body');
+    body.hidden = !!sel.collapsed;
+    $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
     const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
     if (setHTML(body, html)) bindRight();
   }
@@ -453,7 +464,10 @@ const UI = (function () {
       return `<button class="acard ${sel.armies.includes(a.id) ? 'sel' : ''}" data-a="${a.id}"><div class="t"><span>${esc(a.name)}</span><span class="num">${a.units.length}</span></div>
         <div class="s">${esc(MAP.provs[a.prov].name)} · ${status(a)}</div><div class="bar str"><i style="width:${st.str * 100}%"></i></div><div class="bar org"><i style="width:${st.org * 100}%"></i></div></button>`;
     }).join('');
-    if (setHTML($('#armytray'), trayHTML)) document.querySelectorAll('#armytray .acard').forEach(b => {
+    const tray = $('#armytray');
+    // a long army list scrolls sideways with the ordinary mouse wheel
+    if (!tray._wheel) { tray._wheel = true; tray.addEventListener('wheel', e => { if (tray.scrollWidth > tray.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tray.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); }
+    if (setHTML(tray, trayHTML)) document.querySelectorAll('#armytray .acard').forEach(b => {
       b.onclick = e => selectArmies([+b.dataset.a], e.shiftKey || e.ctrlKey || e.metaKey);
       b.ondblclick = () => { const a = Sim.army(+b.dataset.a); if (a) { const p = MAP.provs[a.prov]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 8)); } };
     });
@@ -567,7 +581,7 @@ const UI = (function () {
     cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); down = null; pinch = null; });
     cv.addEventListener('pointerleave', () => { Render.state.hover = -1; });
-    cv.addEventListener('wheel', e => { e.preventDefault(); Render.cam.anim = false; Render.zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+    cv.addEventListener('wheel', e => { e.preventDefault(); Render.zoomSmooth(e.offsetX, e.offsetY, Math.exp(-Math.max(-300, Math.min(300, e.deltaMode ? e.deltaY * 40 : e.deltaY)) * 0.0022)); }, { passive: false });
   }
   function click(sx, sy, button, add) {
     const G = Sim.G;
@@ -583,10 +597,20 @@ const UI = (function () {
     }
     const b = Render.battleAtScreen(sx, sy);
     if (b) { openBattle(b); return; }
-    const a = Render.counterAt(sx, sy);
-    if (a) {
-      // clicking a stack cycles through armies sharing that province
-      selectArmies([a.id], add && a.owner === G.player);
+    const stack = Render.stackAt(sx, sy);
+    if (stack) {
+      const a = stack[0];
+      if (a.owner === G.player && !add) {
+        // first click takes the whole stack; clicking it again steps through its armies one by one
+        const ids = stack.map(x => x.id);
+        const cur = sel.armies;
+        let pick = ids;
+        if (ids.length > 1) {
+          if (cur.length === ids.length && ids.every(id => cur.includes(id))) pick = [ids[0]];
+          else if (cur.length === 1 && ids.includes(cur[0])) { const k = ids.indexOf(cur[0]) + 1; pick = k < ids.length ? [ids[k]] : ids; }
+        }
+        selectArmies(pick, false);
+      } else selectArmies([a.id], add && a.owner === G.player);
       selectProvince(a.prov);
       return;
     }
@@ -640,5 +664,5 @@ const UI = (function () {
     }
   }
 
-  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop };
+  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice() };
 })();

@@ -103,6 +103,7 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 .tab:last-child { border-right: 0; }
 .tab.on { color: var(--paper); background: var(--panel-3); box-shadow: inset 0 -2px 0 var(--brass); }
 .tab .badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 3px; background: var(--bad); color: #fff; font-size: 10px; border-radius: 8px; }
+#rightpanel.folded .tab.on { color: var(--muted); }
 #rp-body { overflow-y: auto; padding: 12px 14px; }
 .close { float: right; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 4px; }
 .close:hover { color: var(--paper); }
@@ -139,7 +140,7 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 
 /* ---------- bottom tray ---------- */
 #bottombar { position: absolute; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 15; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
-#armytray, #unittray { pointer-events: auto; display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: thin; }
+#armytray, #unittray { pointer-events: auto; align-self: flex-start; max-width: 100%; display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: thin; }
 #armytray:empty, #unittray:empty { display: none; }
 .acard { flex: none; width: 150px; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; display: flex; flex-direction: column; gap: 3px; text-align: left; }
 .acard:hover { border-color: var(--brass-dim); }
@@ -148,8 +149,9 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 .acard .t span:first-child { overflow: hidden; text-overflow: ellipsis; }
 .acard .s { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acard .bar { height: 4px; }
-.ucard { flex: none; width: 92px; padding: 5px 6px; background: var(--panel); border: 1px solid var(--line-soft); font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
-.ucard svg { width: 30px; height: 20px; }
+.ucard { flex: none; width: 66px; padding: 4px 5px; background: var(--panel); border: 1px solid var(--line-soft); font-size: 11px; display: flex; flex-direction: column; gap: 3px; }
+.ucard svg { width: 24px; height: 16px; }
+.ucard .bar { height: 3px; }
 .ucard .bar { height: 4px; }
 
 /* ---------- map controls ---------- */
@@ -159,7 +161,7 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 
 /* ---------- toasts ---------- */
 #toasts { position: absolute; left: 50%; transform: translateX(-50%); top: 62px; z-index: 18; display: flex; flex-direction: column; gap: 5px; align-items: center; pointer-events: none; width: min(460px, calc(100% - 32px)); }
-.toast { pointer-events: auto; cursor: pointer; padding: 7px 12px; background: rgba(23,28,25,.96); border: 1px solid var(--line); border-left: 4px solid var(--info); font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.5); animation: tin .25s ease-out; width: 100%; }
+.toast { pointer-events: none; padding: 7px 12px; background: rgba(23,28,25,.96); border: 1px solid var(--line); border-left: 4px solid var(--info); font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.5); animation: tin .25s ease-out; width: 100%; }
 .toast.war, .toast.loss, .toast.cap { border-left-color: var(--bad); }
 .toast.win { border-left-color: var(--good); }
 .toast.battle { border-left-color: var(--warn); }
@@ -239,6 +241,10 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
   #start { grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow-y: auto; pointer-events: auto; background: rgba(14,18,16,.9); }
   #st-left, #st-right { grid-column: 1; border: 0; overflow: visible; }
   #st-map-gap { display: none; }
+  #unittray { display: none !important; }
+  #start { padding-bottom: 84px; }
+  #st-all { max-height: 320px; overflow-y: auto; }
+  #st-play { position: fixed; left: 16px; right: 16px; bottom: 16px; width: auto; z-index: 5; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
   #mapctl { bottom: auto; top: 100px; flex-direction: row; right: 10px; }
 }
 
@@ -1534,7 +1540,12 @@ const Sim = (function () {
     if (newOwner === G.player) G.stats.captured++;
     if (prev === G.player) {
       G.stats.lost++;
-      if (p.capital || p.city) notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', G.settings.pauseLoss);
+      if (p.capital || p.city) {
+        // pause at most once a day for lost cities, so a collapsing front doesn't stop the clock every hour
+        const pause = G.settings.pauseLoss && (p.capital || !(G.hour - (G.lossPauseAt ?? -99) < 24));
+        if (pause) G.lossPauseAt = G.hour;
+        notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+      }
     }
     // capital relocation
     const pc = G.countries[prev];
@@ -1969,10 +1980,20 @@ const Render = (function () {
     const [nx, ny] = screenToWorld(sx, sy);
     cam.x += wx - nx; cam.y += wy - ny; clampCam();
   }
+  // eased zoom toward a target, keeping the point under the cursor fixed
+  function zoomSmooth(sx, sy, factor) {
+    cam.anim = false;
+    cam.zt = Math.max(minZoom(), Math.min(70, (cam.zt || cam.z) * factor));
+    cam.zax = sx; cam.zay = sy;
+  }
   function pan(dx, dy) { cam.x -= dx / cam.z; cam.y -= dy / cam.z; clampCam(); cam.anim = false; }
   function flyTo(x, y, z) { cam.tx = x; cam.ty = y; cam.tz = z || cam.z; cam.anim = true; }
   function fitWorld() { flyTo(0, -25, minZoom()); }
   function stepCamera() {
+    if (cam.zt) {
+      if (cam.anim || Math.abs(cam.zt / cam.z - 1) < 0.003) cam.zt = 0;
+      else zoomAt(cam.zax, cam.zay, Math.pow(cam.zt / cam.z, 0.3));
+    }
     if (!cam.anim) return;
     cam.x += (cam.tx - cam.x) * 0.18; cam.y += (cam.ty - cam.y) * 0.18;
     cam.z *= Math.pow(cam.tz / cam.z, 0.18);
@@ -1994,10 +2015,11 @@ const Render = (function () {
     }
     return best;
   }
-  function counterAt(sx, sy) {
-    for (let i = counterHits.length - 1; i >= 0; i--) { const h = counterHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.army; }
+  function stackAt(sx, sy) {
+    for (let i = counterHits.length - 1; i >= 0; i--) { const h = counterHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.group; }
     return null;
   }
+  function counterAt(sx, sy) { const g = stackAt(sx, sy); return g ? g[0] : null; }
   function battleAtScreen(sx, sy) {
     for (const h of battleHits) if (Math.hypot(sx - h.x, sy - h.y) < 13) return h.battle;
     return null;
@@ -2280,14 +2302,20 @@ const Render = (function () {
     for (const a of G.armies) {
       const [x, y] = armyPos(a);
       if (x < vx0 - 2 || x > vx1 + 2 || y < vy0 - 2 || y > vy1 + 2) continue;
+      // zoomed out, only armies that matter to the player are drawn
+      if (z < 4.5 && a.owner !== G.player && !Sim.atWar(a.owner, G.player) && !Sim.allied(a.owner, G.player)) continue;
       const k = a.prov;
       if (!byProv.has(k)) byProv.set(k, []); byProv.get(k).push(a);
     }
     const small = z < 3.2;
     const symbols = [];
     for (const [, list] of byProv) {
-      list.sort((a, b) => (a.owner === G.player) - (b.owner === G.player));
-      list.forEach((a, i) => {
+      // one counter per owner in each province; the stack shows total divisions
+      const groups = new Map();
+      for (const a of list) { if (!groups.has(a.owner)) groups.set(a.owner, []); groups.get(a.owner).push(a); }
+      const stacks = [...groups.values()].sort((a, b) => (a[0].owner === G.player) - (b[0].owner === G.player));
+      stacks.forEach((grp, i) => {
+        const a = grp[0];
         const [wx, wy] = armyPos(a);
         let [sx, sy] = worldToScreen(wx, wy);
         const c = COUNTRY_BY_TAG[a.owner];
@@ -2296,30 +2324,31 @@ const Render = (function () {
         if (small) {
           ctx.beginPath(); ctx.arc(sx, sy - i * 4, mine ? 3.4 : 2.6, 0, Math.PI * 2);
           ctx.fillStyle = c.color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : '#111'; ctx.stroke();
-          counterHits.push({ x: sx - 5, y: sy - i * 4 - 5, w: 10, h: 10, army: a });
+          counterHits.push({ x: sx - 6, y: sy - i * 4 - 6, w: 12, h: 12, army: a, group: grp });
           return;
         }
         const w = 44, h = 20;
         const x = sx - w / 2, y = sy - h / 2 - 8 - i * (h + 3);
-        const sel = state.selArmies.has(a.id);
-        // shadow
+        const sel = grp.some(g => state.selArmies.has(g.id));
+        let divs = 0, str = 0, org = 0, lowSup = false, defend = false;
+        for (const g of grp) { const st = Sim.armyStats(g); const n = g.units.length; divs += n; str += st.str * n; org += st.org * n; if (g.supply < 0.5) lowSup = true; if (g.order === 'defend') defend = true; }
+        str /= divs || 1; org /= divs || 1;
+        // shadow, plus a second card behind when several armies share the spot
         ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 1.5, y + 2, w, h);
+        if (grp.length > 1) { ctx.fillStyle = mine ? '#1d2418' : '#1e1e1e'; ctx.fillRect(x + 3, y - 3, w, h); ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.strokeRect(x + 3.5, y - 2.5, w - 1, h - 1); }
         ctx.fillStyle = mine ? '#27301f' : hostile ? '#3a1d1a' : '#262626'; ctx.fillRect(x, y, w, h);
         ctx.fillStyle = c.color; ctx.fillRect(x + 2, y + 2, 17, h - 7);
         symbols.push([x + 2.5, y + 2.5, UNIT_TYPES[mainType(a)].symbol]);
-        // divisions count
         ctx.font = '700 12px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(a.units.length), x + 31, y + 7.5);
-        // strength & org bars
-        const st = Sim.armyStats(a);
+        ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(divs), x + 31, y + 7.5);
         ctx.fillStyle = '#111'; ctx.fillRect(x + 2, y + h - 4.5, w - 4, 3.5);
-        ctx.fillStyle = '#6fbf57'; ctx.fillRect(x + 2, y + h - 4.5, (w - 4) * st.str, 1.6);
-        ctx.fillStyle = '#d8b44a'; ctx.fillRect(x + 2, y + h - 2.6, (w - 4) * st.org, 1.6);
+        ctx.fillStyle = '#6fbf57'; ctx.fillRect(x + 2, y + h - 4.5, (w - 4) * str, 1.6);
+        ctx.fillStyle = '#d8b44a'; ctx.fillRect(x + 2, y + h - 2.6, (w - 4) * org, 1.6);
         ctx.lineWidth = sel ? 2.2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : hostile ? '#c2493d' : mine ? '#8fa368' : '#555';
         ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-        if (a.order === 'defend' && mine) { ctx.fillStyle = '#d6b052'; ctx.fillRect(x + w - 6, y + 2, 4, 4); }
-        if (a.supply < 0.5) { ctx.fillStyle = '#e0503c'; ctx.beginPath(); ctx.arc(x + w - 4, y + h - 8, 2.2, 0, 7); ctx.fill(); }
-        counterHits.push({ x, y, w, h, army: a });
+        if (defend && mine) { ctx.fillStyle = '#d6b052'; ctx.fillRect(x + w - 6, y + 2, 4, 4); }
+        if (lowSup) { ctx.fillStyle = '#e0503c'; ctx.beginPath(); ctx.arc(x + w - 4, y + h - 8, 2.2, 0, 7); ctx.fill(); }
+        counterHits.push({ x, y: y - (grp.length > 1 ? 3 : 0), w: w + (grp.length > 1 ? 3 : 0), h: h + (grp.length > 1 ? 3 : 0), army: a, group: grp });
       });
     }
     if (symbols.length) {
@@ -2362,7 +2391,7 @@ const Render = (function () {
     state.frontEdges = path;
   }
 
-  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, pan, flyTo, fitWorld, provinceAt, counterAt, battleAtScreen, setFrontEdges, minZoom, get size() { return [W, H]; } };
+  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, get size() { return [W, H]; } };
 })();
 
 // Interface: start screen, top bar, dossier panels, army tray, orders and input.
@@ -2389,7 +2418,14 @@ const UI = (function () {
   // only touch the DOM when content changed, so buttons stay put under the cursor
   function setHTML(el, html) { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; }
   let lockUntil = 0;
-  document.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('.panel, #hud header')) lockUntil = performance.now() + 700; }, true);
+  // While a button is held down, nothing on screen is rebuilt: otherwise the periodic refresh swaps the
+  // element between press and release, the browser drops the click, and the player has to click twice.
+  document.addEventListener('pointerdown', e => { if (e.target.id !== 'map') lockUntil = Infinity; }, true);
+  const unlock = () => { if (lockUntil === Infinity) lockUntil = performance.now() + 250; };
+  document.addEventListener('pointerup', unlock, true);
+  document.addEventListener('pointercancel', unlock, true);
+  // a mouse-clicked button must not keep focus, or Space (pause) would press it again
+  document.addEventListener('click', e => { if (e.detail > 0) { const b = e.target.closest && e.target.closest('button'); if (b) setTimeout(() => b.blur(), 0); } }, true);
 
   // ---------- flags (original abstract designs) ----------
   function hash(s) { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -2433,11 +2469,12 @@ const UI = (function () {
     $('#tb-faster').onclick = () => setSpeed(Sim.G.speed + 1);
     $('#tb-menu').onclick = openMenu;
     $('#tb-nation').onclick = () => { const G = Sim.G; if (!G) return; selectProvince(G.countries[G.player].capital, true); };
-    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { sel.tab = t.dataset.tab; renderRight(); });
+    // clicking the open tab folds the panel away; any tab opens it again
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { sel.collapsed = sel.tab === t.dataset.tab && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); });
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
-    $('#mc-in').onclick = () => Render.zoomAt(Render.size[0] / 2, Render.size[1] / 2, 1.5);
-    $('#mc-out').onclick = () => Render.zoomAt(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
+    $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
+    $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
     Sim.hooks.notify = toast;
     Sim.hooks.pause = () => refreshTop();
@@ -2477,6 +2514,7 @@ const UI = (function () {
     const d = COUNTRY_BY_TAG[tag];
     if (!d.divs) return;
     startPick = tag;
+    $('#st-play').textContent = 'Play as ' + d.name;
     document.querySelectorAll('#start .ncard').forEach(b => b.classList.toggle('sel', b.dataset.tag === tag));
     const f = countryFacts(tag);
     const dl = ['Very easy', 'Easy', 'Normal', 'Hard', 'Very hard'].indexOf(d.diff);
@@ -2501,6 +2539,7 @@ const UI = (function () {
     const cap = MAP.provs[Sim.G.countries[tag].capital];
     Render.flyTo(cap.x, cap.y, 9);
     sel.armies = []; sel.prov = -1;
+    sel.collapsed = innerWidth <= 820; // small screens start with the map clear
     renderTrays(); renderRight(); refreshTop(); renderLeft();
     toast('You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap.id, 'info');
   }
@@ -2537,7 +2576,6 @@ const UI = (function () {
     const el = document.createElement('div');
     el.className = 'toast ' + (kind || 'info');
     el.innerHTML = `<span class="d">${G ? Sim.dateStr(G.hour) : ''}</span>${esc(text)}`;
-    el.onclick = () => { if (prov >= 0) selectProvince(prov, true); el.remove(); };
     const box = $('#toasts');
     box.prepend(el);
     while (box.children.length > 4) box.lastChild.remove();
@@ -2629,7 +2667,7 @@ const UI = (function () {
     // only own armies can be multi-selected
     if (sel.armies.length > 1) sel.armies = sel.armies.filter(id => { const a = Sim.army(id); return a && a.owner === G.player; });
     Render.state.selArmies = new Set(sel.armies);
-    if (sel.armies.length) sel.tab = 'army';
+    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; }
     renderRight(); renderTrays();
   }
   function selectedArmies() { return sel.armies.map(Sim.army).filter(Boolean); }
@@ -2642,6 +2680,8 @@ const UI = (function () {
     const wars = G.wars.filter(w => w.attackers.includes(G.player) || w.defenders.includes(G.player)).length;
     $('#tab-wars-badge').textContent = wars || ''; $('#tab-wars-badge').hidden = !wars;
     const body = $('#rp-body');
+    body.hidden = !!sel.collapsed;
+    $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
     const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
     if (setHTML(body, html)) bindRight();
   }
@@ -2820,7 +2860,10 @@ const UI = (function () {
       return `<button class="acard ${sel.armies.includes(a.id) ? 'sel' : ''}" data-a="${a.id}"><div class="t"><span>${esc(a.name)}</span><span class="num">${a.units.length}</span></div>
         <div class="s">${esc(MAP.provs[a.prov].name)} · ${status(a)}</div><div class="bar str"><i style="width:${st.str * 100}%"></i></div><div class="bar org"><i style="width:${st.org * 100}%"></i></div></button>`;
     }).join('');
-    if (setHTML($('#armytray'), trayHTML)) document.querySelectorAll('#armytray .acard').forEach(b => {
+    const tray = $('#armytray');
+    // a long army list scrolls sideways with the ordinary mouse wheel
+    if (!tray._wheel) { tray._wheel = true; tray.addEventListener('wheel', e => { if (tray.scrollWidth > tray.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tray.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false }); }
+    if (setHTML(tray, trayHTML)) document.querySelectorAll('#armytray .acard').forEach(b => {
       b.onclick = e => selectArmies([+b.dataset.a], e.shiftKey || e.ctrlKey || e.metaKey);
       b.ondblclick = () => { const a = Sim.army(+b.dataset.a); if (a) { const p = MAP.provs[a.prov]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 8)); } };
     });
@@ -2934,7 +2977,7 @@ const UI = (function () {
     cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); down = null; pinch = null; });
     cv.addEventListener('pointerleave', () => { Render.state.hover = -1; });
-    cv.addEventListener('wheel', e => { e.preventDefault(); Render.cam.anim = false; Render.zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+    cv.addEventListener('wheel', e => { e.preventDefault(); Render.zoomSmooth(e.offsetX, e.offsetY, Math.exp(-Math.max(-300, Math.min(300, e.deltaMode ? e.deltaY * 40 : e.deltaY)) * 0.0022)); }, { passive: false });
   }
   function click(sx, sy, button, add) {
     const G = Sim.G;
@@ -2950,10 +2993,20 @@ const UI = (function () {
     }
     const b = Render.battleAtScreen(sx, sy);
     if (b) { openBattle(b); return; }
-    const a = Render.counterAt(sx, sy);
-    if (a) {
-      // clicking a stack cycles through armies sharing that province
-      selectArmies([a.id], add && a.owner === G.player);
+    const stack = Render.stackAt(sx, sy);
+    if (stack) {
+      const a = stack[0];
+      if (a.owner === G.player && !add) {
+        // first click takes the whole stack; clicking it again steps through its armies one by one
+        const ids = stack.map(x => x.id);
+        const cur = sel.armies;
+        let pick = ids;
+        if (ids.length > 1) {
+          if (cur.length === ids.length && ids.every(id => cur.includes(id))) pick = [ids[0]];
+          else if (cur.length === 1 && ids.includes(cur[0])) { const k = ids.indexOf(cur[0]) + 1; pick = k < ids.length ? [ids[k]] : ids; }
+        }
+        selectArmies(pick, false);
+      } else selectArmies([a.id], add && a.owner === G.player);
       selectProvince(a.prov);
       return;
     }
@@ -3007,7 +3060,7 @@ const UI = (function () {
     }
   }
 
-  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop };
+  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice() };
 })();
 
 // Boot: generate the map, then run the render/simulation loop.

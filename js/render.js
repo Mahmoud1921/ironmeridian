@@ -124,10 +124,20 @@ const Render = (function () {
     const [nx, ny] = screenToWorld(sx, sy);
     cam.x += wx - nx; cam.y += wy - ny; clampCam();
   }
+  // eased zoom toward a target, keeping the point under the cursor fixed
+  function zoomSmooth(sx, sy, factor) {
+    cam.anim = false;
+    cam.zt = Math.max(minZoom(), Math.min(70, (cam.zt || cam.z) * factor));
+    cam.zax = sx; cam.zay = sy;
+  }
   function pan(dx, dy) { cam.x -= dx / cam.z; cam.y -= dy / cam.z; clampCam(); cam.anim = false; }
   function flyTo(x, y, z) { cam.tx = x; cam.ty = y; cam.tz = z || cam.z; cam.anim = true; }
   function fitWorld() { flyTo(0, -25, minZoom()); }
   function stepCamera() {
+    if (cam.zt) {
+      if (cam.anim || Math.abs(cam.zt / cam.z - 1) < 0.003) cam.zt = 0;
+      else zoomAt(cam.zax, cam.zay, Math.pow(cam.zt / cam.z, 0.3));
+    }
     if (!cam.anim) return;
     cam.x += (cam.tx - cam.x) * 0.18; cam.y += (cam.ty - cam.y) * 0.18;
     cam.z *= Math.pow(cam.tz / cam.z, 0.18);
@@ -149,10 +159,11 @@ const Render = (function () {
     }
     return best;
   }
-  function counterAt(sx, sy) {
-    for (let i = counterHits.length - 1; i >= 0; i--) { const h = counterHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.army; }
+  function stackAt(sx, sy) {
+    for (let i = counterHits.length - 1; i >= 0; i--) { const h = counterHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.group; }
     return null;
   }
+  function counterAt(sx, sy) { const g = stackAt(sx, sy); return g ? g[0] : null; }
   function battleAtScreen(sx, sy) {
     for (const h of battleHits) if (Math.hypot(sx - h.x, sy - h.y) < 13) return h.battle;
     return null;
@@ -435,14 +446,20 @@ const Render = (function () {
     for (const a of G.armies) {
       const [x, y] = armyPos(a);
       if (x < vx0 - 2 || x > vx1 + 2 || y < vy0 - 2 || y > vy1 + 2) continue;
+      // zoomed out, only armies that matter to the player are drawn
+      if (z < 4.5 && a.owner !== G.player && !Sim.atWar(a.owner, G.player) && !Sim.allied(a.owner, G.player)) continue;
       const k = a.prov;
       if (!byProv.has(k)) byProv.set(k, []); byProv.get(k).push(a);
     }
     const small = z < 3.2;
     const symbols = [];
     for (const [, list] of byProv) {
-      list.sort((a, b) => (a.owner === G.player) - (b.owner === G.player));
-      list.forEach((a, i) => {
+      // one counter per owner in each province; the stack shows total divisions
+      const groups = new Map();
+      for (const a of list) { if (!groups.has(a.owner)) groups.set(a.owner, []); groups.get(a.owner).push(a); }
+      const stacks = [...groups.values()].sort((a, b) => (a[0].owner === G.player) - (b[0].owner === G.player));
+      stacks.forEach((grp, i) => {
+        const a = grp[0];
         const [wx, wy] = armyPos(a);
         let [sx, sy] = worldToScreen(wx, wy);
         const c = COUNTRY_BY_TAG[a.owner];
@@ -451,30 +468,31 @@ const Render = (function () {
         if (small) {
           ctx.beginPath(); ctx.arc(sx, sy - i * 4, mine ? 3.4 : 2.6, 0, Math.PI * 2);
           ctx.fillStyle = c.color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : '#111'; ctx.stroke();
-          counterHits.push({ x: sx - 5, y: sy - i * 4 - 5, w: 10, h: 10, army: a });
+          counterHits.push({ x: sx - 6, y: sy - i * 4 - 6, w: 12, h: 12, army: a, group: grp });
           return;
         }
         const w = 44, h = 20;
         const x = sx - w / 2, y = sy - h / 2 - 8 - i * (h + 3);
-        const sel = state.selArmies.has(a.id);
-        // shadow
+        const sel = grp.some(g => state.selArmies.has(g.id));
+        let divs = 0, str = 0, org = 0, lowSup = false, defend = false;
+        for (const g of grp) { const st = Sim.armyStats(g); const n = g.units.length; divs += n; str += st.str * n; org += st.org * n; if (g.supply < 0.5) lowSup = true; if (g.order === 'defend') defend = true; }
+        str /= divs || 1; org /= divs || 1;
+        // shadow, plus a second card behind when several armies share the spot
         ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(x + 1.5, y + 2, w, h);
+        if (grp.length > 1) { ctx.fillStyle = mine ? '#1d2418' : '#1e1e1e'; ctx.fillRect(x + 3, y - 3, w, h); ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.strokeRect(x + 3.5, y - 2.5, w - 1, h - 1); }
         ctx.fillStyle = mine ? '#27301f' : hostile ? '#3a1d1a' : '#262626'; ctx.fillRect(x, y, w, h);
         ctx.fillStyle = c.color; ctx.fillRect(x + 2, y + 2, 17, h - 7);
         symbols.push([x + 2.5, y + 2.5, UNIT_TYPES[mainType(a)].symbol]);
-        // divisions count
         ctx.font = '700 12px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(a.units.length), x + 31, y + 7.5);
-        // strength & org bars
-        const st = Sim.armyStats(a);
+        ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(divs), x + 31, y + 7.5);
         ctx.fillStyle = '#111'; ctx.fillRect(x + 2, y + h - 4.5, w - 4, 3.5);
-        ctx.fillStyle = '#6fbf57'; ctx.fillRect(x + 2, y + h - 4.5, (w - 4) * st.str, 1.6);
-        ctx.fillStyle = '#d8b44a'; ctx.fillRect(x + 2, y + h - 2.6, (w - 4) * st.org, 1.6);
+        ctx.fillStyle = '#6fbf57'; ctx.fillRect(x + 2, y + h - 4.5, (w - 4) * str, 1.6);
+        ctx.fillStyle = '#d8b44a'; ctx.fillRect(x + 2, y + h - 2.6, (w - 4) * org, 1.6);
         ctx.lineWidth = sel ? 2.2 : 1; ctx.strokeStyle = sel ? '#ffe28a' : hostile ? '#c2493d' : mine ? '#8fa368' : '#555';
         ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-        if (a.order === 'defend' && mine) { ctx.fillStyle = '#d6b052'; ctx.fillRect(x + w - 6, y + 2, 4, 4); }
-        if (a.supply < 0.5) { ctx.fillStyle = '#e0503c'; ctx.beginPath(); ctx.arc(x + w - 4, y + h - 8, 2.2, 0, 7); ctx.fill(); }
-        counterHits.push({ x, y, w, h, army: a });
+        if (defend && mine) { ctx.fillStyle = '#d6b052'; ctx.fillRect(x + w - 6, y + 2, 4, 4); }
+        if (lowSup) { ctx.fillStyle = '#e0503c'; ctx.beginPath(); ctx.arc(x + w - 4, y + h - 8, 2.2, 0, 7); ctx.fill(); }
+        counterHits.push({ x, y: y - (grp.length > 1 ? 3 : 0), w: w + (grp.length > 1 ? 3 : 0), h: h + (grp.length > 1 ? 3 : 0), army: a, group: grp });
       });
     }
     if (symbols.length) {
@@ -517,5 +535,5 @@ const Render = (function () {
     state.frontEdges = path;
   }
 
-  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, pan, flyTo, fitWorld, provinceAt, counterAt, battleAtScreen, setFrontEdges, minZoom, get size() { return [W, H]; } };
+  return { init, draw, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, setFrontEdges, minZoom, _hits: () => counterHits, get size() { return [W, H]; } };
 })();

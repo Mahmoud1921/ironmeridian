@@ -403,7 +403,12 @@ const Sim = (function () {
     if (newOwner === G.player) G.stats.captured++;
     if (prev === G.player) {
       G.stats.lost++;
-      if (p.capital || p.city) notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', G.settings.pauseLoss);
+      if (p.capital || p.city) {
+        // pause at most once a day for lost cities, so a collapsing front doesn't stop the clock every hour
+        const pause = G.settings.pauseLoss && (p.capital || !(G.hour - (G.lossPauseAt ?? -99) < 24));
+        if (pause) G.lossPauseAt = G.hour;
+        notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+      }
     }
     // capital relocation
     const pc = G.countries[prev];
