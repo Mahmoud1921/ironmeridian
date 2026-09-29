@@ -36,6 +36,7 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 - It clicks army cards, tabs, order buttons, provinces and counters, and counts every click that needed a second try.
 - It declares a war and orders an attack.
 - It runs 20 seconds at top speed while panning and zooming, and measures frame times.
+- It follows one marching army frame by frame: it must move every frame with no jumps, stutters or backward steps.
 - It checks that 3D troop figures show, glide while moving, get painted in the background, and draw fast on a crowded map.
 - It checks state invariants and script errors.
 - It works through every diplomacy action in the Nations tab:
@@ -70,3 +71,7 @@ The actions are:
 - demand territory (a refusal lets you declare war for free)
 - declare war (faction members and guarantors join in)
 - offer white peace, or peace where you keep the land you occupy
+
+## Flags
+
+`js/flags.js` draws each nation's real 1936 flag as a small SVG. Flags that carried extremist symbols in 1936 use a non-extremist historical variant; for Germany that is the black, white and red tricolour.

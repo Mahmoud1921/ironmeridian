@@ -170,11 +170,14 @@ const Render = (function () {
   }
 
   // ---------- drawing ----------
+  // where an army is right now: along its current leg, including the part of the hour already elapsed
   function armyPos(a) {
     const p = MAP.provs[a.prov];
-    if (a.path.length && a.progress > 0) {
+    if (a.path.length) {
       const n = MAP.provs[a.path[0]];
-      const t = Math.min(1, a.progress / Sim.distKm(a.prov, a.path[0]));
+      const prog = a.progress + (a.battle ? 0 : (a.rate || 0) * (state.hourFrac || 0));
+      if (prog <= 0) return [p.x, p.y];
+      const t = Math.min(1, prog / Sim.distKm(a.prov, a.path[0]));
       return [p.x + (n.x - p.x) * t, p.y + (n.y - p.y) * t];
     }
     return [p.x, p.y];
@@ -445,10 +448,15 @@ const Render = (function () {
   function dispPos(a, k) {
     const [tx, ty] = armyPos(a);
     let d = disp.get(a.id);
-    if (!d || Math.abs(d.x - tx) + Math.abs(d.y - ty) > 6) { d = { x: tx, y: ty, h: d ? d.h : Math.PI * 1.5, seen: 0 }; disp.set(a.id, d); }
-    d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.seen = lastDisp;
-    if (a.path.length) { const p = MAP.provs[a.prov], n = MAP.provs[a.path[0]]; d.h = Math.atan2(-(n.y - p.y), n.x - p.x); }
-    else if (a.battle) { const b = Sim.G.battles.find(x => x.id === a.battle); if (b && b.prov !== a.prov) { const p = MAP.provs[a.prov], n = MAP.provs[b.prov]; d.h = Math.atan2(-(n.y - p.y), n.x - p.x); } }
+    if (!d) { d = { x: tx, y: ty, h: Math.PI * 1.5, seen: 0 }; disp.set(a.id, d); }
+    const jump = Math.hypot(tx - d.x, ty - d.y);
+    // marching positions are exact; only sudden jumps (a retreat, a new route) are eased
+    if (jump > 6 || jump < 0.35) { d.x = tx; d.y = ty; } else { d.x += (tx - d.x) * Math.max(k, 0.3); d.y += (ty - d.y) * Math.max(k, 0.3); }
+    d.seen = lastDisp;
+    let want = null;
+    if (a.path.length) { const p = MAP.provs[a.prov], n = MAP.provs[a.path[0]]; want = Math.atan2(-(n.y - p.y), n.x - p.x); }
+    else if (a.battle) { const b = Sim.G.battles.find(x => x.id === a.battle); if (b && b.prov !== a.prov) { const p = MAP.provs[a.prov], n = MAP.provs[b.prov]; want = Math.atan2(-(n.y - p.y), n.x - p.x); } }
+    if (want !== null) { let dh = want - d.h; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI; d.h += dh * Math.min(1, k * 1.5); }
     return d;
   }
   // the unit types an army shows as figures: its main type first, then the next most common

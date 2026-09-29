@@ -22,6 +22,7 @@
         let n = 0;
         while (acc >= 1 && n < 80) { Sim.hourTick(); acc -= 1; n++; }
         if (n >= 80) acc = 0;
+        Render.state.hourFrac = Math.min(1, acc);   // how far into the next game hour we are, for smooth motion
         if (G.ownVer !== Render.state.ownVer) { Render.state.ownVer = G.ownVer; Render.state.dirtyOwners = true; }
       }
       Render.draw();

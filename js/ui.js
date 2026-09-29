@@ -7,7 +7,7 @@ const UI = (function () {
   const sel = { prov: -1, armies: [], battle: 0, tab: 'army' };
   let pending = null; // {kind, armies}
   let startPick = 'GER';
-  const HPS = [0, 2, 6, 12, 24, 60]; // game hours per real second by speed level
+  const HPS = [0, 3, 8, 18, 36, 72]; // game hours per real second by speed level
   const DECLARE_COST = 25;
 
   // ---------- formatting ----------
@@ -20,8 +20,19 @@ const UI = (function () {
   }
   const pct = v => Math.round(v * 100) + '%';
   // only touch the DOM when content changed, so buttons stay put under the cursor
-  function setHTML(el, html) { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; }
+  // (and keep the scroll position: replacing the content would otherwise jump a scrolled list back to the top)
+  function setHTML(el, html) {
+    if (el._html === html) return false;
+    const top = el.scrollTop, left = el.scrollLeft;
+    el._html = html; el.innerHTML = html;
+    if (top) el.scrollTop = top;
+    if (left) el.scrollLeft = left;
+    return true;
+  }
   let lockUntil = 0;
+  let hoverEl = null;
+  let hoverBtn = false;
+  document.addEventListener('pointerover', e => { hoverEl = e.target.closest ? e.target.closest('#rightpanel, #leftpanel, #bottombar') : null; hoverBtn = !!(hoverEl && e.target.closest('button, .row')); }, true);
   // While a button is held down, nothing on screen is rebuilt: otherwise the periodic refresh swaps the
   // element between press and release, the browser drops the click, and the player has to click twice.
   document.addEventListener('pointerdown', e => { if (e.target.id !== 'map') lockUntil = Infinity; }, true);
@@ -37,6 +48,7 @@ const UI = (function () {
   const flagCache = {};
   function flagSVG(tag) {
     if (flagCache[tag]) return flagCache[tag];
+    if (typeof FLAGS !== 'undefined' && FLAGS[tag]) return (flagCache[tag] = `<svg class="flag" viewBox="0 0 30 20" preserveAspectRatio="none" aria-hidden="true">${FLAGS[tag]}</svg>`);
     const c = COUNTRY_BY_TAG[tag].color, h = hash(tag);
     const L = '#ece4cc', D = shade(c, -0.55), A = shade(c, 0.35);
     const pick = h % 8;
@@ -74,7 +86,7 @@ const UI = (function () {
     $('#tb-menu').onclick = openMenu;
     $('#tb-nation').onclick = () => { const G = Sim.G; if (!G) return; selectProvince(G.countries[G.player].capital, true); };
     // clicking the open tab folds the panel away; any tab opens it again
-    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { sel.collapsed = sel.tab === t.dataset.tab && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); });
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { const same = sel.tab === t.dataset.tab; sel.collapsed = same && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); if (!same) $('#rp-body').scrollTop = 0; });
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
@@ -83,7 +95,22 @@ const UI = (function () {
     Sim.hooks.notify = toast;
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
-    Diplo.hooks.offer = (o, respond) => { offers.push({ o, respond }); showOffer(); };
+    Diplo.hooks.offer = (o, respond) => {
+      // an offer is answered later, so check it still makes sense when the player accepts
+      const valid = () => {
+        const G = Sim.G, war = Sim.atWar(o.from, o.to);
+        if (!G.countries[o.from].alive) return false;
+        if (o.action === 'peace') return war;
+        if (war) return false;
+        if (o.action === 'invite') return !Sim.factionOf(G.player) && G.dip.factions.includes(o.terms.fac);
+        if (o.action === 'join') return G.dip.factions.includes(o.terms.fac) && !Sim.factionOf(o.from);
+        return true;
+      };
+      offers.push({ o, respond: yes => yes && !valid() ? (respond(false), { text: 'That offer is no longer valid.' }) : respond(yes) });
+      // ignored offers lapse: keep only the three newest
+      while (offers.length > 3) offers.splice(1, 1)[0].respond(false);
+      showOffer();
+    };
   }
   function setMode(m) {
     Render.state.mode = m; Render.state.dirtyOwners = true;
@@ -451,15 +478,24 @@ const UI = (function () {
   }
   // proposals from AI nations wait their turn, one dialog at a time
   const offers = [];
+  // shown as a card above the army tray, not a dialog: it never blocks the map or the panels
   function showOffer() {
-    if (!offers.length || !$('#modal').hidden) return;
-    const G = Sim.G, { o, respond } = offers.shift();
-    if (G.settings.autoPause && !G.paused) { G.paused = true; refreshTop(); }
+    const el = $('#offer');
+    if (!offers.length) { el.hidden = true; return; }
+    if (!el.hidden) return;
+    const G = Sim.G, { o, respond } = offers[0];
     const from = o.from;
-    modal(`<div class="owner">${flagSVG(from)}<h2 class="display" style="font-size:22px;margin:0">${esc(G.countries[from].name)}</h2></div>
-      <p style="margin:12px 0">${esc(o.text)}</p><p class="note">Your relations: ${relTag(Diplo.rel(G.player, from))}</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Decline</button><button class="btn primary" data-x="yes">Accept</button></div>`,
-      x => { const r = respond(x === 'yes'); toast(x === 'yes' ? (r && r.text) || 'Accepted.' : 'You declined the proposal from ' + G.countries[from].name + '.', -1, 'info'); Render.state.dirtyOwners = true; renderRight(); renderLeft(); refreshTop(); setTimeout(showOffer, 300); });
+    el.innerHTML = `<div class="owner">${flagSVG(from)}<b>${esc(G.countries[from].name)}</b></div><p>${esc(o.text)}</p>
+      <div class="acts"><span class="note">Relations ${relTag(Diplo.rel(G.player, from))}</span><button class="btn sm" data-x="no">Decline</button><button class="btn sm primary" data-x="yes">Accept</button></div>`;
+    el.hidden = false;
+    el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => {
+      offers.shift(); el.hidden = true;
+      const yes = b.dataset.x === 'yes';
+      const r = respond(yes);
+      toast(yes ? (r && r.text) || 'Accepted.' : 'You declined the proposal from ' + G.countries[from].name + '.', -1, 'info');
+      Render.state.dirtyOwners = true; renderRight(); renderLeft(); refreshTop();
+      setTimeout(showOffer, 250);
+    });
   }
 
   function warsPanel() {
@@ -490,7 +526,7 @@ const UI = (function () {
     });
     body.querySelectorAll('[data-war]').forEach(b => b.onclick = () => confirmWar(b.dataset.war));
     body.querySelectorAll('[data-dip]').forEach(b => b.onclick = () => { sel.dip = b.dataset.dip; renderRight(); body.scrollTop = 0; });
-    body.querySelectorAll('[data-dipback]').forEach(b => b.onclick = () => { sel.dip = null; renderRight(); });
+    body.querySelectorAll('[data-dipback]').forEach(b => b.onclick = () => { sel.dip = null; renderRight(); body.scrollTop = 0; });
     body.querySelectorAll('[data-act]').forEach(b => b.onclick = () => doDiplo(b.dataset.act, sel.dip));
     body.querySelectorAll('[data-cap]').forEach(b => b.onclick = () => selectProvince(+b.dataset.cap, true));
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
@@ -738,9 +774,14 @@ const UI = (function () {
       sel.armies = sel.armies.filter(id => Sim.army(id));
       Render.state.selArmies = new Set(sel.armies);
       if (now > lockUntil) {
-        refreshTop(); renderTrays();
-        if (document.activeElement?.id !== 'dp-search') renderRight();
-        if (!$('#leftpanel').hidden) renderLeft();
+        // a panel under the mouse refreshes slowly, so its buttons don't shift while you aim at them
+        // (and not at all while the pointer rests on one of its buttons)
+        const calm = el => hoverEl === el && (hoverBtn || now - (el._lastRefresh || 0) < 1500);
+        const run = (el, fn) => { if (!calm(el)) { el._lastRefresh = now; fn(); } };
+        refreshTop();
+        run($('#bottombar'), renderTrays);
+        if (document.activeElement?.id !== 'dp-search') run($('#rightpanel'), renderRight);
+        if (!$('#leftpanel').hidden) run($('#leftpanel'), renderLeft);
         if (sel.battle) renderBattle();
       }
     }

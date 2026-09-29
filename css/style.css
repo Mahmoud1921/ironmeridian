@@ -146,6 +146,10 @@ h2, h3 { margin: 0; font-weight: 600; text-wrap: balance; }
 
 /* ---------- bottom tray ---------- */
 #bottombar { position: absolute; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 15; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+#offer { pointer-events: auto; align-self: flex-start; width: min(360px, 100%); padding: 10px 12px; border-left: 4px solid var(--brass); animation: tin .25s ease-out; }
+#offer p { margin: 6px 0 8px; font-size: 14px; }
+#offer .acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+#offer .acts .note { margin: 0 auto 0 0; }
 #armytray, #unittray { pointer-events: auto; align-self: flex-start; max-width: 100%; display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: thin; }
 #armytray:empty, #unittray:empty { display: none; }
 .acard { flex: none; width: 150px; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; display: flex; flex-direction: column; gap: 3px; text-align: left; }

@@ -24,8 +24,15 @@ function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail
 async function clickEl(page, sel, opts = {}) {
   const loc = page.locator(sel).first();
   if (!(await loc.count())) return false;
-  await loc.scrollIntoViewIfNeeded().catch(() => {});
-  const box = await loc.boundingBox();
+  // scroll it into view (again if a panel refresh moved it meanwhile), like a person scrolling a list
+  let box = null;
+  for (let i = 0; i < 4; i++) {
+    await loc.scrollIntoViewIfNeeded().catch(() => {});
+    box = await loc.boundingBox();
+    const vp = page.viewportSize();
+    if (box && box.y >= 0 && box.y + box.height <= vp.height && box.x >= 0 && box.x + box.width <= vp.width) break;
+    await page.waitForTimeout(100);
+  }
   if (!box) return false;
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
   // press like a person does (about a tenth of a second), which is when a UI that rebuilds itself loses clicks
@@ -97,12 +104,16 @@ async function desktopRun(browser) {
   check('tabs: switch on first click', dead === 0, dead + ' dead clicks');
 
   // --- order buttons ---
+  if (process.env.DEBUG) await page.evaluate(() => { window.__ev2 = []; ['pointerdown', 'click'].forEach(t => document.addEventListener(t, e => window.__ev2.push(t + ' ' + (e.target.dataset?.o || e.target.id || e.target.className || e.target.tagName) + ' ' + Math.round(e.clientY)), true)); new MutationObserver(() => window.__ev2.push('mut')).observe(document.getElementById('rp-body'), { childList: true }); });
   await clickEl(page, '#armytray .acard:nth-child(1)');
   await page.waitForTimeout(200);
   dead = 0;
   for (let i = 0; i < 6; i++) {
     await clickEl(page, '#rp-body [data-o="move"]');
-    if (!(await waitFor(page, () => !document.getElementById('hint').hidden))) dead++;
+    if (!(await waitFor(page, () => !document.getElementById('hint').hidden))) {
+      dead++;
+      if (process.env.DEBUG) console.log('    dead move', await page.evaluate(() => { const b = document.querySelector('#rp-body [data-o="move"]'); const r = b && b.getBoundingClientRect(); return { btn: !!b, dis: b && b.disabled, y: r && Math.round(r.y), st: document.getElementById('rp-body').scrollTop, sel: UI._selected(), ev: (window.__ev2 || []).slice(-6) }; }));
+    }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200 + rand() * 200);
   }
@@ -193,10 +204,20 @@ async function desktopRun(browser) {
   if (war) {
     await page.evaluate(w => { Sim.G.paused = true; Render.flyTo(w.x, w.y, 10); }, war); await page.waitForTimeout(900);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    // a spot inside the province that is land and free of counters
+    const spot = await page.evaluate(w => {
+      for (let r = 0; r < 12; r++) for (let k = 0; k < 8; k++) {
+        const a = k / 8 * Math.PI * 2, x = w.x + Math.cos(a) * r * 0.12, y = w.y + Math.sin(a) * r * 0.12;
+        const [sx, sy] = Render.worldToScreen(x, y);
+        if (Render.provinceAt(x, y) === w.prov && !Render.stackAt(sx, sy) && !Render.battleAtScreen(sx, sy)) return [x, y];
+      }
+      return [w.x, w.y];
+    }, war);
+    war.x = spot[0] - 0.2; war.y = spot[1] - 0.5;   // later clicks reuse war.x + 0.2, war.y + 0.5
     await clickWorld(page, war.x + 0.2, war.y + 0.5);
     const selOk = await waitFor(page, p => Render.state.selProv >= 0, war.prov);
     const warBtn = await page.locator('#lp-war').count();
-    check('war: Declare war button shown for a neighbour', selOk && warBtn > 0);
+    check('war: Declare war button shown for a neighbour', selOk && warBtn > 0, selOk && warBtn ? '' : await page.evaluate(w => JSON.stringify({ selProv: Render.state.selProv, want: w.prov, owner: Sim.G.owner[w.prov], tag: w.tag, lp: document.getElementById('leftpanel').hidden, btns: [...document.querySelectorAll('#leftpanel button')].map(b => b.id || b.textContent), at: (() => { const [sx, sy] = Render.worldToScreen(w.x + 0.2, w.y + 0.5); const e = document.elementFromPoint(sx, sy); const ww = Render.screenToWorld(sx, sy); return [Math.round(sx), Math.round(sy), e && (e.id || e.className), Render.provinceAt(ww[0], ww[1]), !!Render.stackAt(sx, sy), !!Render.battleAtScreen(sx, sy), Render.cam.z.toFixed(1)]; })() }), war));
     if (warBtn) {
       await clickEl(page, '#lp-war');
       check('war: confirm dialog opens on first click', await waitFor(page, () => !document.getElementById('modal').hidden));
@@ -246,6 +267,55 @@ async function desktopRun(browser) {
       return Math.hypot(p1.x - p0.x, p1.y - p0.y) > 0;
     });
     if (moved !== null) check('figures: moving troops glide between provinces', moved);
+
+    // smooth marching: follow one army frame by frame; it should advance a little every frame,
+    // never jump or step backwards, even as it crosses from one province into the next
+    const smooth = await page.evaluate(async () => {
+      const G = Sim.G;
+      G.speed = 3; G.paused = false;
+      const cands = G.armies.filter(x => x.owner === G.player && !x.battle && x.units.length);
+      let a = null;
+      for (const c of cands) {
+        const lm = Sim.MAP.provs[c.prov].lm;
+        const targets = Sim.MAP.provs.filter(p => G.owner[p.id] === G.player && p.lm === lm && Sim.distKm(c.prov, p.id) > 250).sort((p, q) => Sim.distKm(c.prov, p.id) - Sim.distKm(c.prov, q.id)).slice(0, 12);
+        for (const t of targets) if (Sim.orderMove(c, t.id, 'redeploy') && c.path.length > 2) { a = c; break; }
+        if (a) break;
+      }
+      if (!a) return null;
+      const P = Sim.MAP.provs[a.prov];
+      Render.flyTo(P.x, P.y, Render.minZoom() * 3);
+      await new Promise(r => setTimeout(r, 1500));
+      const steps = [];
+      let last = null, back = 0, crossed = 0, prov = a.prov, lastT = performance.now();
+      await new Promise(done => {
+        const t0 = performance.now();
+        (function f() {
+          Render.draw();
+          const d = Render.dispPos(a), now = performance.now(), dt = Math.max(1, now - lastT); lastT = now;
+          const [sx, sy] = d ? Render.worldToScreen(d.x, d.y) : [-1, -1];
+          const onScreen = sx > 0 && sy > 0 && sx < Render.size[0] && sy < Render.size[1];   // only drawn armies are animated
+          if (!onScreen) last = null;
+          if (d && last && onScreen && a.path.length && !a.battle && !G.paused) {
+            const dx = d.x - last.x, dy = d.y - last.y;
+            steps.push(Math.hypot(dx, dy) / dt * 16.7);   // distance per 60 Hz frame, so a slow frame is not mistaken for a jump
+            if (a.prov === prov) {
+              const n = Sim.MAP.provs[a.path[0]], p = Sim.MAP.provs[a.prov];
+              if (dx * (n.x - p.x) + dy * (n.y - p.y) < -1e-6) back++;
+            }
+          }
+          if (a.prov !== prov) { crossed++; prov = a.prov; }
+          if (d && onScreen) last = { x: d.x, y: d.y };
+          if (performance.now() - t0 < 3500 && a.path.length) requestAnimationFrame(f); else done();
+        })();
+      });
+      const s = steps.filter(x => x > 0).sort((x, y) => x - y);
+      return { frames: steps.length, still: steps.filter(x => x === 0).length, back, med: s[Math.floor(s.length / 2)] || 0, max: s[s.length - 1] || 0, crossed };
+    });
+    check('movement: an army can be sent on a long march', !!smooth);
+    if (smooth) {
+      check('movement: marching troops move every frame', smooth.frames > 20 && smooth.still / smooth.frames < 0.15, `${smooth.frames - smooth.still}/${smooth.frames} frames moved`);
+      check('movement: no jumps or stutters along the route', smooth.max < smooth.med * 6 + 0.02 && smooth.back === 0, `median step ${smooth.med.toFixed(3)}, largest ${smooth.max.toFixed(3)}, ${smooth.back} backward steps, crossed ${smooth.crossed} provinces`);
+    }
   }
   check('run: simulation keeps pace at top speed', days > runMs / 1000 * 0.5, days.toFixed(1) + ' days in ' + runMs / 1000 + ' s');
   check('run: frame pacing', perf.over250 <= 3, `p50 ${perf.p50?.toFixed(0)} ms, p95 ${perf.p95?.toFixed(0)} ms, max ${perf.max?.toFixed(0)} ms, ${perf.over250} frames over 250 ms (headless software rendering is several times slower than a real GPU)`);
@@ -289,13 +359,27 @@ async function diplomacyRun(browser) {
   // plenty of political power so every action can be tried; relations are left as they are
   await page.evaluate(() => { Sim.G.countries.GER.pp = 900; Sim.G.countries.GER.equipment = 5000; });
   const openNation = async tag => {
+    // a proposal dialog from an AI nation may be waiting: decline it first
+    if (await page.locator('#modal:not([hidden]) [data-x="no"]').count()) await clickEl(page, '#modal [data-x="no"]');
     if (!(await page.locator('.tab[data-tab="diplo"].on').count())) await clickEl(page, '.tab[data-tab="diplo"]');
-    if (await page.locator('[data-dipback]').count()) await clickEl(page, '[data-dipback]');
-    await page.fill('#dp-search', '');
-    await page.evaluate(() => { document.getElementById('dp-search').dispatchEvent(new Event('input')); });
-    return clickEl(page, `[data-dip="${tag}"]`);
+    if (await page.evaluate(() => document.getElementById('rp-body').hidden)) await clickEl(page, '.tab[data-tab="diplo"]');
+    if (await page.locator('[data-dipback]').count()) {
+      if (process.env.DEBUG) { await page.locator('[data-dipback]').scrollIntoViewIfNeeded(); console.log('    back', await page.evaluate(() => { const b = document.querySelector('[data-dipback]'); const r = b.getBoundingClientRect(); const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return [Math.round(r.x), Math.round(r.y), t === b ? 'hit' : (t && (t.id || t.className || t.tagName)), document.getElementById('rp-body').scrollTop]; })); }
+      await clickEl(page, '[data-dipback]');
+      if (process.env.DEBUG) console.log('    after back', await page.evaluate(() => document.querySelector('#rp-body h3')?.textContent || 'list'));
+    }
+    await page.evaluate(() => { const s = document.getElementById('dp-search'); if (s && s.value) { s.value = ''; s.dispatchEvent(new Event('input')); } });
+    const ok = await clickEl(page, `[data-dip="${tag}"]`);
+    await page.waitForSelector('[data-dipback]', { timeout: 2000 }).catch(() => {});
+    if (process.env.DEBUG) console.log('    open', tag, ok, await page.evaluate(() => [document.querySelector('#rp-body h3')?.textContent, [...document.querySelectorAll('[data-act]')].map(b => b.dataset.act).join(',')]));
+    return ok;
   };
-  const act = async key => { const ok = await clickEl(page, `[data-act="${key}"]:not([disabled])`); await page.waitForTimeout(150); return ok; };
+  const act = async key => {
+    const sel = `[data-act="${key}"]:not([disabled])`;
+    await page.waitForSelector(sel, { timeout: 2000 }).catch(() => {});
+    if (process.env.DEBUG) console.log('    act', key, await page.evaluate(q => { const b = document.querySelector(q); if (!b) return 'missing'; const r = b.getBoundingClientRect(); const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return [Math.round(r.y), t === b || b.contains(t) ? 'hit' : 'covered by ' + (t && (t.id || t.className || t.tagName))]; }, sel));
+    const ok = await clickEl(page, sel); await page.waitForTimeout(150); return ok;
+  };
   const G = (fn, arg) => page.evaluate(fn, arg);
 
   check('diplomacy: nation page opens from the Nations tab', await openNation('ITA') && await waitFor(page, () => !!document.querySelector('[data-act="improve"]')));
@@ -315,8 +399,11 @@ async function diplomacyRun(browser) {
   await act('create');
   check('diplomacy: faction created', await G(() => !!Sim.factionOf('GER')));
   await G(() => { Sim.G.dip.rel[Sim.pairKey('GER', 'ITA')] = 80; });
-  await openNation('ITA'); await act('invite');
-  check('diplomacy: invited nation joins the faction', await G(() => Sim.allied('GER', 'ITA') && Sim.factionOf('ITA') === Sim.factionOf('GER')));
+  await G(() => { window.__ev = []; const b = document.getElementById('rp-body'); new MutationObserver(() => window.__ev.push('mut ' + b.scrollTop + ' ' + (b.querySelector('h3')?.textContent || ''))).observe(b, { childList: true }); ['pointerdown', 'pointerup', 'click'].forEach(t => document.addEventListener(t, e => window.__ev.push(t + ' ' + (e.target.dataset?.dip || e.target.className || e.target.tagName) + ' ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)), true)); });
+  await openNation('ITA');
+  await act('invite');
+  const invOk = await G(() => Sim.allied('GER', 'ITA') && Sim.factionOf('ITA') === Sim.factionOf('GER'));
+  check('diplomacy: invited nation joins the faction', invOk, invOk ? '' : await G(() => JSON.stringify({ itaFac: Sim.factionOf('ITA')?.name, gerFac: Sim.factionOf('GER')?.name, can: Diplo.can('invite', 'GER', 'ITA'), ans: Sim.factionOf('GER') && Diplo.answer('invite', 'GER', 'ITA', { fac: Sim.factionOf('GER') }), ev: window.__ev.slice(-12), log: Sim.G.log.slice(0, 3).map(l => l.text) })));
 
   // guarantee a small nation, then someone attacks it: the guarantor joins the war
   const small = await G(() => Object.values(Sim.G.countries).find(c => c.alive && c.civ + c.mil < 20 && !Sim.allied(c.tag, 'GER') && !Sim.isAtWar(c.tag) && c.tag !== 'ETH').tag);
@@ -354,8 +441,8 @@ async function diplomacyRun(browser) {
   // an AI proposal to the player opens a dialog; accepting it takes effect
   const prop = await G(() => { const t = Object.values(Sim.G.countries).find(c => c.alive && c.tag !== 'GER' && !Sim.atWar(c.tag, 'GER') && !(Sim.G.dip.trade[Sim.pairKey(c.tag, 'GER')] > Sim.G.hour) && Diplo.can('trade', c.tag, 'GER').ok); if (!t) return null; t.pp = 50; Diplo.act('trade', t.tag, 'GER'); return t.tag; });
   if (prop) {
-    check('diplomacy: an AI proposal opens a dialog', await waitFor(page, () => !document.getElementById('modal').hidden));
-    await clickEl(page, '#modal [data-x="yes"]');
+    check('diplomacy: an AI proposal shows a card to answer', await waitFor(page, () => !document.getElementById('offer').hidden));
+    await clickEl(page, '#offer [data-x="yes"]');
     check('diplomacy: accepting the proposal takes effect', await waitFor(page, t => Sim.G.dip.trade[Sim.pairKey(t, 'GER')] > Sim.G.hour, prop));
   }
 
@@ -363,7 +450,7 @@ async function diplomacyRun(browser) {
   await G(() => { Sim.G.settings.autoPause = false; Sim.G.speed = 5; Sim.G.paused = false; Sim.G.hour += 300 * 24; });
   const t0 = Date.now();
   while (Date.now() - t0 < (QUICK ? 6000 : 15000)) {
-    if (await page.locator('#modal:not([hidden]) [data-x="no"]').count()) await clickEl(page, '#modal [data-x="no"]');
+    if (await page.locator('#offer:not([hidden]) [data-x="no"]').count()) await clickEl(page, '#offer [data-x="no"]');
     await page.waitForTimeout(500);
   }
   const dip = await G(() => {

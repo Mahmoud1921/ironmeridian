@@ -652,6 +652,7 @@ const Sim = (function () {
     // movement
     for (const a of G.armies.slice()) {
       if (!G.armies.includes(a)) continue;
+      a.rate = 0;   // km per hour this hour; the renderer uses it to glide between ticks
       if (a.battle) continue;
       if (!a.path.length) {
         a.entrench = Math.min(0.25, a.entrench + 0.25 / (24 * 10));
@@ -669,11 +670,14 @@ const Sim = (function () {
         startBattle(a, next); continue;
       }
       a.entrench = 0;
-      a.progress += armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1);
+      a.rate = armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1);
+      a.progress += a.rate;
       recoverOrg(a, 0.3);
       if (a.order === 'redeploy') for (const u of a.units) u.org = Math.max(0.2, u.org - 0.01);
       if (a.progress >= distKm(a.prov, next)) {
-        a.prov = next; a.path.shift(); a.progress = 0;
+        // carry the leftover distance into the next leg, so marching never stalls at a province centre
+        const over = a.progress - distKm(a.prov, next);
+        a.prov = next; a.path.shift(); a.progress = a.path.length ? Math.min(over, distKm(next, a.path[0]) * 0.9) : 0;
         const o = G.owner[next];
         if (o !== a.owner && atWar(a.owner, o)) capture(next, a.owner);
         if (!a.path.length) a.retreating = false;
