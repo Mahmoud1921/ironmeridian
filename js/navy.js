@@ -835,6 +835,7 @@ const Navy = (function () {
   }
 
   // ---------- after capture or capitulation ----------
+  function restore() { Seas.build(MAP()); ctl = {}; ctlHour = -1; raidCache = { day: -1, z: {} }; reachCache = {}; }
   function dropNation(tag) {
     const g = G();
     if (!g.fleets) return;
@@ -843,7 +844,7 @@ const Navy = (function () {
   }
 
   return {
-    ROLES, ROLE_KEYS, MISSIONS, ERA_NAVY, roles, warRoles, typeName, stat, setup, hour, daily, fleet, newFleet, removeFleet,
+    restore, ROLES, ROLE_KEYS, MISSIONS, ERA_NAVY, roles, warRoles, typeName, stat, setup, hour, daily, fleet, newFleet, removeFleet,
     fleetSpeed, fleetStats, power, comp, compLong, control, superiority, controller, enemyPower, orderMove, setMission, splitFleet, mergeFleets,
     canBuild, build, cancelBuild, docks, upkeep, convoyFactor, recordConvoy, lane, lossIn, seaReach, portSupply, portZones, homeZone, isPort,
     freeTransports, planInvasion, invade, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,

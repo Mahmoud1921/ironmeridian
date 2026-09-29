@@ -7,7 +7,7 @@ root = pathlib.Path(__file__).parent
 html = (root / 'index.html').read_text()
 css = (root / 'css/style.css').read_text()
 scripts = re.findall(r'<script src="(js/[^"]+)"></script>', html)
-js = '\n'.join((root / s).read_text() for s in scripts)
+js = '\n'.join((root / s).read_text() for s in scripts if (root / s).exists())
 head = re.search(r'<!--BUILD:HEAD-->(.*)<!--/BUILD:HEAD-->', html, re.S).group(1)
 head = head.replace('<link rel="stylesheet" href="css/style.css">', '<style>\n' + css + '\n</style>')
 body = re.search(r'<!--BUILD:BODY-->(.*)<!--/BUILD:BODY-->', html, re.S).group(1)

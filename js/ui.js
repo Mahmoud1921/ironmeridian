@@ -32,7 +32,7 @@ const UI = (function () {
   let lockUntil = 0;
   let hoverEl = null;
   let hoverBtn = false;
-  document.addEventListener('pointerover', e => { hoverEl = e.target.closest ? e.target.closest('#rightpanel, #leftpanel, #bottombar') : null; hoverBtn = !!(hoverEl && e.target.closest('button, .row')); }, true);
+  document.addEventListener('pointerover', e => { hoverEl = e.target.closest ? e.target.closest('#drawer, #leftpanel, #bottombar, #ucard') : null; hoverBtn = !!(hoverEl && e.target.closest('button, .row')); }, true);
   // While a button is held down, nothing on screen is rebuilt: otherwise the periodic refresh swaps the
   // element between press and release, the browser drops the click, and the player has to click twice.
   document.addEventListener('pointerdown', e => { if (e.target.id !== 'map') lockUntil = Infinity; }, true);
@@ -90,7 +90,11 @@ const UI = (function () {
     $('#tb-menu').onclick = openMenu;
     $('#tb-nation').onclick = () => { const G = Sim.G; if (!G) return; selectProvince(G.countries[G.player].capital, true); };
     // clicking the open tab folds the panel away; any tab opens it again
-    document.querySelectorAll('.tab').forEach(t => t.onclick = () => { const same = sel.tab === t.dataset.tab; sel.collapsed = same && !sel.collapsed; sel.tab = t.dataset.tab; renderRight(); if (!same) $('#rp-body').scrollTop = 0; });
+    document.querySelectorAll('#rail .tab').forEach(t => t.onclick = () => openTab(t.dataset.tab, true));
+    $('#dr-close').onclick = () => { sel.collapsed = true; renderRight(); };
+    $('#kh-x').onclick = () => { $('#keyhint').hidden = true; Menu.setPref('hintSeen', true); };
+    bindStatTips();
+    bindCard();
     $('#mc-pol').onclick = () => setMode('political');
     $('#mc-ter').onclick = () => setMode('terrain');
     $('#mc-trade').onclick = () => setMode(Render.state.mode === 'trade' ? 'political' : 'trade');
@@ -101,6 +105,11 @@ const UI = (function () {
     Sim.hooks.notify = toast;
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
+    Events.hooks.show = () => { if ($('#modal').hidden) showEvent(); };
+    Peace.hooks.show = () => showPeace();
+    const saveOnLeave = () => { if (typeof Save !== 'undefined') Save.autosaveNow(); };
+    window.addEventListener('pagehide', saveOnLeave);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) saveOnLeave(); });
     Diplo.hooks.offer = (o, respond) => {
       // an offer is answered later, so check it still makes sense when the player accepts
       const valid = () => {
@@ -133,14 +142,14 @@ const UI = (function () {
   // the twelve strongest nations of an era, by armies and industry
   const majorsFor = () => typeof Eras === 'undefined' || Eras.isBase() ? MAJORS_1936
     : COUNTRY_DEFS.filter(d => d.divs > 0 && !d.unclaimed).sort((a, b) => (b.divs + b.mil * 2 + b.civ) - (a.divs + a.mil * 2 + a.civ)).slice(0, 12).map(d => d.tag);
-  function pickEra(id) {
+  function applyEra(id) {
     Sim.G = null; // eras are picked before a game starts; drop any finished game
     Eras.apply(MAP, id);
     flagCache = {}; MAJORS = majorsFor(); startPick = MAJORS[0];
     if (typeof Figures !== 'undefined' && Figures.reset) Figures.reset();
     Render.refreshAll();
-    showStart();
   }
+  function pickEra(id) { applyEra(id); showStart(); }
   function countryFacts(tag) {
     const d = COUNTRY_BY_TAG[tag];
     const provs = MAP.provs.filter(p => p.owner === tag);
@@ -170,6 +179,15 @@ const UI = (function () {
     renderAll('');
     $('#st-play').onclick = () => startGame(startPick);
     pickStart(startPick);
+    $('#st-back').onclick = () => { $('#start').hidden = true; Menu.show(); };
+  }
+  const curEra = () => typeof Eras === 'undefined' || Eras.isBase() ? 'ww2-1936' : Eras.info().id;
+  // the nation picker for an era, reached from the main menu's New game
+  function chooseNation(eraId) {
+    if (eraId && eraId !== curEra()) applyEra(eraId);
+    else { Sim.G = null; Render.state.dirtyOwners = true; }
+    $('#hud').hidden = true;
+    showStart();
   }
   function pickStart(tag) {
     const d = COUNTRY_BY_TAG[tag];
@@ -194,19 +212,38 @@ const UI = (function () {
   }
   function startGame(tag) {
     Sim.newGame(tag);
-    offers.length = 0; $('#offer').hidden = true; sel.tf = null; sel.dip = null;
-    $('#start').hidden = true;
+    enterGame(tag, false);
+  }
+  // continue a saved game, switching era first when it was saved in another one
+  function loadGame(d) {
+    const cur = Eras.isBase() ? Eras.BASE_ID : Eras.info().id;
+    if (d.era !== cur) applyEra(d.era);
+    Sim.restore(d.G);
+    Sim.G.paused = true;
+    $('#modal').hidden = true;
+    enterGame(d.player, true);
+  }
+  function enterGame(tag, loaded) {
+    if (typeof Save !== 'undefined') Save.resetClock();
+    $('#leftpanel').hidden = true; $('#battle').hidden = true; sel.battle = 0; pending = null; showHint();
+    offers.length = 0; $('#offer').hidden = true; tf.open = null; sel.dip = null; sel.tv = 'goods';
+    $('#start').hidden = true; $('#menu').hidden = true; Menu.hide();
     $('#hud').hidden = false;
+    const P = Menu.prefs();
+    if (!loaded) { const s = Sim.G.settings; s.autosave = P.autosave; s.pauseEvent = P.pauseEvent; s.pauseWar = P.pauseWar; }
+    $('#keyhint').hidden = !!P.hintSeen || innerWidth <= 820;
+    clearTimeout(enterGame._hint); enterGame._hint = setTimeout(() => { $('#keyhint').hidden = true; }, 25000);
     Render.state.dirtyOwners = true;
     const cap = MAP.provs[Sim.G.countries[tag].capital];
-    Render.flyTo(cap.x, cap.y, 9);
+    if (cap) Render.flyTo(cap.x, cap.y, 9);
     sel.armies = []; sel.prov = -1; sel.fleet = 0; sel.wing = 0; sel.zone = -1;
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     // paint the player's troops first, then everyone they border; others are painted when they first come into view
     { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
-    sel.collapsed = innerWidth <= 820; // small screens start with the map clear
+    sel.collapsed = true; // the side bar starts closed: the map is clear until a tab is opened
     renderTrays(); renderRight(); refreshTop(); renderLeft();
-    toast('You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap.id, 'info');
+    toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
+    if (Sim.G.peace) showPeace(); else if (Events.open().length) showEvent();
   }
 
   // ---------- top bar ----------
@@ -215,24 +252,60 @@ const UI = (function () {
     const c = G.countries[G.player];
     setHTML($('#tb-nation'), flagSVG(c.tag) + `<span><div class="nm">${esc(c.name)}</div><div class="gov">${c.gov}</div></span>`);
     const divs = G.armies.filter(a => a.owner === c.tag).reduce((s, a) => s + a.units.length, 0);
+    const nArmies = G.armies.filter(a => a.owner === c.tag).length;
+    let pop = 0, provs = 0;
+    for (let i = 0; i < G.owner.length; i++) if (G.owner[i] === c.tag) { pop += MAP.provs[i].pop || 0; provs++; }
+    const e = c.eco, wars = G.wars.filter(w => w.attackers.includes(c.tag) || w.defenders.includes(c.tag));
+    const enemies = [...Sim.enemiesOf(c.tag)].map(t => G.countries[t] && G.countries[t].name).filter(Boolean);
+    const inc = e && e.income ? e.income : {};
+    const incText = [['taxes', inc.tax], ['exports', inc.trade], ['market sales', inc.market], ['upkeep', inc.upkeep], ['imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.5).map(x => x[0] + ' ' + sgn(x[1])).join(', ');
+    // [icon, value, extra, class, name, what it means]
     const stats = [
-      ['Political power', Math.floor(c.pp), '', 'Earned daily. Declaring war costs ' + DECLARE_COST + '.'],
-      ['Stability', pct(c.stab), c.stab < 0.4 ? 'bad' : c.stab < 0.55 ? 'warn' : '', 'Raises manpower growth and factory output.'],
-      ['War support', pct(c.ws), c.ws < 0.25 ? 'warn' : '', 'Speeds up organisation recovery.'],
-      ['Manpower', fmtN(c.manpower), c.manpower < 20000 ? 'bad' : '', 'Available recruits. Losses so far: ' + fmtN(c.losses)],
-      ['Gold', fmtN(c.eco ? c.eco.gold : 0) + (c.eco && c.eco.goldDelta ? ' <small>' + (c.eco.goldDelta >= 0 ? '+' : '−') + fmtN(Math.abs(c.eco.goldDelta)) + '</small>' : ''), c.eco && c.eco.gold < 0 ? 'bad' : '', 'Treasury in ' + Economy.coin() + ', and the change per day. Taxes and exports bring it in; armies and imports cost it.'],
-      [Economy.goodName('arms'), fmtN(c.equipment), c.equipment < 300 ? 'warn' : '', 'Made by your ' + Economy.kindName('arsenal').toLowerCase() + 's each day from ' + Economy.goodName('metal').toLowerCase() + ' and ' + Economy.goodName('fuel').toLowerCase() + '.'],
-      ['Divisions', divs + (c.queue.length ? ' +' + c.queue.length : ''), '', 'Fielded divisions (+ in training).'],
-      ['Wars', G.wars.filter(w => w.attackers.includes(c.tag) || w.defenders.includes(c.tag)).length, Sim.isAtWar(c.tag) ? 'bad' : '', 'Wars you are fighting.']
+      ['pp', Math.floor(c.pp), '', '', 'Political power', 'Earned every day. Spent on diplomacy, decisions and declaring war (' + DECLARE_COST + ').'],
+      ['stab', pct(c.stab), '', c.stab < 0.4 ? 'bad' : c.stab < 0.55 ? 'warn' : '', 'Stability', 'Raises manpower growth and factory output. Below 40% the country struggles.'],
+      ['flagp', pct(c.ws), '', c.ws < 0.25 ? 'warn' : '', 'War support', 'How willing your people are to fight. Speeds up organisation recovery.'],
+      ['pop', fmtN(pop), '', '', 'Population', 'People across your ' + provs + ' provinces.'],
+      ['man', fmtN(c.manpower), '', c.manpower < 20000 ? 'bad' : '', 'Manpower', 'Men ready to train into new divisions. Losses so far: ' + fmtN(c.losses) + '.'],
+      ['gold', fmtN(e ? e.gold : 0), e && e.goldDelta ? `<span class="d ${e.goldDelta < 0 ? 'neg' : 'pos'}">${e.goldDelta >= 0 ? '+' : '−'}${fmtN(Math.abs(e.goldDelta))}</span>` : '', e && e.gold < 0 ? 'bad' : '', 'Gold', 'Treasury in ' + Economy.coin() + ' and its change a day' + (incText ? ': ' + incText + '.' : '.')],
+      ['crate', fmtN(c.equipment), '', c.equipment < 300 ? 'warn' : '', Economy.goodName('arms'), 'In stock for new and damaged divisions. Made every day from ' + Economy.goodName('metal').toLowerCase() + ' and ' + Economy.goodName('fuel').toLowerCase() + '.'],
+      ['div', divs + (c.queue.length ? ' +' + c.queue.length : ''), '', '', 'Divisions', 'In ' + nArmies + ' ' + (nArmies === 1 ? 'army' : 'armies') + (c.queue.length ? ', with ' + c.queue.length + ' in training.' : '.')],
+      ['swords', wars.length, '', wars.length ? 'bad' : '', 'Wars', wars.length ? 'At war with ' + enemies.slice(0, 6).join(', ') + (enemies.length > 6 ? ' and ' + (enemies.length - 6) + ' more' : '') + '.' : 'You are at peace.']
     ];
-    setHTML($('#tb-stats'), stats.map(s => `<div class="stat ${s[2]}" title="${esc(s[3])}"><span class="v">${s[1]}</span><span class="k">${esc(s[0])}</span></div>`).join(''));
+    statTips = stats;
+    setHTML($('#tb-stats'), stats.map((s, i) => `<div class="stat ${s[3]}" tabindex="0" data-st="${i}" aria-label="${esc(s[4])} ${esc(String(s[1]))}"><svg class="i"><use href="#i-${s[0]}"/></svg><span class="v">${s[1]}</span>${s[2]}<span class="k">${esc(s[4])}</span></div>`).join(''));
+    if (tipAt >= 0) showTip(tipAt);
     const short = Economy.anyShort(c.tag);
     $('#tab-econ-dot').hidden = !short;
     $('#tb-date').textContent = Sim.dateStr(G.hour, true);
     $('#tb-play').classList.toggle('paused', G.paused);
-    setHTML($('#tb-play'), G.paused ? '<svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z" fill="currentColor"/></svg>' : '<svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z" fill="currentColor"/></svg>');
+    setHTML($('#tb-play'), `<svg class="i"><use href="#i-${G.paused ? 'play' : 'pause'}"/></svg>`);
     $('#tb-play').setAttribute('aria-label', G.paused ? 'Resume' : 'Pause');
     setHTML($('#tb-speed'), [1, 2, 3, 4, 5].map(i => `<i class="${i <= G.speed ? 'on' : ''}" style="height:${4 + i * 2}px"></i>`).join(''));
+  }
+  // one floating tooltip for the top bar numbers, so the scrolling stat strip never clips it
+  let statTips = [], tipAt = -1;
+  function showTip(i) {
+    const st = document.querySelector(`#tb-stats .stat[data-st="${i}"]`), s = statTips[i];
+    let tip = $('#stat-tip');
+    if (!st || !s) { if (tip) tip.hidden = true; tipAt = -1; return; }
+    if (!tip) { tip = document.createElement('div'); tip.id = 'stat-tip'; tip.setAttribute('role', 'tooltip'); document.body.appendChild(tip); }
+    tipAt = i;
+    tip.innerHTML = `<b>${esc(s[4])} · ${s[1]}</b>${esc(s[5])}`;
+    tip.hidden = false;
+    const r = st.getBoundingClientRect(), w = 230;
+    tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+    tip.style.top = (r.bottom + 6) + 'px';
+  }
+  function bindStatTips() {
+    const bar = $('#tb-stats');
+    const at = e => { const st = e.target.closest && e.target.closest('.stat'); return st ? +st.dataset.st : -1; };
+    bar.addEventListener('pointerover', e => { const i = at(e); if (i >= 0) showTip(i); });
+    bar.addEventListener('pointerleave', () => showTip(-1));
+    bar.addEventListener('focusin', e => { const i = at(e); if (i >= 0) showTip(i); });
+    bar.addEventListener('focusout', () => showTip(-1));
+    bar.addEventListener('scroll', () => showTip(-1));
+    // a tap on a phone toggles the tooltip
+    bar.addEventListener('click', e => { const i = at(e); showTip(i === tipAt && e.pointerType !== 'mouse' ? -1 : i); });
   }
   function togglePause() { const G = Sim.G; if (!G || G.over) return; G.paused = !G.paused; refreshTop(); }
   function setSpeed(s) { const G = Sim.G; if (!G) return; G.speed = Math.max(1, Math.min(5, s)); refreshTop(); }
@@ -247,7 +320,7 @@ const UI = (function () {
     box.prepend(el);
     while (box.children.length > 4) box.lastChild.remove();
     setTimeout(() => el.remove(), 7000);
-    if (sel.tab === 'log') renderRight();
+    if (sel.tab === 'gov') renderRight();
   }
 
   // ---------- left panel: province & country ----------
@@ -496,22 +569,40 @@ const UI = (function () {
     // only own armies can be multi-selected
     if (sel.armies.length > 1) sel.armies = sel.armies.filter(id => { const a = Sim.army(id); return a && a.owner === G.player; });
     Render.state.selArmies = new Set(sel.armies);
-    if (sel.armies.length) { sel.tab = 'army'; sel.collapsed = false; sel.fleet = 0; sel.wing = 0; Render.state.selFleet = 0; Render.state.selWing = 0; }
+    if (sel.armies.length) { sel.fleet = 0; sel.wing = 0; Render.state.selFleet = 0; Render.state.selWing = 0; }
     renderRight(); renderTrays();
   }
   function selectedArmies() { return sel.armies.map(Sim.army).filter(Boolean); }
   function myArmiesSel() { const G = Sim.G; return selectedArmies().filter(a => a.owner === G.player); }
 
-  // ---------- right panel ----------
+  // ---------- side bar and its drawer ----------
+  const TABS = [['army', 'Army', 'helmet'], ['recruit', 'Train', 'recruit'], ['navy', 'Navy', 'anchor'], ['diplo', 'Nations', 'globe'], ['econ', 'Economy', 'factory'],
+    ['trade', 'Trade', 'trade'], ['tech', 'Tech', 'flask'], ['wars', 'Wars', 'swords'], ['gov', 'Politics', 'gov']];
+  // clicking the open tab closes the drawer; any other tab opens it
+  function openTab(id, toggle) {
+    const same = sel.tab === id;
+    sel.collapsed = toggle && same ? !sel.collapsed : false;
+    sel.tab = id;
+    renderRight();
+    if (!same) $('#rp-body').scrollTop = 0;
+  }
   function renderRight() {
     const G = Sim.G; if (!G) return;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === sel.tab));
+    const open = !sel.collapsed;
+    document.querySelectorAll('#rail .tab').forEach(t => t.classList.toggle('on', open && t.dataset.tab === sel.tab));
     const wars = G.wars.filter(w => w.attackers.includes(G.player) || w.defenders.includes(G.player)).length;
     $('#tab-wars-badge').textContent = wars || ''; $('#tab-wars-badge').hidden = !wars;
-    const body = $('#rp-body');
-    body.hidden = !!sel.collapsed;
-    $('#rightpanel').classList.toggle('folded', !!sel.collapsed);
-    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'navy' ? navyPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : logPanel();
+    $('#tab-gov-dot').hidden = !Events.open().length;
+    const dr = $('#drawer'), body = $('#rp-body'), t = TABS.find(x => x[0] === sel.tab) || TABS[0];
+    dr.classList.toggle('open', open); dr.classList.toggle('wide', sel.tab === 'trade');
+    $('#hud').classList.toggle('drawer-open', open); $('#hud').classList.toggle('wide', sel.tab === 'trade');
+    body.hidden = !open;
+    $('#dr-title').textContent = t[1];
+    if ($('#dr-icon').dataset.i !== t[2]) { $('#dr-icon').dataset.i = t[2]; $('#dr-icon').innerHTML = `<use href="#i-${t[2]}"/>`; }
+    // the periodic refresh leaves the card alone while the pointer rests on one of its buttons
+    if (!inFrame || !(hoverEl === $('#ucard') && hoverBtn)) renderCard();
+    if (!open) return;
+    const html = sel.tab === 'army' ? armyPanel() : sel.tab === 'recruit' ? recruitPanel() : sel.tab === 'navy' ? navyPanel() : sel.tab === 'diplo' ? diploPanel() : sel.tab === 'econ' ? econPanel() : sel.tab === 'trade' ? tradePanel() : sel.tab === 'tech' ? techPanel() : sel.tab === 'wars' ? warsPanel() : politicsPanel();
     if (setHTML(body, html)) bindRight();
   }
   function meter(label, v, cls) { return `<div class="meter"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`; }
@@ -527,50 +618,57 @@ const UI = (function () {
     if (a.path.length) { const km = a.path.reduce((s, id, i) => s + Sim.distKm(i ? a.path[i - 1] : a.prov, id), 0) - a.progress; t += ' · ~' + Math.max(1, Math.round(km / Math.max(0.5, Sim.armySpeed(a)) / 24)) + ' days'; }
     return t;
   }
+  // the Army tab: every army you field, with the selected ones marked
   function armyPanel() {
-    const G = Sim.G;
-    const list = selectedArmies();
-    if (!list.length) return `<p class="note">Select an army by clicking its counter on the map or a card in the tray below. Shift-click adds more armies to the selection.</p>
-      <p class="note">Right-click a province to move there. Right-click enemy territory to launch an offensive that keeps pushing toward that point.</p>`;
-    const mine = list[0].owner === G.player;
-    let html = '';
-    if (list.length === 1) {
-      const a = list[0], st = Sim.armyStats(a), c = G.countries[a.owner];
-      html += `<div class="owner">${flagSVG(a.owner)}<div><h2 class="display" style="font-size:21px">${esc(a.name)}</h2><div class="sub label">${esc(c.name)}</div></div></div>
-        <dl class="kv"><dt>Commander</dt><dd>${esc(a.commander.name)} ${'★'.repeat(a.commander.skill)}</dd>
-        <dt>Location</dt><dd>${esc(MAP.provs[a.prov].name)}</dd><dt>Orders</dt><dd>${esc(orderText(a))}</dd>
-        <dt>Divisions</dt><dd>${a.units.length} · ${fmtN(Sim.manpowerOf(a))} men</dd><dt>Speed</dt><dd>${Sim.armySpeed(a).toFixed(1)} km/h</dd>
-        <dt>Entrenchment</dt><dd>+${Math.round(a.entrench * 100)}%</dd></dl>
-        ${meter('Strength', st.str, 'str')}${meter('Organisation', st.org, 'org')}${meter('Supply', a.supply, 'sup')}
-        <div class="unitgrid" style="margin-top:8px">${Object.entries(a.units.reduce((m, u) => (m[u.type] = (m[u.type] || 0) + 1, m), {})).map(([t, n]) => `<span>${UNIT_TYPES[t].name}</span><span>× ${n}</span>`).join('')}</div>`;
-    } else {
-      const divs = list.reduce((s, a) => s + a.units.length, 0);
-      const str = list.reduce((s, a) => s + Sim.armyStats(a).str * a.units.length, 0) / divs;
-      const org = list.reduce((s, a) => s + Sim.armyStats(a).org * a.units.length, 0) / divs;
-      html += `<h2 class="display" style="font-size:21px">${list.length} armies selected</h2><dl class="kv"><dt>Divisions</dt><dd>${divs}</dd></dl>${meter('Strength', str, 'str')}${meter('Organisation', org, 'org')}`;
+    const G = Sim.G, mine = G.armies.filter(a => a.owner === G.player);
+    if (!mine.length) return '<p class="note">You have no armies. Train divisions in the Train tab.</p>';
+    return `<div class="list">${mine.map(a => { const st = Sim.armyStats(a); return `<div class="row click ${sel.armies.includes(a.id) ? 'on' : ''}" data-selarmy="${a.id}">${flagSVG(a.owner)}<div class="grow"><div>${esc(a.name)} <span class="sub">· ${a.units.length} division${a.units.length === 1 ? '' : 's'}</span></div>
+      <div class="sub">${esc(MAP.provs[a.prov].name)} · ${esc(orderText(a))}</div><div class="bar str"><i style="width:${st.str * 100}%"></i></div></div></div>`; }).join('')}</div>
+      <p class="note">Click an army to select it, shift-click to add more. On the map, drag across your armies to select several at once. Orders are on the army card.</p>`;
+  }
+  // ---------- compact army card ----------
+  const ORDERS = [['move', 'Move', 'move'], ['attack', 'Attack', 'attack', 'atk'], ['front', 'Defend', 'shield'], ['hold', 'Hold', 'hold'], ['retreat', 'Retreat', 'retreat'],
+    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Reinforce', 'plus'], ['invade', 'By sea', 'anchor']];
+  const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy objective; the army keeps attacking toward it', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
+    hold: 'Stop and hold here', retreat: 'Fall back to friendly land', redeploy: 'Fast move through friendly land; organisation drops', split: 'Split the army in two', merge: 'Armies must share a province',
+    recruit: 'Train new divisions for this army', invade: 'Ship this army across the sea: pick a coastal province' };
+  function renderCard() {
+    const el = $('#ucard'), G = Sim.G;
+    const list = G ? selectedArmies() : [];
+    $('#hud').classList.toggle('carded', list.length > 0);
+    if (!list.length) { el.hidden = true; el._html = ''; return; }
+    el.hidden = false;
+    const mine = list[0].owner === G.player, one = list.length === 1, a = list[0];
+    const divs = list.reduce((s, x) => s + x.units.length, 0);
+    const avg = f => list.reduce((s, x) => s + f(x) * x.units.length, 0) / Math.max(1, divs);
+    const str = avg(x => Sim.armyStats(x).str), org = avg(x => Sim.armyStats(x).org), sup = avg(x => x.supply);
+    const x = '<button class="iconbtn" data-desel aria-label="Clear selection"><svg class="i"><use href="#i-x"/></svg></button>';
+    let html = one
+      ? `<div class="hd">${flagSVG(a.owner)}<b>${esc(a.name)}<small>${esc(MAP.provs[a.prov].name)} · ${esc(orderText(a))} · ${esc(a.commander.name)} ${'★'.repeat(a.commander.skill)}</small></b>${x}</div>`
+      : `<div class="hd">${flagSVG(a.owner)}<b>${list.length} armies selected<small>${divs} divisions · orders go to all of them</small></b>${x}</div><div class="multi">${list.map(y => `<span>${esc(y.name)}</span>`).join('')}</div>`;
+    const m = (label, v, col) => `<div>${label} <b>${pct(v)}</b><span class="bar"><i style="width:${Math.round(v * 100)}%;background:${col}"></i></span></div>`;
+    html += `<div class="meters">${m('Strength', str, 'var(--good)')}${m('Org', org, 'var(--info)')}${m('Supply', sup, 'var(--warn)')}</div>`;
+    if (one) {
+      const cnt = {}; for (const u of a.units) cnt[u.type] = (cnt[u.type] || 0) + 1;
+      html += `<div class="comp">${Object.entries(cnt).map(([t, n]) => `<span>${esc(UNIT_TYPES[t].name)} <b>${n}</b></span>`).join('')}<span>${Sim.armySpeed(a).toFixed(1)} km/h</span>${a.entrench > 0.01 ? `<span>Dug in <b>+${Math.round(a.entrench * 100)}%</b></span>` : ''}</div>`;
     }
-    if (!mine) return html + '<p class="note">Foreign army. You can only give orders to your own troops.</p>';
-    const one = list.length === 1;
-    const sameProv = list.every(a => a.prov === list[0].prov);
-    html += `<div class="orders">
-      <button class="btn sm ${pending?.kind === 'move' ? 'active' : ''}" data-o="move" title="Pick a destination">Move</button>
-      <button class="btn sm ${pending?.kind === 'attack' ? 'active' : ''}" data-o="attack" title="Pick an enemy objective; the army keeps attacking toward it">Attack</button>
-      <button class="btn sm ${pending?.kind === 'front' ? 'active' : ''}" data-o="front" title="Pick an enemy province: the army guards that border and shifts to weak spots">Defend front</button>
-      <button class="btn sm" data-o="hold">Hold</button>
-      <button class="btn sm" data-o="retreat">Retreat</button>
-      <button class="btn sm ${pending?.kind === 'redeploy' ? 'active' : ''}" data-o="redeploy" title="Fast move through friendly land; organisation drops">Redeploy</button>
-      <button class="btn sm" data-o="split" ${one && list[0].units.length > 1 ? '' : 'disabled'}>Split</button>
-      <button class="btn sm" data-o="merge" ${list.length > 1 && sameProv ? '' : 'disabled'} title="Armies must share a province">Merge</button>
-      <button class="btn sm" data-o="recruit" ${one ? '' : 'disabled'}>Reinforce</button>
-      <button class="btn sm ${pending?.kind === 'invade' ? 'active' : ''}" data-o="invade" ${one && !list[0].sea ? '' : 'disabled'} title="Ship this army across the sea: pick a coastal province">Invade by sea</button></div>`;
-    if (one && list[0].sea) {
-      const a = list[0];
-      html += `<div class="label" style="margin-top:8px">${a.sea.hostile ? 'Naval invasion' : 'Sea transport'}</div><div class="bar prog" style="height:8px"><i style="width:${Math.round(Navy.progress(a) * 100)}%"></i></div>
-        <div class="note">${esc(Navy.phaseText(a))}. Uses ${a.sea.ships} ${esc(Navy.typeName('transport').toLowerCase())}${a.sea.ships > 1 ? 's' : ''}.${a.sea.hostile ? ' Landing needs 40% sea control in the ' + esc(Seas.zone(a.sea.zone).name) + ' (now ' + pct(Navy.superiority(a.owner, a.sea.zone)) + '). Fleets on Invasion support there help.' : ''}</div>
-        <button class="btn sm" data-o="cancelsea">${a.sea.phase === 'prep' ? 'Call off' : 'Turn back'}</button>`;
-    } else if (one && Seas.isCoastal(list[0].prov)) html += `<div class="note">Coastal province: ${Navy.freeTransports(G.player)} ${esc(Navy.typeName('transport').toLowerCase())}s free for an invasion.</div>`;
-    if (list.length > 1 && !sameProv) html += '<p class="note">Merging needs all selected armies in the same province.</p>';
-    return html;
+    if (!mine) { setHTML(el, html + '<p class="note">Foreign army. You can only give orders to your own troops.</p>'); return; }
+    if (one && a.sea) {
+      html += `<div class="label">${a.sea.hostile ? 'Naval invasion' : 'Sea transport'}</div><div class="bar prog" style="height:6px;margin:4px 0"><i style="width:${Math.round(Navy.progress(a) * 100)}%"></i></div>
+        <p class="note">${esc(Navy.phaseText(a))}. ${a.sea.ships} ${esc(Navy.typeName('transport').toLowerCase())}${a.sea.ships > 1 ? 's' : ''}.${a.sea.hostile ? ' Landing needs 40% sea control (now ' + pct(Navy.superiority(a.owner, a.sea.zone)) + ').' : ''} <a href="#" class="lnk" data-o="cancelsea">${a.sea.phase === 'prep' ? 'Call off' : 'Turn back'}</a></p>`;
+    }
+    const sameProv = list.every(y => y.prov === list[0].prov);
+    const off = { split: !(one && a.units.length > 1), merge: !(list.length > 1 && sameProv), recruit: !one, invade: !(one && !a.sea) };
+    const active = k => pending && pending.kind === k;
+    html += `<div class="orders">${ORDERS.map(o => `<button class="ord ${o[3] || ''} ${active(o[0]) ? 'active' : ''}" data-o="${o[0]}" ${off[o[0]] ? 'disabled' : ''} title="${esc(o[1] + ': ' + (o[0] === 'invade' && one && Seas.isCoastal(a.prov) ? ORDER_TIPS.invade + '. ' + Navy.freeTransports(G.player) + ' transports free.' : ORDER_TIPS[o[0]]))}"><svg class="i"><use href="#i-${o[2]}"/></svg><span>${o[1]}</span></button>`).join('')}</div>`;
+    setHTML(el, html);
+  }
+  function bindCard() {
+    $('#ucard').addEventListener('click', e => {
+      const t = e.target.closest('button, a'); if (!t || t.disabled) return;
+      if ('desel' in t.dataset) { e.preventDefault(); pending = null; showHint(); selectArmies([], false); return; }
+      if (t.dataset.o) { e.preventDefault(); armyOrder(t.dataset.o); }
+    });
   }
   function recruitPanel() {
     const G = Sim.G, c = G.countries[G.player];
@@ -666,13 +764,12 @@ const UI = (function () {
       <div class="owner" style="margin:10px 0 4px">${flagSVG(tag)}<div><h3 class="display" style="font-size:20px;margin:0">${esc(c.name)}</h3><div class="sub note" style="margin:0">${c.gov} · ${divs} divisions</div></div></div>
       <div class="meter"><span>Relations</span><div class="bar ${r >= 0 ? 'str' : 'bad'}"><i style="width:${Math.abs(r)}%"></i></div><span>${r > 0 ? '+' : ''}${r}</span></div>
       <div style="margin:6px 0 10px;display:flex;flex-wrap:wrap;gap:4px">${dipStatus(tag) || '<span class="pill">No treaties</span>'}</div>
-      <div class="dacts">${acts.join('')}</div>${war ? '' : tradeSection(tag, act)}`;
+      <div class="dacts">${acts.join('')}</div>${war ? '' : nationTrade(tag, act)}`;
   }
   function doDiplo(key, tag) {
     const G = Sim.G;
     const action = key === 'peacekeep' ? 'peace' : key;
     let terms = key === 'peacekeep' ? { keep: true } : {};
-    if (key === 'trade') { const f = tradeForm(tag); terms = { good: f.good, amount: f.amount, price: +(Economy.fairPrice(f.good, f.amount) * (1 + f.adj)).toFixed(1), sell: f.sell }; }
     const r = Diplo.act(action, G.player, tag, terms);
     toast(r.text, -1, r.accepted === false ? 'loss' : r.accepted ? 'win' : 'info');
     Render.state.dirtyOwners = true;
@@ -711,34 +808,16 @@ const UI = (function () {
     if (!e || !e.need) return '<p class="note">No economy.</p>';
     const inc = e.income || {};
     const parts = [['Taxes', inc.tax], ['Exports', inc.trade], ['Trade bonus', inc.bonus], ['World market sales', inc.market], ['Other', inc.other], ['Military upkeep', inc.upkeep], ['Imports', inc.imports]].filter(x => x[1] && Math.abs(x[1]) >= 0.05);
-    let html = `<div class="goldline"><div><div class="label">Gold · ${esc(Economy.coin())}</div><div class="big num ${e.gold < 0 ? 'neg' : ''}">${fmtN(e.gold)}</div></div>
-      <div class="num ${e.goldDelta < 0 ? 'neg' : 'pos'}">${sgn(e.goldDelta || 0)} a day</div></div>
-      <div class="mods">${parts.map(x => `<span>${x[0]}</span><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span>`).join('')}</div>
+    let html = `<div class="tsum"><div><b class="${e.gold < 0 ? 'neg' : ''}">${fmtN(e.gold)}</b><span>${esc(Economy.coin())}</span></div><div><b class="${e.goldDelta < 0 ? 'neg' : 'pos'}">${sgn(e.goldDelta || 0)}</b><span>A day</span></div><div><b class="${e.health < 0.8 ? 'neg' : ''}">${pct(e.health)}</b><span>Health</span></div></div>
+      <div class="list">${parts.map(x => `<div class="row"><div class="grow">${x[0]}</div><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span></div>`).join('')}</div>
       ${e.gold < 0 ? '<div class="why bad">In debt: you cannot build or buy, and stability falls.</div>' : ''}
-      ${meter('Economic health', e.health, e.health < 0.8 ? 'bad' : 'str')}
-      <div class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes.</div>
-      <table class="goods"><thead><tr><th>Good</th><th>Made</th><th>Used</th><th>Trade</th><th>Stock</th></tr></thead><tbody>`;
-    for (const k of Economy.GOODS) {
-      const net = Economy.balance(G.player, k), days = Economy.daysLeft(G.player, k);
-      const tr = e.imp[k] - e.exp[k], short = net < -0.05;
-      const cls = short ? (days < 30 ? 'bad' : 'warn') : '';
-      html += `<tr class="${cls}" data-good="${k}"><td>${goodDot(k)}${esc(Economy.goodName(k))}</td><td class="num">${f1(e.prod[k])}</td><td class="num">${f1(e.need[k])}</td><td class="num">${Math.abs(tr) < 0.05 ? '–' : sgn(tr)}</td>
-        <td class="num">${fmtN(e.stock[k])} <span class="tr">${net > 0.05 ? '▲' : short ? '▼' : '•'}</span></td></tr>`;
-      if (short) html += `<tr class="${cls} sub"><td colspan="5">${e.stock[k] > 0.5 ? 'Runs out in ' + days + ' days' : 'Short by ' + f1(-net) + ' a day: ' + Math.round((1 - e.sat[k]) * 100) + '% missing'}</td></tr>`;
-    }
-    html += `<tr><td>${goodDot('arms')}${esc(Economy.goodName('arms'))}</td><td class="num">${f1(e.arms)}</td><td class="num">–</td><td class="num">–</td><td class="num">${fmtN(c.equipment)}</td></tr></tbody></table>`;
+      <p class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes. ${Economy.anyShort(G.player) ? '<a href="#" class="lnk" data-gotrade="goods">Some goods are running short: see Trade.</a>' : 'Goods, partners and deals are in the Trade tab.'}</p>`;
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
     if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
     html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="label" style="margin-top:8px">Military works</div>
       <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
-    const deals = Economy.dealsOf(G.player);
-    html += `<hr class="sep"><div class="label">Trade deals · ${deals.length} of ${Economy.tradeSlots(G.player)} slots</div>`;
-    html += deals.length ? '<div class="list" style="margin-top:6px">' + deals.map(d => dealRow(d)).join('') + '</div>' : '<div class="note">No deals yet. Open a nation in the Nations tab to buy or sell.</div>';
-    const emb = G.dip.embargo.filter(x => x.by === G.player || x.of === G.player);
-    if (emb.length) html += '<div class="list" style="margin-top:6px">' + emb.map(x => `<div class="row">${flagSVG(x.by === G.player ? x.of : x.by)}<div class="grow">${x.by === G.player ? 'Your embargo on ' + esc(G.countries[x.of].name) : esc(G.countries[x.by].name) + ' embargoes you'}</div>${x.by === G.player ? `<button class="btn sm" data-lift="${x.of}">Lift</button>` : ''}</div>`).join('') + '</div>';
-    html += `<div class="label" style="margin-top:10px">World prices</div><div class="mods">${Economy.GOODS.map(k => `<span>${goodDot(k)}${esc(Economy.goodName(k))}</span><span class="num">${Economy.worldPrice(k).toFixed(2)}</span>`).join('')}</div>`;
     return html;
   }
   function dealRow(d) {
@@ -750,44 +829,124 @@ const UI = (function () {
     const short = d.delivered !== undefined && d.delivered < d.amount - 0.05 ? ` · only ${f1(d.delivered)} delivered` : '';
     return `<div class="row deal">${flagSVG(other)}<div class="grow"><div>${goodDot(d.good)}${esc(txt)}</div><div class="sub">${esc(depTxt + short)}</div></div><button class="btn sm" data-canceldeal="${d.id}" data-with="${other}">Cancel</button></div>`;
   }
-  const AMOUNTS = [1, 2, 3, 5, 8, 10, 15, 20, 30, 40, 60, 80];
-  function tradeForm(tag) {
-    if (sel.tf && sel.tf.tag === tag) return sel.tf;
-    const G = Sim.G, me = G.player;
-    const b = (t, k) => Economy.balance(t, k);
-    let best = null, bv = 0;
-    for (const k of Economy.GOODS) {
-      const buy = Math.min(-b(me, k), b(tag, k)), sell = Math.min(b(me, k), -b(tag, k));
-      if (buy > bv) { bv = buy; best = { good: k, sell: false }; }
-      if (sell > bv) { bv = sell; best = { good: k, sell: true }; }
-    }
-    best = best || { good: 'food', sell: false };
-    const amt = AMOUNTS.filter(a => a <= Math.max(1, bv)).pop() || 1;
-    return (sel.tf = { tag, good: best.good, sell: best.sell, amount: amt, adj: 0 });
-  }
-  function tradeSection(tag, act) {
-    const G = Sim.G, me = G.player;
-    const deals = Economy.dealBetween(me, tag);
-    const bal = k => Economy.balance(tag, k);
-    const spare = Economy.GOODS.filter(k => bal(k) > 0.5).map(k => Economy.goodName(k) + ' ' + sgn(bal(k)));
-    const needs = Economy.GOODS.filter(k => bal(k) < -0.5).map(k => Economy.goodName(k) + ' ' + sgn(bal(k)));
-    const f = tradeForm(tag);
-    const price = +(Economy.fairPrice(f.good, f.amount) * (1 + f.adj)).toFixed(1);
-    const chk = Diplo.can('trade', me, tag, { good: f.good, amount: f.amount, price, sell: f.sell });
+  // trade in the Nations tab is a short summary: offers are made from the Trade tab
+  function nationTrade(tag, act) {
+    const G = Sim.G, me = G.player, deals = Economy.dealBetween(me, tag);
     const emb = G.dip.embargo.some(x => x.by === me && x.of === tag);
-    const gname = Economy.goodName(f.good).toLowerCase();
     return `<hr class="sep"><div class="label">Trade</div>
       ${deals.length ? '<div class="list" style="margin:6px 0">' + deals.map(d => dealRow(d)).join('') + '</div>' : ''}
-      <div class="note">They have spare: ${spare.length ? esc(spare.join(', ')) : 'nothing'}.<br>They lack: ${needs.length ? esc(needs.join(', ')) : 'nothing'}.</div>
-      <div class="tform">
-        <div class="seg"><button class="chip ${!f.sell ? 'on' : ''}" data-tf="buy">Buy from them</button><button class="chip ${f.sell ? 'on' : ''}" data-tf="sell">Sell to them</button></div>
-        <div class="seg">${Economy.GOODS.map(k => `<button class="chip ${f.good === k ? 'on' : ''}" data-tfg="${k}" title="${esc(Economy.goodName(k))}">${goodDot(k)}${esc(shortGood(k))}</button>`).join('')}</div>
-        <div class="stepper"><span>Amount a day</span><button class="btn sm" data-tfa="-1" aria-label="Less">−</button><b class="num">${f.amount}</b><button class="btn sm" data-tfa="1" aria-label="More">+</button></div>
-        <div class="stepper"><span>Gold a day</span><button class="btn sm" data-tfp="-0.05" aria-label="Lower price">−</button><b class="num">${price}</b><button class="btn sm" data-tfp="0.05" aria-label="Higher price">+</button><small>${f.adj === 0 ? 'world price' : (f.adj > 0 ? '+' : '') + Math.round(f.adj * 100) + '%'}</small></div>
-      </div>
-      <div class="dacts"><div class="dact"><button class="btn" data-act="trade" ${chk.ok ? '' : 'disabled'}>${f.sell ? 'Offer to sell' : 'Offer to buy'} <small>${Diplo.COST.trade} PP</small></button>
-        <div class="why">${chk.ok ? esc((f.sell ? 'You sell ' : 'You buy ') + f.amount + ' ' + gname + ' a day for ' + price + ' gold a day.') : esc(chk.why)}</div></div>
+      <div class="dacts"><div class="dact"><button class="btn" data-tradewith="${tag}" ${emb ? 'disabled' : ''}>Trade with ${esc(G.countries[tag].name)} ›</button><div class="why">Opens the Trade tab with an offer to them</div></div>
       ${emb ? act('lift', 'Lift embargo') : act('embargo', 'Embargo', { cls: 'danger', hint: 'Cut every deal with them and refuse new ones' + (Sim.factionOf(me) && Sim.factionOf(me).leader === me ? '. Your faction is asked to join.' : '') })}</div>`;
+  }
+
+  // ---------- trade tab: goods, partners, deals ----------
+  const AMOUNTS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 60, 80];
+  const GOOD_ICON = { food: 'wheat', metal: 'ingot', fuel: 'drop', strategic: 'tyre', luxuries: 'bag', arms: 'hammer' };
+  const gIcon = k => `<svg class="i"><use href="#i-${GOOD_ICON[k] || 'bag'}"/></svg>`;
+  const tf = { buy: true, good: 'food', open: null, amount: 5, adj: 0 };
+  sel.tv = 'goods';
+  const tfPrice = () => +(Economy.fairPrice(tf.good, tf.amount) * (1 + tf.adj)).toFixed(1);
+  const tfTerms = () => ({ good: tf.good, amount: tf.amount, price: tfPrice(), sell: !tf.buy });
+  // nations worth offering to: they have the good to spare (to buy) or lack it (to sell)
+  function partners() {
+    const G = Sim.G, me = G.player, k = tf.good;
+    const list = Object.values(G.countries).filter(c => c.alive && c.tag !== me && c.eco && c.eco.need && !Sim.atWar(c.tag, me) && Economy.routeOK(me, c.tag))
+      .map(c => ({ c, b: Economy.balance(c.tag, k) }))
+      .filter(x => x.c.tag === tf.open || (tf.buy ? x.b > 0.5 : x.b < -0.5))
+      .sort((x, y) => (y.c.tag === tf.open) - (x.c.tag === tf.open) || (tf.buy ? y.b - x.b : x.b - y.b));
+    return list.slice(0, 14);
+  }
+  function openOffer(tag) {
+    const me = Sim.G.player, cap = Math.abs(Economy.balance(tag, tf.good)), need = tf.buy ? Math.max(1, -Economy.balance(me, tf.good)) : cap;
+    tf.open = tag; tf.adj = 0;
+    tf.amount = AMOUNTS.filter(a => a <= Math.max(1, Math.min(cap || need, need))).pop() || 1;
+  }
+  function tradePanel() {
+    const G = Sim.G, me = G.player, c = G.countries[me], e = c.eco;
+    if (!e || !e.need) return '<p class="note">No economy.</p>';
+    const deals = Economy.dealsOf(me), slots = Economy.tradeSlots(me);
+    const earned = deals.filter(d => d.from === me).reduce((s, d) => s + d.price, 0), paid = deals.filter(d => d.to === me).reduce((s, d) => s + d.price, 0);
+    const shorts = Economy.GOODS.filter(k => Economy.balance(me, k) < -0.05).length;
+    let h = `<div class="tsum"><div><b>${deals.length} of ${slots}</b><span>Deal slots</span></div><div><b class="pos">+${f1(earned)}</b><span>Earned a day</span></div><div><b class="${paid ? 'neg' : ''}">−${f1(paid)}</b><span>Paid a day</span></div></div>
+      <div class="subtabs" role="tablist">
+        <button data-tv="goods" class="${sel.tv === 'goods' ? 'on' : ''}" role="tab" aria-selected="${sel.tv === 'goods'}">Goods<small>${shorts ? shorts + ' running short' : 'All supplied'}</small></button>
+        <button data-tv="partners" class="${sel.tv === 'partners' ? 'on' : ''}" role="tab" aria-selected="${sel.tv === 'partners'}">Partners<small>Make an offer</small></button>
+        <button data-tv="deals" class="${sel.tv === 'deals' ? 'on' : ''}" role="tab" aria-selected="${sel.tv === 'deals'}">Deals<small>${deals.length} active</small></button>
+      </div>`;
+    if (sel.tv === 'goods') {
+      h += `<div class="rows">${Economy.GOODS.map(k => {
+        const n = Economy.balance(me, k), imp = e.imp[k], exp = e.exp[k], short = n < -0.05, sur = n > Math.max(1, e.need[k] * 0.1);
+        const w = Math.min(50, Math.abs(n) / Math.max(4, e.need[k] || 1) * 50), days = Economy.daysLeft(me, k);
+        return `<div class="good ${short ? 'short' : sur ? 'surplus' : ''}" data-good="${k}">
+          <div class="gi">${gIcon(k)}</div>
+          <div class="nm">${esc(Economy.goodName(k))} <span class="net ${short ? 'neg' : sur ? 'pos' : ''}">${sgn(n)} a day</span></div>
+          <div class="act">${short ? `<button class="btn sm primary" data-find="buy:${k}">Find sellers</button>` : sur ? `<button class="btn sm" data-find="sell:${k}">Find buyers</button>` : ''}</div>
+          <div class="meta">Made ${f1(e.prod[k])} · used ${f1(e.need[k])}${imp > 0.05 ? ' · bought ' + f1(imp) : ''}${exp > 0.05 ? ' · sold ' + f1(exp) : ''} · ${short ? (e.stock[k] > 0.5 ? 'stock lasts ' + days + ' days' : '<span class="neg">no stock left</span>') : 'stock ' + fmtN(e.stock[k])}</div>
+          <div class="dbar"><i style="${n < 0 ? `right:50%;width:${w}%;background:var(--bad)` : `left:50%;width:${w}%;background:var(--good)`}"></i></div>
+        </div>`;
+      }).join('')}
+        <div class="good"><div class="gi">${gIcon('arms')}</div><div class="nm">${esc(Economy.goodName('arms'))} <span class="net pos">+${f1(e.arms)} a day</span></div><div class="act"></div><div class="meta">Made from ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())} · stock ${fmtN(c.equipment)} · not traded</div></div></div>
+      <p class="note" style="margin-top:10px">Red goods are running short and slow your factories and research. Find sellers lists the nations that have some to spare.</p>`;
+    } else if (sel.tv === 'partners') {
+      const list = partners(), gname = Economy.goodName(tf.good).toLowerCase();
+      h += `<div class="filter">
+        <div class="ln"><span>I want to</span><div class="seg"><button class="chip ${tf.buy ? 'on' : ''}" data-tb="1">Buy</button><button class="chip ${!tf.buy ? 'on' : ''}" data-tb="0">Sell</button></div></div>
+        <div class="ln"><span>Good</span>${Economy.GOODS.map(k => `<button class="chip ${k === tf.good ? 'on' : ''}" data-tg="${k}" title="${esc(Economy.goodName(k))}">${gIcon(k)}${esc(shortGood(k))}</button>`).join('')}</div>
+      </div>
+      <div class="sectionlabel"><span class="label">${list.filter(x => tf.buy ? x.b > 0.5 : x.b < -0.5).length} nations ${tf.buy ? 'have spare' : 'need'} ${esc(gname)}</span><span class="label">World price ${Economy.worldPrice(tf.good).toFixed(2)}</span></div>
+      <div class="rows">${list.map(({ c: p, b }) => {
+        const open = tf.open === p.tag, t = tfTerms();
+        const chk = Diplo.can('trade', me, p.tag, t);
+        const ans = chk.ok ? Economy.answerDeal(me, p.tag, t) : null;
+        const pill = !chk.ok ? '<span class="pill no">Blocked</span>' : ans.yes ? '<span class="pill yes">Likely yes</span>' : '<span class="pill no">Unlikely</span>';
+        const r = Diplo.rel(me, p.tag);
+        return `<div class="partner ${open ? 'open' : ''}" data-partner="${p.tag}">
+          <div class="top">${flagSVG(p.tag)}<div class="grow"><div class="nm">${esc(p.name)}</div><div class="sub">${b > 0.05 ? 'Spare ' + f1(b) : b < -0.05 ? 'Short by ' + f1(-b) : 'None spare'} ${esc(gname)} a day · relations ${r > 0 ? '+' : ''}${r}${Diplo.borders(me, p.tag) ? '' : ' · by sea'}</div></div>
+            ${open ? pill : pill + `<button class="btn sm" data-offer="${p.tag}">Offer</button>`}</div>
+          ${open ? `<div class="dealform">
+            <div class="stepper"><span>Amount a day</span><button class="iconbtn" data-amt="-1" aria-label="Less"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${tf.amount}</b><button class="iconbtn" data-amt="1" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button><small>${Math.abs(b) > 0.05 ? (tf.buy ? 'they spare ' : 'they need ') + f1(Math.abs(b)) : ''}</small></div>
+            <div class="stepper"><span>Gold a day</span><button class="iconbtn" data-adj="-0.05" aria-label="Lower price"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${t.price}</b><button class="iconbtn" data-adj="0.05" aria-label="Higher price"><svg class="i"><use href="#i-plus"/></svg></button><small>${tf.adj === 0 ? 'world price' : (tf.adj > 0 ? '+' : '') + Math.round(tf.adj * 100) + '%'}</small></div>
+            <div class="summary">${esc(tf.buy ? `You buy ${tf.amount} ${gname} a day from ${p.name} for ${t.price} gold a day.` : `You sell ${tf.amount} ${gname} a day to ${p.name} for ${t.price} gold a day.`)}<small>${esc(!chk.ok ? chk.why + '.' : 'Uses 1 deal slot and ' + Diplo.COST.trade + ' political power. ' + (ans.yes ? 'They would agree.' : 'They would refuse: ' + ans.why.toLowerCase() + '.'))}</small></div>
+            <div style="display:flex;gap:6px;justify-content:space-between"><button class="btn sm danger" data-emb="${p.tag}" ${Diplo.can('embargo', me, p.tag).ok ? '' : 'disabled'}>Embargo</button><span style="display:flex;gap:6px"><button class="btn sm ghost" data-tcancel="1">Cancel</button><button class="btn sm primary" data-send="${p.tag}" ${chk.ok && c.pp >= Diplo.COST.trade ? '' : 'disabled'}>Send offer</button></span></div>
+          </div>` : ''}
+        </div>`;
+      }).join('') || `<p class="note">Nobody ${tf.buy ? 'has ' + esc(gname) + ' to spare' : 'is short of ' + esc(gname)} right now.</p>`}</div>`;
+    } else {
+      const grp = (title, arr) => `<div class="sectionlabel"><span class="label">${title}</span></div>` + (arr.length ? `<div class="list">${arr.map(dealRow).join('')}</div>` : '<p class="note">None.</p>');
+      h += grp('Buying', deals.filter(d => d.to === me)) + grp('Selling', deals.filter(d => d.from === me));
+      const emb = G.dip.embargo.filter(x => x.by === me || x.of === me);
+      h += '<div class="sectionlabel"><span class="label">Embargoes</span></div>' + (emb.length ? '<div class="list">' + emb.map(x => `<div class="row">${flagSVG(x.by === me ? x.of : x.by)}<div class="grow">${x.by === me ? 'Your embargo on ' + esc(G.countries[x.of].name) : esc(G.countries[x.by].name) + ' embargoes you'}</div>${x.by === me ? `<button class="btn sm" data-lift="${x.of}">Lift</button>` : ''}</div>`).join('') + '</div>' : '<p class="note">None. Embargo a nation from its row under Partners.</p>');
+      h += `<div class="sectionlabel"><span class="label">World prices, gold per unit</span></div><div class="prices">${Economy.GOODS.map(k => `<span>${gIcon(k)}${esc(Economy.goodName(k))}</span><span class="num">${Economy.worldPrice(k).toFixed(2)}</span>`).join('')}</div>`;
+    }
+    return h;
+  }
+  function bindTrade(body) {
+    const G = Sim.G, me = G.player;
+    const redo = () => renderRight();
+    body.querySelectorAll('[data-tv]').forEach(b => b.onclick = () => { sel.tv = b.dataset.tv; redo(); body.scrollTop = 0; });
+    body.querySelectorAll('[data-find]').forEach(b => b.onclick = () => { const [m, k] = b.dataset.find.split(':'); tf.buy = m === 'buy'; tf.good = k; tf.open = null; sel.tv = 'partners'; redo(); body.scrollTop = 0; });
+    body.querySelectorAll('[data-tb]').forEach(b => b.onclick = () => { tf.buy = b.dataset.tb === '1'; tf.open = null; redo(); });
+    body.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { tf.good = b.dataset.tg; if (tf.open) openOffer(tf.open); redo(); });
+    body.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => { openOffer(b.dataset.offer); redo(); });
+    body.querySelectorAll('[data-amt]').forEach(b => b.onclick = () => { const i = AMOUNTS.indexOf(tf.amount); tf.amount = AMOUNTS[Math.max(0, Math.min(AMOUNTS.length - 1, (i < 0 ? 4 : i) + +b.dataset.amt))]; redo(); });
+    body.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { tf.adj = Math.max(-0.25, Math.min(0.25, Math.round((tf.adj + +b.dataset.adj) * 100) / 100)); redo(); });
+    body.querySelectorAll('[data-tcancel]').forEach(b => b.onclick = () => { tf.open = null; redo(); });
+    body.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
+      const r = Diplo.act('trade', me, b.dataset.send, tfTerms());
+      toast(r.text, -1, r.accepted === false ? 'loss' : r.accepted ? 'win' : 'info');
+      if (r.accepted) tf.open = null;
+      redo(); refreshTop();
+    });
+    body.querySelectorAll('[data-emb]').forEach(b => b.onclick = () => { const r = Diplo.act('embargo', me, b.dataset.emb); toast(r.text, -1, 'info'); tf.open = null; redo(); refreshTop(); });
+    body.querySelectorAll('[data-tradewith]').forEach(b => b.onclick = () => {
+      const tag = b.dataset.tradewith, bal = k => Economy.balance(tag, k), mine = k => Economy.balance(me, k);
+      // start from what fits best: something they spare and we lack, else something we spare and they lack
+      let best = null, bv = 0;
+      for (const k of Economy.GOODS) { const buy = Math.min(-mine(k), bal(k)), sell = Math.min(mine(k), -bal(k)); if (buy > bv) { bv = buy; best = [true, k]; } if (sell > bv) { bv = sell; best = [false, k]; } }
+      if (!best) best = [true, Economy.GOODS.reduce((a, k) => bal(k) > bal(a) ? k : a, Economy.GOODS[0])];
+      tf.buy = best[0]; tf.good = best[1]; openOffer(tag); sel.tv = 'partners'; openTab('trade');
+    });
+    body.querySelectorAll('[data-gotrade]').forEach(b => b.onclick = e => { e.preventDefault(); sel.tv = b.dataset.gotrade; openTab('trade'); });
   }
 
   // ---------- research ----------
@@ -861,7 +1020,8 @@ const UI = (function () {
   }
   function bindRight() {
     const G = Sim.G, body = $('#rp-body');
-    body.querySelectorAll('[data-o]').forEach(b => b.onclick = () => armyOrder(b.dataset.o));
+    body.querySelectorAll('[data-selarmy]').forEach(b => b.onclick = e => { const id = +b.dataset.selarmy; selectArmies([id], e.shiftKey || e.ctrlKey || e.metaKey); if (!e.shiftKey) { const a = Sim.army(id); if (a) { const p = MAP.provs[a.prov]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } } });
+    bindTrade(body);
     body.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
       const t = myArmiesSel().length === 1 ? myArmiesSel()[0].id : 0;
       if (Sim.recruit(G.player, b.dataset.rec, t)) { renderRight(); refreshTop(); }
@@ -872,14 +1032,12 @@ const UI = (function () {
     body.querySelectorAll('[data-act]').forEach(b => b.onclick = () => doDiplo(b.dataset.act, sel.dip));
     body.querySelectorAll('[data-cap]').forEach(b => b.onclick = () => selectProvince(+b.dataset.cap, true));
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
-    body.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.sell = b.dataset.tf === 'sell'; renderRight(); });
-    body.querySelectorAll('[data-tfg]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.good = b.dataset.tfg; renderRight(); });
-    body.querySelectorAll('[data-tfa]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); const i = AMOUNTS.indexOf(f.amount); f.amount = AMOUNTS[Math.max(0, Math.min(AMOUNTS.length - 1, (i < 0 ? 3 : i) + +b.dataset.tfa))]; renderRight(); });
-    body.querySelectorAll('[data-tfp]').forEach(b => b.onclick = () => { const f = tradeForm(sel.dip); f.adj = Math.max(-0.25, Math.min(0.25, Math.round((f.adj + +b.dataset.tfp) * 100) / 100)); renderRight(); });
     body.querySelectorAll('[data-canceldeal]').forEach(b => b.onclick = () => { const r = Diplo.act('canceltrade', G.player, b.dataset.with, { id: +b.dataset.canceldeal }); toast(r.text, -1, 'info'); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-lift]').forEach(b => b.onclick = () => { const r = Diplo.act('lift', G.player, b.dataset.lift); toast(r.text, -1, 'info'); renderRight(); });
     body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
     body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => { const r = Politics.take(G.player, b.dataset.dec); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
+    body.querySelectorAll('[data-evopen]').forEach(b => b.onclick = () => showEvent());
     body.querySelectorAll('[data-tech]').forEach(b => b.onclick = () => pickTech(b.dataset.tech));
     body.querySelectorAll('[data-fleet]').forEach(b => b.onclick = () => { selectFleet(+b.dataset.fleet); const f = Navy.fleet(+b.dataset.fleet); if (f) { const [x, y] = Render.fleetPos(f); Render.flyTo(x, y, Math.max(Render.cam.z, 5)); } });
     body.querySelectorAll('[data-wing]').forEach(b => b.onclick = () => { selectWing(+b.dataset.wing); const w = Air.wing(+b.dataset.wing); if (w) { const p = MAP.provs[w.base]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } });
@@ -927,7 +1085,7 @@ const UI = (function () {
     if (kind === 'retreat') list.forEach(a => Sim.orderRetreat(a));
     if (kind === 'split') { const b = Sim.splitArmy(list[0]); if (b) selectArmies([list[0].id, b.id], false); }
     if (kind === 'merge') { const m = Sim.mergeArmies(list); if (m) selectArmies([m.id], false); }
-    if (kind === 'recruit') { sel.tab = 'recruit'; }
+    if (kind === 'recruit') { sel.tab = 'recruit'; sel.collapsed = false; }
     renderRight(); renderTrays();
   }
   function showHint() {
@@ -1000,10 +1158,7 @@ const UI = (function () {
       b.onclick = e => selectArmies([+b.dataset.a], e.shiftKey || e.ctrlKey || e.metaKey);
       b.ondblclick = () => { const a = Sim.army(+b.dataset.a); if (a) { const p = MAP.provs[a.prov]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 8)); } };
     });
-    const list = selectedArmies();
-    const units = list.length === 1 ? list[0].units : [];
-    const col = list.length ? COUNTRY_BY_TAG[list[0].owner].color : '#777';
-    setHTML($('#unittray'), units.map(u => `<div class="ucard">${unitIcon(u.type, col)}<div>${UNIT_TYPES[u.type].short}</div><div class="bar str"><i style="width:${u.str * 100}%"></i></div><div class="bar org"><i style="width:${u.org * 100}%"></i></div></div>`).join(''));
+    if (!inFrame || !(hoverEl === $("#ucard") && hoverBtn)) renderCard();
   }
 
   // ---------- battle popup ----------
@@ -1045,24 +1200,164 @@ const UI = (function () {
     modal(`<h2 class="display" style="font-size:24px">Command menu</h2>
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
       <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on or by me')}${chk('pauseLoss', 'Loss of a city or my capital')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseCapitulation', 'A nation in my wars capitulates')}</div>
+      ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
+      <hr class="sep"><div class="label">Saved games</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-x="saves">Save or load</button></div>
       <hr class="sep"><div class="label">Controls</div>
-      <p class="note">Drag to pan, scroll or pinch to zoom. Click a counter to select an army, shift-click to add. Right-click to move or attack. Space pauses, + and − change speed, 1–5 pick a speed, Esc clears the selection.</p>
-      <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><button class="btn danger" data-x="new">New game</button><button class="btn primary" data-x="ok">Close</button></div>`,
-      x => { if (x === 'new') newGamePrompt(); });
-    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
+      <p class="note">WASD, the arrow keys or a right-drag move the map; scroll or pinch to zoom. Click a counter to select an army, shift-click to add, or drag across several. Right-click to move or attack. Keys 1 to 9 open the side bar tabs, Space pauses, + and − change speed, Esc closes panels.</p>
+      <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><span style="display:flex;gap:8px"><button class="btn danger" data-x="new">New game</button><button class="btn" data-x="quit">Save and quit to menu</button></span><button class="btn primary" data-x="ok">Close</button></div>`,
+      x => {
+        if (x === 'new') newGamePrompt();
+        else if (x === 'saves') openSaves(true);
+        else if (x === 'quit') { const r = Save.write(Save.AUTO, 'Autosave'); if (!r.ok) toast(r.why, -1, 'info'); backToStart(); }
+      });
+    if (s.autosave === undefined) s.autosave = true;
+    if (s.pauseEvent === undefined) s.pauseEvent = true;
+    $('#set-autosave').checked = s.autosave; $('#set-pauseEvent').checked = s.pauseEvent;
+    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
     G.paused = true; refreshTop();
   }
+  // ---------- saved games ----------
+  function openSaves(inGame) {
+    const G = Sim.G;
+    const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
+    const eraLabel = id => { const e = Eras.list().find(x => x.id === id); return e ? e.label : id; };
+    const row = s => {
+      const name = s.slot === Save.AUTO ? 'Autosave' : 'Slot ' + s.slot;
+      const what = s.empty ? '<span class="sub">Empty</span>' : s.bad ? '<span class="sub">' + esc(s.bad) + '</span>'
+        : `${flagSVG(s.player)}<span><b>${esc(s.nation)}</b> · ${esc(s.date)}<div class="sub">${esc(eraLabel(s.era))} · saved ${ago(s.savedAt)}${s.temp ? ' · kept only until you close the page' : ''}</div></span>`;
+      const btns = (inGame && G && !G.over && s.slot !== Save.AUTO ? `<button class="btn sm" data-sv="${s.slot}">Save</button>` : '')
+        + (!s.empty && !s.bad ? `<button class="btn sm" data-ld="${s.slot}">Load</button>` : '')
+        + (!s.empty && s.slot !== Save.AUTO ? `<button class="btn sm ghost" data-rm="${s.slot}" aria-label="Delete ${name}">✕</button>` : '');
+      return `<div class="row saverow"><div class="label" style="width:64px">${name}</div><div class="grow sv-what">${what}</div><div class="sv-btns">${btns}</div></div>`;
+    };
+    modal(`<h2 class="display" style="font-size:24px">Saved games</h2>
+      ${Save.available() ? '' : '<p class="note">This browser does not allow saving here, so saves last only until the page closes. Use Export to keep a copy.</p>'}
+      <div class="list">${Save.list().map(row).join('')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${inGame && G ? '<button class="btn" data-io="export">Export to file</button>' : ''}<button class="btn" data-io="import">Import from file</button><input type="file" id="sv-file" accept=".json,application/json" hidden></div>
+      <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="ok">Close</button></div>`);
+    const m = $('#modal');
+    m.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { const r = Save.write(b.dataset.sv); toast(r.ok ? 'Saved to slot ' + b.dataset.sv + '.' : r.why, -1, 'info'); openSaves(inGame); });
+    m.querySelectorAll('[data-ld]').forEach(b => b.onclick = () => { const r = Save.read(b.dataset.ld); if (r.ok) loadGame(r.data); else toast(r.why, -1, 'info'); });
+    m.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { Save.remove(b.dataset.rm); openSaves(inGame); });
+    const exp = m.querySelector('[data-io="export"]');
+    if (exp) exp.onclick = async () => {
+      // inside the Claude viewer a file is offered through its downloads capability; elsewhere through a normal download
+      const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+      if (dl) {
+        const name = Save.fileName();
+        try { await dl.save({ filename: name, data: Save.serialise('Export') }); toast('Saved game exported as ' + name + '.', -1, 'info'); }
+        catch (e) { if (e && e.code !== 'declined') toast('The export could not be saved here.', -1, 'info'); }
+        return;
+      }
+      try {
+        const blob = new Blob([Save.serialise('Export')], { type: 'application/json' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = Save.fileName();
+        document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        toast('Saved game exported as ' + a.download + '.', -1, 'info');
+      } catch (e) { toast('This browser blocked the download.', -1, 'info'); }
+    };
+    m.querySelector('[data-io="import"]').onclick = () => $('#sv-file').click();
+    $('#sv-file').onchange = e => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { const r = Save.parse(String(rd.result)); if (r.ok) loadGame(r.data); else toast(r.why, -1, 'info'); };
+      rd.readAsText(f);
+    };
+  }
+
+  // ---------- events ----------
+  function showEvent() {
+    const G = Sim.G; if (!G) return;
+    const e = Events.open()[0]; if (!e) return;
+    const v = Events.view(e);
+    if (!v) { Events.choose(e.n, 0); return; }
+    const c = G.countries[e.tag];
+    modal(`<div class="ev-top" data-evn="${e.n}">${flagSVG(e.tag)}<span class="label">${esc(c.name)} · ${esc(v.date)}</span></div>
+      <h2 class="display" style="font-size:24px;margin:0">${esc(v.title)}</h2>
+      <p class="ev-text">${esc(v.text)}</p>
+      <div class="ev-opts">${v.options.map(o => `<button class="btn ev-opt" data-x="${o.i}"><b>${esc(o.text)}</b><small>${o.fx.map(esc).join(' · ')}</small></button>`).join('')}</div>`,
+      x => { Events.choose(e.n, +x); refreshTop(); renderRight(); renderLeft(); if (Events.open().length) showEvent(); });
+  }
+
+  // ---------- peace conference ----------
+  function showPeace() {
+    const G = Sim.G, conf = G && G.peace; if (!conf) return;
+    const v = Peace.view(conf), me = G.player;
+    const who = t => t && t[0] === '@' ? 'restored ' + esc(G.countries[t.slice(1)].name) : t === me ? 'you' : esc(G.countries[t].name);
+    const provRow = p => `<div class="row pz-row ${p.taken === me ? 'on' : ''}"><div class="grow"><a class="lnk" data-pzgo="${p.id}">${esc(p.name)}</a>${p.capital ? ' <span class="pill">Capital</span>' : p.city ? ' <span class="pill">City</span>' : ''}
+        <div class="sub">${p.held === me ? 'You hold it' : 'Held by ' + esc(G.countries[p.held].name)}${p.taken && p.taken !== me ? ' · taken by ' + who(p.taken) : ''}${!p.taken && !p.ok ? ' · ' + esc(p.why) : ''}</div></div>
+        ${p.taken === me ? `<button class="btn sm" data-pzu="${p.id}">Give back</button>` : !p.taken ? `<button class="btn sm ${p.ok ? '' : 'dis'}" data-pz="${p.id}" ${p.ok ? '' : 'disabled'}>Take · ${p.cost}</button>` : ''}</div>`;
+    const lc = G.countries[v.loser];
+    const others = v.winners.filter(w => w.tag !== me).map(w => `${esc(G.countries[w.tag].name)} ${w.done ? 'spent ' + w.spent : 'waits'} of ${w.pts}`).join(' · ');
+    const m = $('#modal');
+    m.innerHTML = `<div class="panel pz" role="dialog" aria-modal="true">
+      <div class="ev-top">${flagSVG(v.loser)}<span class="label">Peace conference · ${esc(v.war)}</span></div>
+      <h2 class="display" style="font-size:24px;margin:0">${esc(lc.name)} has capitulated</h2>
+      <p class="note">You have <b>${v.left}</b> of ${v.pts} points to spend. Land nobody takes goes back to ${esc(lc.name)}. ${others ? 'Other victors: ' + others + '.' : ''}</p>
+      <div class="pz-body">
+        <div class="label">Terms</div>
+        <div class="list">
+          <div class="row"><div class="grow"><b>Make ${esc(lc.name)} your subject</b><div class="sub">${v.puppet.by ? 'Subject of ' + who(v.puppet.by) : 'It keeps the land nobody takes and follows you in war.'}</div></div>${v.puppet.by === me ? '<button class="btn sm" data-pzx="puppet">Withdraw</button>' : !v.puppet.by ? `<button class="btn sm" data-pzd="puppet" ${v.puppet.ok ? '' : 'disabled'} title="${esc(v.puppet.why)}">Demand · ${v.puppet.cost}</button>` : ''}</div>
+          <div class="row"><div class="grow"><b>Reparations</b><div class="sub">They pay you ${esc(Economy.coin())} every day for two years${v.repar.mine ? ' · demanded ' + v.repar.mine + '×' : ''}.</div></div>${v.repar.mine ? '<button class="btn sm" data-pzx="repar">Withdraw</button>' : ''}<button class="btn sm" data-pzd="repar" ${v.repar.ok ? '' : 'disabled'} title="${esc(v.repar.why)}">Demand · ${v.repar.cost}</button></div>
+          ${v.restore.map(r => `<div class="row"><div class="grow"><b>Restore ${esc(G.countries[r.tag].name)}</b><div class="sub">${r.by ? 'Restored by ' + who(r.by) : 'Brings back a nation that was conquered, friendly to you.'}</div></div>${r.by === me ? `<button class="btn sm" data-pzxr="${r.tag}">Withdraw</button>` : !r.by ? `<button class="btn sm" data-pzr="${r.tag}" ${r.ok ? '' : 'disabled'}>Restore · ${r.cost}</button>` : ''}</div>`).join('')}
+        </div>
+        <div class="label">Provinces</div>
+        <div class="list">${v.provs.map(provRow).join('')}</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><button class="btn" data-pzauto="1">Pick for me</button><button class="btn primary" data-pzdone="1">Sign the treaty</button></div></div>`;
+    m.hidden = false;
+    const again = () => { const st = m.querySelector('.pz-body').scrollTop; showPeace(); const b = m.querySelector('.pz-body'); if (b) b.scrollTop = st; };
+    m.querySelectorAll('[data-pz]').forEach(b => b.onclick = () => { Peace.demand(conf, me, { kind: 'prov', id: +b.dataset.pz }); again(); });
+    m.querySelectorAll('[data-pzu]').forEach(b => b.onclick = () => { Peace.undo(conf, me, { kind: 'prov', id: +b.dataset.pzu }); again(); });
+    m.querySelectorAll('[data-pzd]').forEach(b => b.onclick = () => { Peace.demand(conf, me, { kind: b.dataset.pzd }); again(); });
+    m.querySelectorAll('[data-pzx]').forEach(b => b.onclick = () => { Peace.undo(conf, me, { kind: b.dataset.pzx }); again(); });
+    m.querySelectorAll('[data-pzr]').forEach(b => b.onclick = () => { Peace.demand(conf, me, { kind: 'restore', tag: b.dataset.pzr }); again(); });
+    m.querySelectorAll('[data-pzxr]').forEach(b => b.onclick = () => { Peace.undo(conf, me, { kind: 'restore', tag: b.dataset.pzxr }); again(); });
+    m.querySelectorAll('[data-pzgo]').forEach(b => b.onclick = () => { const p = MAP.provs[+b.dataset.pzgo]; Render.state.selProv = p.id; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); });
+    m.querySelector('[data-pzauto]').onclick = () => { Peace.aiPick(conf, me); again(); };
+    m.querySelector('[data-pzdone]').onclick = () => {
+      const text = Peace.done(conf);
+      m.hidden = true;
+      Render.state.dirtyOwners = true;
+      refreshTop(); renderRight(); renderLeft(); renderTrays();
+      modal(`<h2 class="display" style="font-size:24px">Peace signed</h2><p class="note">${esc(text)}</p><div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="ok">Continue</button></div>`);
+    };
+  }
+
+  // ---------- politics tab ----------
+  function politicsPanel() {
+    const G = Sim.G, me = G.player, c = G.countries[me];
+    let html = '';
+    const open = Events.open();
+    if (open.length) html += `<button class="btn primary" data-evopen="1" style="width:100%">Answer: ${esc(Events.view(open[0])?.title || 'event')}</button>`;
+    html += `<div class="label">Decisions <span class="sub">· ${Math.floor(c.pp)} political power</span></div>`;
+    const list = Politics.list(me);
+    for (const cat of ['Economy', 'Military', 'Home front']) {
+      html += `<div class="sub" style="margin:6px 0 2px">${cat}</div><div class="list">` + list.filter(d => d.cat === cat).map(d =>
+        `<div class="row dec"><div class="grow"><b>${esc(d.name)}</b><div class="sub">${esc(d.desc)} ${esc(d.fx)}${d.ok ? '' : ' · <i>' + esc(d.why) + '</i>'}</div></div><button class="btn sm" data-dec="${d.id}" ${d.ok ? '' : 'disabled'} title="${esc(d.ok ? '' : d.why)}">${d.cost} PP${d.gold ? ' + ' + d.gold : ''}</button></div>`).join('') + '</div>';
+    }
+    const mods = Politics.mods(me);
+    html += '<div class="label">In effect</div>' + (mods.length ? '<div class="list">' + mods.map(m => `<div class="row"><div class="grow"><b>${esc(m.name)}</b><div class="sub">${esc(Politics.fxText(m.fx))}</div></div><span class="sub">${Math.ceil((m.until - G.hour) / 24)} days</span></div>`).join('') + '</div>' : '<p class="note">No decisions or events in effect.</p>');
+    const rec = Events.recent(40).filter(r => r.tag === me || r.news).slice(0, 10);
+    const tre = (G.treaties || []).slice(0, 5);
+    if (tre.length) html += '<div class="label">Treaties</div><div class="list">' + tre.map(t => `<div class="row"><div class="grow"><div class="sub">${Sim.dateStr(t.hour)}</div><div>${esc(t.text)}</div></div></div>`).join('') + '</div>';
+    if (rec.length) html += '<div class="label">Recent events</div><div class="list">' + rec.map(r => `<div class="row"><div class="grow"><div class="sub">${Sim.dateStr(r.hour)} · ${esc(G.countries[r.tag].name)}</div><div><b>${esc(r.title)}</b>${r.choice ? ': ' + esc(r.choice) : ''}</div></div></div>`).join('') + '</div>';
+    html += '<div class="label">Log</div>' + logPanel();
+    return html;
+  }
+
   function newGamePrompt() {
     modal(`<h2 class="display" style="font-size:24px">Start a new game?</h2><p class="note">The current campaign will be lost.</p>
       <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Cancel</button><button class="btn danger" data-x="yes">New game</button></div>`,
-      x => { if (x === 'yes') backToStart(); });
+      x => { if (x === 'yes') { backToStart(); Menu.open('new'); } });
   }
   function backToStart() {
-    Sim.G = null; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Sim.G = null; $('#modal').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
-    $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true;
-    showStart();
+    $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);
+    Menu.show();
   }
   function gameOver(won) {
     const G = Sim.G;
@@ -1082,7 +1377,13 @@ const UI = (function () {
       cv.setPointerCapture(e.pointerId);
       ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
       if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) }; dragged = true; }
-      else { down = { x: e.offsetX, y: e.offsetY, lx: e.offsetX, ly: e.offsetY, button: e.button }; dragged = false; }
+      else {
+        down = { x: e.offsetX, y: e.offsetY, lx: e.offsetX, ly: e.offsetY, button: e.button }; dragged = false;
+        // with a mouse, the left button drags a selection box (right or middle button, or WASD, moves the map);
+        // on a touch screen a drag moves the map
+        const G = Sim.G;
+        if (G && e.button === 0 && e.pointerType === 'mouse' && !pending) down.box = true;
+      }
     });
     cv.addEventListener('pointermove', e => {
       if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
@@ -1093,6 +1394,7 @@ const UI = (function () {
       }
       if (down) {
         if (!dragged && Math.hypot(e.offsetX - down.x, e.offsetY - down.y) > 5) { dragged = true; cv.classList.add('dragging'); }
+        if (dragged && down.box) { drawBox(down.x, down.y, e.offsetX, e.offsetY); return; }
         if (dragged) { Render.pan(e.offsetX - down.lx, e.offsetY - down.ly); down.lx = e.offsetX; down.ly = e.offsetY; }
         return;
       }
@@ -1106,12 +1408,25 @@ const UI = (function () {
       if (ptrs.size < 2) pinch = null;
       cv.classList.remove('dragging');
       if (down && !dragged) click(e.offsetX, e.offsetY, down.button, e.shiftKey || e.ctrlKey || e.metaKey);
+      else if (down && down.box) {
+        drawBox();
+        const G = Sim.G, ids = G ? Render.armiesInRect(down.x, down.y, e.offsetX, e.offsetY).filter(a => a.owner === G.player).map(a => a.id) : [];
+        if (ids.length) { if (e.shiftKey) selectArmies(ids.filter(id => !sel.armies.includes(id)), true); else selectArmies(ids, false); }
+      }
       if (!ptrs.size) down = null;
     };
     cv.addEventListener('pointerup', up);
-    cv.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); down = null; pinch = null; });
+    cv.addEventListener('pointercancel', e => { ptrs.delete(e.pointerId); down = null; pinch = null; drawBox(); });
     cv.addEventListener('pointerleave', () => { Render.state.hover = -1; });
     cv.addEventListener('wheel', e => { e.preventDefault(); Render.zoomSmooth(e.offsetX, e.offsetY, Math.exp(-Math.max(-300, Math.min(300, e.deltaMode ? e.deltaY * 40 : e.deltaY)) * 0.0022)); }, { passive: false });
+  }
+  function drawBox(x0, y0, x1, y1) {
+    let b = $('#selbox');
+    if (x0 === undefined) { if (b) b.hidden = true; return; }
+    if (!b) { b = document.createElement('div'); b.id = 'selbox'; $('#map').parentElement.appendChild(b); }
+    const r = $('#map').getBoundingClientRect();
+    Object.assign(b.style, { left: r.left + Math.min(x0, x1) + 'px', top: r.top + Math.min(y0, y1) + 'px', width: Math.abs(x1 - x0) + 'px', height: Math.abs(y1 - y0) + 'px' });
+    b.hidden = false;
   }
   function click(sx, sy, button, add) {
     const G = Sim.G;
@@ -1154,34 +1469,57 @@ const UI = (function () {
         }
         selectArmies(pick, false);
       } else selectArmies([a.id], add && a.owner === G.player);
-      selectProvince(a.prov);
       return;
     }
     if (!add) selectArmies([], false);
     if (prov < 0 && zone >= 0) { selectProvince(-1); selectZone(zone); return; }
     selectProvince(prov);
   }
+  const panKeys = new Set();
+  let panStep = () => {}, lastPan = 0;
   function bindKeys() {
+    // WASD and the arrow keys pan the map
+    const PAN = { w: [0, 1], a: [1, 0], s: [0, -1], d: [-1, 0], arrowup: [0, 1], arrowleft: [1, 0], arrowdown: [0, -1], arrowright: [-1, 0] };
+    const typing = e => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+    window.addEventListener('keydown', e => { const k = e.key.toLowerCase(); if (PAN[k] && !typing(e) && !e.ctrlKey && !e.metaKey && !e.altKey) { panKeys.add(k); if (k.startsWith('arrow')) e.preventDefault(); } });
+    window.addEventListener('keyup', e => panKeys.delete(e.key.toLowerCase()));
+    window.addEventListener('blur', () => panKeys.clear());
+    panStep = dt => {
+      if (!panKeys.size || !$('#modal').hidden) return;
+      let dx = 0, dy = 0;
+      for (const k of panKeys) { dx += PAN[k][0]; dy += PAN[k][1]; }
+      const v = 700 * (Menu.prefs().panSpeed || 6) / 6 * dt;   // screen pixels a second
+      if (dx || dy) Render.pan(dx * v, dy * v);
+    };
     window.addEventListener('keydown', e => {
-      if (e.target.tagName === 'INPUT') return;
+      if (typing(e)) return;
       const G = Sim.G; if (!G) return;
       if (e.code === 'Space') { e.preventDefault(); togglePause(); }
       else if (e.key === '+' || e.key === '=') setSpeed(G.speed + 1);
       else if (e.key === '-' || e.key === '_') setSpeed(G.speed - 1);
-      else if (/^[1-5]$/.test(e.key)) setSpeed(+e.key);
+      else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && $('#modal').hidden) openTab(TABS[+e.key - 1][0], true);
       else if (e.key === 'Escape') {
         if (pending) { pending = null; showHint(); renderRight(); }
-        else if (!$('#modal').hidden) $('#modal').hidden = true;
+        else if (!$('#modal').hidden) { if (!$('#modal [data-evn]') && !$('#modal .pz')) $('#modal').hidden = true; }
         else if (sel.battle) { sel.battle = 0; $('#battle').hidden = true; }
+        else if (treeOpen) { treeOpen = false; renderTree(); }
+        else if (!sel.collapsed) { sel.collapsed = true; renderRight(); }
         else { selectArmies([], false); selectProvince(-1); selectZone(-1); if (sel.fleet) selectFleet(0); if (sel.wing) selectWing(0); }
       }
     });
   }
 
   // ---------- periodic refresh ----------
-  let lastRefresh = 0, lastFront = 0;
+  let lastRefresh = 0, lastFront = 0, inFrame = false;
   function frame(now) {
+    const dtPan = lastPan ? Math.min(0.1, (now - lastPan) / 1000) : 0; lastPan = now;
+    panStep(dtPan);
     const G = Sim.G; if (!G) return;
+    // an event card answered elsewhere (or a finished conference) closes; one still waiting comes back
+    const evCard = $('#modal').hidden ? null : $('#modal [data-evn]');
+    if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;
+    if (!$('#modal').hidden && $('#modal .pz') && !G.peace) $('#modal').hidden = true;
+    if ($('#modal').hidden && !G.over) { if (G.peace) showPeace(); else if (G.ev && G.ev.open.length) showEvent(); }
     if (now - lastRefresh > 300) {
       lastRefresh = now;
       sel.armies = sel.armies.filter(id => Sim.army(id));
@@ -1193,12 +1531,15 @@ const UI = (function () {
         // (and not at all while the pointer rests on one of its buttons)
         const calm = el => hoverEl === el && (hoverBtn || now - (el._lastRefresh || 0) < 1500);
         const run = (el, fn) => { if (!calm(el)) { el._lastRefresh = now; fn(); } };
+        inFrame = true;
         refreshTop();
         run($('#bottombar'), renderTrays);
-        if (document.activeElement?.id !== 'dp-search') run($('#rightpanel'), renderRight);
+        if (document.activeElement?.id !== 'dp-search') run($('#drawer'), renderRight);
+        else run($('#ucard'), renderCard);
         if (!$('#leftpanel').hidden) run($('#leftpanel'), renderLeft);
         if (treeOpen) run($('#techtree'), renderTree);
         if (sel.battle) renderBattle();
+        inFrame = false;
       }
     }
     if (now - lastFront > 1000) {
@@ -1216,6 +1557,6 @@ const UI = (function () {
     }
   }
 
-  return { init, showStart, frame, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _selected: () => sel.armies.slice(),
+  return { init, showStart, chooseNation, loadGame, openSaves, curEra, frame, openTab, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _showEvent: () => showEvent(), _showPeace: () => showPeace(), _openSaves: g => openSaves(g), _loadGame: d => loadGame(d), _selected: () => sel.armies.slice(),
     _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }) };
 })();

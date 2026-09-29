@@ -543,5 +543,13 @@ const Diplo = (function () {
     return r.ok ? r : null;
   }
 
-  return { hooks, COST, AID_EQ, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy };
+  // events and peace terms put a nation into a faction directly
+  function joinFaction(tag, f) {
+    const g = G();
+    if (!f || f.members.includes(tag)) return;
+    if (Sim.factionOf(tag)) leaveFaction(tag);
+    f.members.push(tag); g.dip.facOf[tag] = f.id;
+  }
+  return { hooks, COST, AID_EQ, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
+    joinFaction, leaveFaction, transferProvince, evacuate, warsBetweenSides };
 })();

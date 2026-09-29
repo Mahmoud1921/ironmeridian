@@ -163,6 +163,12 @@ const Render = (function () {
     for (let i = counterHits.length - 1; i >= 0; i--) { const h = counterHits[i]; if (sx >= h.x && sx <= h.x + h.w && sy >= h.y && sy <= h.y + h.h) return h.group; }
     return null;
   }
+  // every army whose counter touches a screen rectangle (drag-selection)
+  function armiesInRect(x0, y0, x1, y1) {
+    const l = Math.min(x0, x1), r = Math.max(x0, x1), t = Math.min(y0, y1), b = Math.max(y0, y1), out = new Set();
+    for (const h of counterHits) if (h.x <= r && h.x + h.w >= l && h.y <= b && h.y + h.h >= t) for (const a of h.group) out.add(a);
+    return [...out];
+  }
   function counterAt(sx, sy) { const g = stackAt(sx, sy); return g ? g[0] : null; }
   function battleAtScreen(sx, sy) {
     for (const h of battleHits) if (Math.hypot(sx - h.x, sy - h.y) < 13) return h.battle;
@@ -556,7 +562,7 @@ const Render = (function () {
         ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.46, fig * 0.2, 0, 0, Math.PI * 2);
         ctx.fillStyle = c.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
         ctx.lineWidth = 1.2; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : 'rgba(0,0,0,0.6)'; ctx.stroke();
-        for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
+        if (state.figures !== false) for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
         if (fighting && !G.paused && Math.random() < 0.35) {     // muzzle flashes
           ctx.fillStyle = '#ffd36a';
           ctx.beginPath(); ctx.arc(sx + hx * fig * 0.45 + (Math.random() - 0.5) * 6, sy + hy * fig * 0.3 - fig * 0.15, 1.6 + Math.random() * 1.6, 0, 7); ctx.fill();
@@ -828,5 +834,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

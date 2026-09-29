@@ -160,6 +160,8 @@ const Economy = (function () {
 
   // ---------- setup at game start ----------
   function popOf(d) { return d.pop || 1; }
+  // after loading a save: rebuild what is derived from the map and era, not stored in the game
+  function restore() { const M = MAP(); buildDeposits(); M.provs.forEach(p => coastal(p)); avgT = null; }
   function setup() {
     const g = G(), M = MAP();
     buildDeposits();
@@ -780,7 +782,7 @@ const Economy = (function () {
   }
 
   return {
-    GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
+    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId

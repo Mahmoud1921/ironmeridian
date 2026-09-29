@@ -74,6 +74,8 @@ const Tech = (function () {
         if (!x) continue;
         for (const e of x.t.fx || []) (f[e.mod] || (f[e.mod] = [])).push(e);
       }
+      // timed effects from events and decisions use the same vocabulary
+      for (const m of (c && c.mods) || []) if (m.until > g.hour) for (const e of m.fx) (f[e.mod] || (f[e.mod] = [])).push(e);
     }
     return f;
   }

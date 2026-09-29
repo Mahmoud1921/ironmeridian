@@ -371,8 +371,9 @@ const Air = (function () {
     }
   }
 
+  function restore() { cache = { hour: -1, m: new Map() }; }
   function dropNation(tag) { const g = G(); if (g.wings) g.wings = g.wings.filter(w => w.owner !== tag); }
 
-  return { TYPES, TYPE_KEYS, MISSIONS, available, types, typeName, range, setup, daily, wing, newWing, removeWing, canFly, setMission, rebase,
+  return { restore, TYPES, TYPE_KEYS, MISSIONS, available, types, typeName, range, setup, daily, wing, newWing, removeWing, canFly, setMission, rebase,
     canBuild, build, cancelBuild, upkeep, superiority, battleBonus, casNear, seaPresence, navalStrike, bombDamage, basesOf, capacity, basedAt, freeBase, point, dropNation, AREA_KM };
 })();

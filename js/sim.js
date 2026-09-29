@@ -68,6 +68,21 @@ const Sim = (function () {
     if (typeof Economy !== 'undefined') Economy.setup();
     if (typeof Navy !== 'undefined') Navy.setup();
     if (typeof Air !== 'undefined') Air.setup();
+    if (typeof Events !== 'undefined') Events.setup();
+    return G;
+  }
+
+  // continue a saved game: the state is plain data, the rest is rebuilt around it
+  function restore(g) {
+    START = typeof Eras !== 'undefined' ? Eras.startTime() : START;
+    if (typeof Tech !== 'undefined') Tech.registerUnlocks();
+    G = g;
+    rng = mulberry32(1936 + g.hour * 13 + g.player.charCodeAt(0) * 7 + g.player.charCodeAt(1));
+    if (typeof Economy !== 'undefined') Economy.restore();
+    if (typeof Navy !== 'undefined' && G.fleets) Navy.restore();
+    if (typeof Air !== 'undefined') Air.restore();
+    if (typeof Events !== 'undefined' && !G.ev) Events.setup();
+    G.ownVer++;
     return G;
   }
 
@@ -509,6 +524,22 @@ const Sim = (function () {
   function capitulate(tag) {
     const c = G.countries[tag];
     const enemies = [...enemiesOf(tag)];
+    const myWars = G.wars.filter(w => w.attackers.includes(tag) || w.defenders.includes(tag));
+    const leaders = myWars.map(w => w.attackers.includes(tag) ? w.leaderD : w.leaderA);
+    if (tag !== G.player && typeof Peace !== 'undefined') {
+      // the victors meet at a peace conference to share out the land
+      const counts = {};
+      MAP.provs.forEach(p => { if (p.core === tag && enemies.includes(G.owner[p.id])) counts[G.owner[p.id]] = (counts[G.owner[p.id]] || 0) + 1; });
+      for (const w of G.wars) { w.attackers = w.attackers.filter(t => t !== tag); w.defenders = w.defenders.filter(t => t !== tag); }
+      const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
+      G.wars = G.wars.filter(w => w.attackers.length && w.defenders.length);
+      for (const b of G.battles.slice()) if (!atWar(b.atkTag, b.defTag)) endBattle(b);
+      const involves = enemies.includes(G.player) || allied(tag, G.player);
+      notify(c.name + ' has capitulated.', c.capital, 'cap', involves && G.settings.pauseCapitulation);
+      for (const w of ended) notify('The ' + w.name + ' has ended.', -1, 'info', false);
+      Peace.open(tag, enemies, counts, myWars.length ? myWars[0].name : '', leaders);
+      return;
+    }
     // the enemy holding the most of this country's land receives the rest
     const counts = {};
     MAP.provs.forEach(p => { if (p.core === tag && enemies.includes(G.owner[p.id])) counts[G.owner[p.id]] = (counts[G.owner[p.id]] || 0) + 1; });
@@ -832,6 +863,10 @@ const Sim = (function () {
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
     if (typeof Diplo !== 'undefined') Diplo.dayTick();
+    if (typeof Politics !== 'undefined') Politics.daily();
+    if (typeof Peace !== 'undefined') Peace.daily();
+    if (typeof Events !== 'undefined') Events.daily();
+    if (typeof Save !== 'undefined') Save.tick();
     playerOrders();
   }
 
@@ -843,7 +878,7 @@ const Sim = (function () {
   }
 
   return {
-    init, newGame, hourTick, dateStr, dateTime, hooks, mpCost,
+    init, newGame, restore, hourTick, dateStr, dateTime, hooks, mpCost,
     get G() { return G; }, set G(v) { G = v; },
     get MAP() { return MAP; },
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,
@@ -851,6 +886,6 @@ const Sim = (function () {
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
     orderMove, orderHold, orderDefend, orderRetreat, mergeArmies, splitArmy, recruit, canRecruit,
-    computeSupply
+    computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();
