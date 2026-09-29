@@ -83,6 +83,7 @@ const UI = (function () {
     Sim.hooks.notify = toast;
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
+    Diplo.hooks.offer = (o, respond) => { offers.push({ o, respond }); showOffer(); };
   }
   function setMode(m) {
     Render.state.mode = m; Render.state.dirtyOwners = true;
@@ -235,10 +236,11 @@ const UI = (function () {
       <dl class="kv"><dt>Government</dt><dd>${oc.gov}</dd><dt>Capital</dt><dd>${oc.capital >= 0 ? esc(MAP.provs[oc.capital].name) : '—'}</dd>
       <dt>Provinces</dt><dd>${provCount}</dd><dt>Divisions</dt><dd>${divs}</dd><dt>Factories</dt><dd>${oc.civ + oc.mil}</dd>
       <dt>Manpower</dt><dd>${fmtN(oc.manpower)}</dd>${oc.overlord ? `<dt>Overlord</dt><dd>${esc(G.countries[oc.overlord].name)}</dd>` : ''}</dl>
-      ${canDeclare ? `<button class="btn danger" id="lp-war" style="width:100%" ${G.countries[G.player].pp < DECLARE_COST ? 'disabled' : ''}>Declare war · ${DECLARE_COST} PP</button>` : ''}`)) return;
+      ${owner !== G.player ? `<div style="display:flex;gap:6px"><button class="btn" id="lp-dip" style="flex:1">Diplomacy</button>${canDeclare ? `<button class="btn danger" id="lp-war" style="flex:1" ${G.countries[G.player].pp < warCost(owner) ? 'disabled' : ''}>Declare war${warCost(owner) ? ' · ' + warCost(owner) + ' PP' : ''}</button>` : ''}</div>` : ''}`)) return;
     $('#lp-close').onclick = () => { selectProvince(-1); };
     el.querySelectorAll('[data-army]').forEach(r => r.onclick = () => selectArmies([+r.dataset.army], false));
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
+    if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
   }
   function compStr(a) {
     const cnt = {};
@@ -246,20 +248,25 @@ const UI = (function () {
     return Object.keys(cnt).map(t => cnt[t] + ' ' + UNIT_TYPES[t].name).join(', ');
   }
 
+  function warCost(tag) { const G = Sim.G; return G.dip.claims[G.player + '>' + tag] > G.hour ? 0 : DECLARE_COST; }
   function confirmWar(tag) {
     const G = Sim.G;
-    const allies = Sim.family(tag).filter(t => t !== tag).map(t => G.countries[t].name);
+    const cost = warCost(tag), pact = Sim.hasPact(G.player, tag);
+    const joiners = Sim.coalition(tag).filter(t => t !== tag && !Sim.allied(t, G.player));
+    Diplo.guaranteedBy(tag).forEach(t => { if (!Sim.allied(t, G.player) && !joiners.includes(t)) joiners.push(t); });
     modal(`<h2 class="display" style="font-size:24px">Declare war on ${esc(G.countries[tag].name)}?</h2>
-      <p class="note">${allies.length ? 'These nations will join them: ' + esc(allies.join(', ')) + '.' : 'They have no allies who will join.'}
-      Costs ${DECLARE_COST} political power.${G.countries[G.player].ws < 0.3 ? ' War support is low: stability will drop.' : ''}</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Cancel</button><button class="btn danger" data-x="yes">Declare war</button></div>`,
+      <p class="note">${joiners.length ? 'These nations will fight alongside them: ' + esc(joiners.map(t => G.countries[t].name).join(', ')) + '.' : 'Nobody will join them.'}
+      ${cost ? 'Costs ' + cost + ' political power.' : 'Your refused demands justify this war, so it costs no political power.'}
+      ${pact ? ' You have a non-aggression pact with them: breaking it costs 15% stability.' : ''}${G.countries[G.player].ws < 0.3 ? ' War support is low: stability will drop.' : ''}</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Cancel</button><button class="btn danger" data-x="yes">${pact ? 'Break pact and declare war' : 'Declare war'}</button></div>`,
       x => {
         if (x !== 'yes') return;
         const c = G.countries[G.player];
-        if (c.pp < DECLARE_COST) return;
-        c.pp -= DECLARE_COST;
+        if (c.pp < cost) return;
+        if (!Sim.declareWar(G.player, tag, false, { breakPact: true })) { toast('War could not be declared.', -1, 'info'); return; }
+        c.pp -= cost;
+        if (pact) c.stab = Math.max(0, c.stab - 0.15);
         if (c.ws < 0.3) c.stab = Math.max(0, c.stab - 0.08);
-        Sim.declareWar(G.player, tag);
         Render.state.dirtyOwners = true;
         renderLeft(); renderRight(); refreshTop();
       });
@@ -359,24 +366,107 @@ const UI = (function () {
     return html;
   }
   let diploQuery = '';
-  function diploPanel() {
-    const G = Sim.G, me = G.countries[G.player];
-    const rows = Object.values(G.countries).filter(c => c.alive && c.tag !== G.player && c.name.toLowerCase().includes(diploQuery.toLowerCase()))
-      .sort((a, b) => (Sim.atWar(b.tag, G.player) - Sim.atWar(a.tag, G.player)) || a.name.localeCompare(b.name));
-    return `<p class="note">Treaties, trade and factions arrive with the diplomacy update. For now you can inspect nations and declare war.</p>
-      <input class="search" id="dp-search" placeholder="Search nations" value="${esc(diploQuery)}" aria-label="Search nations">
-      <div class="list">${rows.map(c => {
-        const canWar = !Sim.atWar(c.tag, G.player) && !Sim.allied(c.tag, G.player) && !G.over;
-        const divs = G.armies.filter(a => a.owner === c.tag).reduce((s, a) => s + a.units.length, 0);
-        return `<div class="row">${flagSVG(c.tag)}<div class="grow"><div class="click" data-cap="${c.capital}" style="cursor:pointer">${esc(c.name)}</div><div class="sub">${c.gov} · ${divs} divisions ${relationPill(c.tag)}</div></div>
-          ${canWar ? `<button class="btn sm danger" data-war="${c.tag}" ${me.pp < DECLARE_COST ? 'disabled' : ''}>War</button>` : ''}</div>`;
-      }).join('')}</div>`;
+  function relTag(v) { return `<span class="rel ${v >= 30 ? 'good' : v <= -30 ? 'bad' : ''}">${v > 0 ? '+' : ''}${v}</span>`; }
+  function dipStatus(tag) {
+    const G = Sim.G, out = [];
+    const f = Sim.factionOf(tag);
+    if (Sim.atWar(tag, G.player)) out.push('<span class="pill war">At war</span>');
+    else if (Sim.allied(tag, G.player)) out.push('<span class="pill ally">Ally</span>');
+    if (f) out.push(`<span class="pill">${esc(f.name)}</span>`);
+    if (Sim.hasPact(tag, G.player)) out.push('<span class="pill">Pact</span>');
+    if (G.dip.trade[Sim.pairKey(tag, G.player)] > G.hour) out.push('<span class="pill">Trade</span>');
+    if (G.dip.guar.some(x => x.by === G.player && x.of === tag)) out.push('<span class="pill">Guaranteed</span>');
+    if (G.dip.guar.some(x => x.by === tag && x.of === G.player)) out.push('<span class="pill">Guarantees you</span>');
+    return out.join(' ');
   }
+  function factionCard() {
+    const G = Sim.G, f = Sim.factionOf(G.player);
+    if (!f) {
+      const c = Diplo.can('create', G.player);
+      return `<div class="fac"><div class="label">Faction</div><div class="note" style="margin:2px 0 8px">You stand alone. A faction's members fight each other's wars.</div>
+        <button class="btn" data-act="create" ${c.ok ? '' : 'disabled'}>Create faction <small>${Diplo.COST.create} PP</small></button>${c.ok ? '' : `<div class="why">${esc(c.why)}</div>`}</div>`;
+    }
+    return `<div class="fac"><div class="label">Your faction</div><h3 class="display" style="font-size:18px;margin:2px 0 6px">${esc(f.name)}</h3>
+      <div class="flags">${f.members.map(t => `<span title="${esc(G.countries[t].name)}${t === f.leader ? ' (leader)' : ''}">${flagSVG(t)}</span>`).join('')}</div>
+      <div class="note">${f.members.length} member${f.members.length > 1 ? 's' : ''}, led by ${esc(G.countries[f.leader].name)}.${f.leader === G.player ? ' Open a nation to invite it.' : ''}</div>
+      <button class="btn sm" data-act="leave">Leave faction</button></div>`;
+  }
+  function diploPanel() {
+    const G = Sim.G;
+    if (sel.dip && G.countries[sel.dip]?.alive && sel.dip !== G.player) return nationPanel(sel.dip);
+    const rows = Object.values(G.countries).filter(c => c.alive && c.tag !== G.player && c.name.toLowerCase().includes(diploQuery.toLowerCase()))
+      .map(c => ({ c, r: Diplo.rel(G.player, c.tag), w: Sim.atWar(c.tag, G.player) }))
+      .sort((a, b) => (b.w - a.w) || (Sim.allied(b.c.tag, G.player) - Sim.allied(a.c.tag, G.player)) || a.c.name.localeCompare(b.c.name));
+    return `${factionCard()}
+      <input class="search" id="dp-search" placeholder="Search nations" value="${esc(diploQuery)}" aria-label="Search nations">
+      <div class="list">${rows.map(({ c, r }) => `<button class="row click dip-row" data-dip="${c.tag}">${flagSVG(c.tag)}<div class="grow"><div>${esc(c.name)}</div>
+        <div class="sub">${c.gov} · relations ${relTag(r)} ${dipStatus(c.tag)}</div></div><span class="chev">›</span></button>`).join('')}</div>`;
+  }
+  function nationPanel(tag) {
+    const G = Sim.G, c = G.countries[tag], me = G.player;
+    const r = Diplo.rel(me, tag), war = Sim.atWar(me, tag);
+    const divs = G.armies.filter(a => a.owner === tag).reduce((s, a) => s + a.units.length, 0);
+    const f = Sim.factionOf(tag), myF = Sim.factionOf(me);
+    const act = (key, label, opts = {}) => {
+      const chk = Diplo.can(opts.as || key, me, tag);
+      const cost = opts.cost !== undefined ? opts.cost : Diplo.COST[opts.as || key];
+      return `<div class="dact"><button class="btn ${opts.cls || ''}" data-act="${key}" ${chk.ok ? '' : 'disabled'}>${label}${cost ? ` <small>${cost} PP</small>` : ''}</button>
+        <div class="why">${chk.ok ? esc(opts.hint || '') : esc(chk.why)}</div></div>`;
+    };
+    const acts = [];
+    if (war) {
+      const ws = Diplo.warScore(me, tag);
+      acts.push(`<div class="note">War score ${ws > 0 ? '+' : ''}${ws}: ${ws >= 25 ? 'you are winning' : ws <= -25 ? 'you are losing' : 'the war is even'}.</div>`);
+      acts.push(act('peace', 'Offer white peace', { hint: 'All occupied land goes back' }));
+      acts.push(act('peacekeep', 'Demand they cede occupied land', { as: 'peace', hint: 'You keep what you hold' }));
+    } else {
+      acts.push(act('improve', 'Improve relations', { hint: '+15 relations' }));
+      acts.push(G.dip.trade[Sim.pairKey(me, tag)] > G.hour ? act('canceltrade', 'Cancel trade deal') : act('trade', 'Propose trade', { hint: '+10% equipment for both, one year' }));
+      acts.push(act('aid', 'Send military aid', { hint: Diplo.AID_EQ + ' equipment from your stock' }));
+      if (!Sim.allied(me, tag)) acts.push(act('pact', 'Non-aggression pact', { hint: 'No war between you for two years' }));
+      acts.push(G.dip.guar.some(x => x.by === me && x.of === tag) ? act('unguarantee', 'Revoke guarantee') : act('guarantee', 'Guarantee independence', { hint: 'You join any war against them' }));
+      if (f && !myF) acts.push(act('join', 'Ask to join the ' + esc(f.name), { hint: 'You join their wars too' }));
+      else if (myF && !f) acts.push(act('invite', 'Invite to the ' + esc(myF.name), { hint: Sim.isAtWar(tag) ? 'Your faction joins their current wars' : 'They join your wars' }));
+      if (!Sim.allied(me, tag)) {
+        const provs = Diplo.demandTargets(me, tag).map(id => MAP.provs[id].name);
+        acts.push(act('demand', 'Demand territory', { hint: provs.length ? provs.join(', ') : '' }));
+        const cost = warCost(tag), canW = !G.over && G.countries[me].pp >= cost;
+        acts.push(`<div class="dact"><button class="btn danger" data-war="${tag}" ${canW ? '' : 'disabled'}>${Sim.hasPact(me, tag) ? 'Break pact and declare war' : 'Declare war'}${cost ? ` <small>${cost} PP</small>` : ''}</button>
+          <div class="why">${canW ? (cost ? '' : 'Justified by your refused demands') : 'Needs ' + cost + ' political power'}</div></div>`);
+      }
+    }
+    return `<button class="btn sm" data-dipback>‹ All nations</button>
+      <div class="owner" style="margin:10px 0 4px">${flagSVG(tag)}<div><h3 class="display" style="font-size:20px;margin:0">${esc(c.name)}</h3><div class="sub note" style="margin:0">${c.gov} · ${divs} divisions</div></div></div>
+      <div class="meter"><span>Relations</span><div class="bar ${r >= 0 ? 'str' : 'bad'}"><i style="width:${Math.abs(r)}%"></i></div><span>${r > 0 ? '+' : ''}${r}</span></div>
+      <div style="margin:6px 0 10px;display:flex;flex-wrap:wrap;gap:4px">${dipStatus(tag) || '<span class="pill">No treaties</span>'}</div>
+      <div class="dacts">${acts.join('')}</div>`;
+  }
+  function doDiplo(key, tag) {
+    const G = Sim.G;
+    const action = key === 'peacekeep' ? 'peace' : key;
+    const r = Diplo.act(action, G.player, tag, key === 'peacekeep' ? { keep: true } : {});
+    toast(r.text, -1, r.accepted === false ? 'loss' : r.accepted ? 'win' : 'info');
+    Render.state.dirtyOwners = true;
+    renderRight(); renderLeft(); refreshTop();
+  }
+  // proposals from AI nations wait their turn, one dialog at a time
+  const offers = [];
+  function showOffer() {
+    if (!offers.length || !$('#modal').hidden) return;
+    const G = Sim.G, { o, respond } = offers.shift();
+    if (G.settings.autoPause && !G.paused) { G.paused = true; refreshTop(); }
+    const from = o.from;
+    modal(`<div class="owner">${flagSVG(from)}<h2 class="display" style="font-size:22px;margin:0">${esc(G.countries[from].name)}</h2></div>
+      <p style="margin:12px 0">${esc(o.text)}</p><p class="note">Your relations: ${relTag(Diplo.rel(G.player, from))}</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Decline</button><button class="btn primary" data-x="yes">Accept</button></div>`,
+      x => { const r = respond(x === 'yes'); toast(x === 'yes' ? (r && r.text) || 'Accepted.' : 'You declined the proposal from ' + G.countries[from].name + '.', -1, 'info'); Render.state.dirtyOwners = true; renderRight(); renderLeft(); refreshTop(); setTimeout(showOffer, 300); });
+  }
+
   function warsPanel() {
     const G = Sim.G;
     if (!G.wars.length) return '<p class="note">The world is at peace.</p>';
     return G.wars.map(w => {
-      const side = list => list.map(t => `<div class="owner" style="margin:3px 0">${flagSVG(t)}<span>${esc(G.countries[t].name)}</span></div>`).join('');
+      const side = list => { const f = list.map(t => Sim.factionOf(t)).find(Boolean); return (f ? `<div class="label">${esc(f.name)}</div>` : '') + list.map(t => `<div class="owner" style="margin:3px 0">${flagSVG(t)}<span>${esc(G.countries[t].name)}</span></div>`).join(''); };
       const occ = (list, enemies) => MAP.provs.filter(p => list.includes(p.core) && enemies.includes(G.owner[p.id])).length;
       const casA = w.attackers.reduce((s, t) => s + G.countries[t].losses, 0), casD = w.defenders.reduce((s, t) => s + G.countries[t].losses, 0);
       return `<div class="panel" style="padding:10px;margin-bottom:10px;box-shadow:none">
@@ -399,6 +489,9 @@ const UI = (function () {
       if (Sim.recruit(G.player, b.dataset.rec, t)) { renderRight(); refreshTop(); }
     });
     body.querySelectorAll('[data-war]').forEach(b => b.onclick = () => confirmWar(b.dataset.war));
+    body.querySelectorAll('[data-dip]').forEach(b => b.onclick = () => { sel.dip = b.dataset.dip; renderRight(); body.scrollTop = 0; });
+    body.querySelectorAll('[data-dipback]').forEach(b => b.onclick = () => { sel.dip = null; renderRight(); });
+    body.querySelectorAll('[data-act]').forEach(b => b.onclick = () => doDiplo(b.dataset.act, sel.dip));
     body.querySelectorAll('[data-cap]').forEach(b => b.onclick = () => selectProvince(+b.dataset.cap, true));
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
     const s = $('#dp-search');

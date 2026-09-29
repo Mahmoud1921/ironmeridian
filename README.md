@@ -38,6 +38,12 @@ After editing anything in `js/` or `css/`, run `python3 build.py` to regenerate 
 - It runs 20 seconds at top speed while panning and zooming, and measures frame times.
 - It checks that 3D troop figures show, glide while moving, get painted in the background, and draw fast on a crowded map.
 - It checks state invariants and script errors.
+- It works through every diplomacy action in the Nations tab:
+  - relations, aid and trade
+  - creating a faction and inviting a nation
+  - guarantees, peace, pacts and demands
+  - answering an AI proposal
+- It then lets the AI run its own diplomacy for months, and checks that the treaty rules still hold.
 - It repeats the key taps on a phone-sized screen.
 
 Options: `--quick`, `--seed N`, `--browser firefox` (where Firefox is installed). It exits non-zero on any failure, writes `tests/last-report.json`, and saves screenshots to `tests/shots/`.
@@ -47,3 +53,20 @@ Run it after every change and every phase. Fix what fails, then run it again unt
 ## Troop figures
 
 `js/figures.js` defines small low-poly 3D models: a squad of soldiers, a truck, a halftrack, a tank, a towed gun, an armoured car, and a transport plane for airborne troops on the move. A tiny flat-shaded rasterizer renders them once per nation into a sprite atlas, with 8 headings and 4 animation frames, in the nation's colours. The map only blits sprites. The atlases are painted a row at a time in the background, and at most 28 are kept.
+
+## Diplomacy
+
+`js/diplo.js` handles relations between nations, which run from -100 to 100. Governments start friendly or hostile to each other, and actions move relations up or down over time.
+
+Every action goes through `Diplo.act(action, from, to)`, so the player and the AI use the same rules. When one side makes a proposal, the other side answers through `Diplo.answer`. A proposal made to the player opens a dialog.
+
+The actions are:
+- improve relations
+- send military aid
+- trade (+10% equipment for both sides; Phase 3 will turn this into a resource trade)
+- non-aggression pact
+- guarantee independence
+- create, join, invite to and leave a faction
+- demand territory (a refusal lets you declare war for free)
+- declare war (faction members and guarantors join in)
+- offer white peace, or peace where you keep the land you occupy

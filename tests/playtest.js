@@ -276,6 +276,116 @@ async function desktopRun(browser) {
   await page.close();
 }
 
+// ---------- diplomacy: every action through the Nations tab, AI answers, then a long AI run ----------
+async function diplomacyRun(browser) {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(FILE);
+  await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
+  await clickEl(page, '#start .ncard[data-tag="GER"]');
+  await clickEl(page, '#st-play');
+  await waitFor(page, () => Sim.G && !document.getElementById('hud').hidden);
+  // plenty of political power so every action can be tried; relations are left as they are
+  await page.evaluate(() => { Sim.G.countries.GER.pp = 900; Sim.G.countries.GER.equipment = 5000; });
+  const openNation = async tag => {
+    if (!(await page.locator('.tab[data-tab="diplo"].on').count())) await clickEl(page, '.tab[data-tab="diplo"]');
+    if (await page.locator('[data-dipback]').count()) await clickEl(page, '[data-dipback]');
+    await page.fill('#dp-search', '');
+    await page.evaluate(() => { document.getElementById('dp-search').dispatchEvent(new Event('input')); });
+    return clickEl(page, `[data-dip="${tag}"]`);
+  };
+  const act = async key => { const ok = await clickEl(page, `[data-act="${key}"]:not([disabled])`); await page.waitForTimeout(150); return ok; };
+  const G = (fn, arg) => page.evaluate(fn, arg);
+
+  check('diplomacy: nation page opens from the Nations tab', await openNation('ITA') && await waitFor(page, () => !!document.querySelector('[data-act="improve"]')));
+  const r0 = await G(() => Diplo.rel('GER', 'ITA'));
+  await act('improve');
+  check('diplomacy: improve relations raises relations', await G(() => Diplo.rel('GER', 'ITA')) > r0);
+
+  await act('aid');
+  check('diplomacy: military aid ships equipment', await G(() => Sim.G.countries.ITA.equipment) > 0 && await G(() => Sim.G.countries.GER.equipment < 5000));
+
+  await act('trade');
+  check('diplomacy: trade proposal gets an answer', await G(() => Sim.G.dip.trade[Sim.pairKey('GER', 'ITA')] > Sim.G.hour || Sim.G.dip.cd['trade|GER|ITA'] > Sim.G.hour));
+
+  // faction: create, invite a friend (relations raised so the answer is yes), and check they fight together
+  await openNation('ITA');
+  if (await page.locator('[data-dipback]').count()) await clickEl(page, '[data-dipback]');
+  await act('create');
+  check('diplomacy: faction created', await G(() => !!Sim.factionOf('GER')));
+  await G(() => { Sim.G.dip.rel[Sim.pairKey('GER', 'ITA')] = 80; });
+  await openNation('ITA'); await act('invite');
+  check('diplomacy: invited nation joins the faction', await G(() => Sim.allied('GER', 'ITA') && Sim.factionOf('ITA') === Sim.factionOf('GER')));
+
+  // guarantee a small nation, then someone attacks it: the guarantor joins the war
+  const small = await G(() => Object.values(Sim.G.countries).find(c => c.alive && c.civ + c.mil < 20 && !Sim.allied(c.tag, 'GER') && !Sim.isAtWar(c.tag) && c.tag !== 'ETH').tag);
+  await openNation(small); await act('guarantee');
+  check('diplomacy: guarantee recorded', await G(t => Sim.G.dip.guar.some(x => x.by === 'GER' && x.of === t), small));
+  await G(t => Sim.declareWar('SPA', t, true), small);
+  check('diplomacy: guarantor joins a war on the guaranteed nation', await G(() => Sim.atWar('GER', 'SPA')));
+  check('diplomacy: faction members join their leader\'s wars', await G(() => Sim.atWar('ITA', 'SPA')));
+
+  // peace: a white peace between even sides is accepted and ends the fighting
+  await openNation('SPA');
+  check('diplomacy: war score shown while at war', await page.locator('text=War score').count() > 0);
+  await act('peace');
+  const peace = await G(() => !Sim.atWar('GER', 'SPA') || Sim.G.dip.cd['peace|GER|SPA'] > Sim.G.hour);
+  check('diplomacy: peace offer gets an answer', peace);
+
+  // non-aggression pact, then the declare-war button asks to break it
+  await G(() => { Sim.G.dip.rel[Sim.pairKey('GER', 'SOV')] = 90; });
+  await openNation('SOV'); await act('pact');
+  check('diplomacy: non-aggression pact signed', await G(() => Sim.hasPact('GER', 'SOV')));
+  check('diplomacy: an AI cannot declare war through a pact', await G(() => Sim.declareWar('SOV', 'GER', true) === null));
+  await openNation('SOV');
+  check('diplomacy: declaring war offers to break the pact', await page.locator('[data-war="SOV"]', { hasText: 'Break pact' }).count() > 0);
+
+  // demand territory from the weakest neighbour: either they cede land or refuse (which justifies war)
+  const weak = await G(() => { const n = new Set(); Sim.MAP.provs.forEach(p => { if (Sim.G.owner[p.id] === 'GER') p.nb.forEach(q => n.add(Sim.G.owner[q])); }); return [...n].filter(t => t !== 'GER' && !Sim.allied(t, 'GER') && !Sim.atWar(t, 'GER')).sort((a, b) => Diplo.power(a) - Diplo.power(b))[0]; });
+  if (weak) {
+    const before = await G(() => Sim.G.owner.filter(o => o === 'GER').length);
+    await openNation(weak); await act('demand');
+    const after = await G(() => Sim.G.owner.filter(o => o === 'GER').length);
+    const claim = await G(t => Sim.G.dip.claims['GER>' + t] > Sim.G.hour, weak);
+    check('diplomacy: territorial demand is ceded or refused with a claim', after > before || claim, after > before ? 'ceded ' + (after - before) : 'refused, war now free');
+  }
+
+  // an AI proposal to the player opens a dialog; accepting it takes effect
+  const prop = await G(() => { const t = Object.values(Sim.G.countries).find(c => c.alive && c.tag !== 'GER' && !Sim.atWar(c.tag, 'GER') && !(Sim.G.dip.trade[Sim.pairKey(c.tag, 'GER')] > Sim.G.hour) && Diplo.can('trade', c.tag, 'GER').ok); if (!t) return null; t.pp = 50; Diplo.act('trade', t.tag, 'GER'); return t.tag; });
+  if (prop) {
+    check('diplomacy: an AI proposal opens a dialog', await waitFor(page, () => !document.getElementById('modal').hidden));
+    await clickEl(page, '#modal [data-x="yes"]');
+    check('diplomacy: accepting the proposal takes effect', await waitFor(page, t => Sim.G.dip.trade[Sim.pairKey(t, 'GER')] > Sim.G.hour, prop));
+  }
+
+  // let the AI run its own diplomacy for a while, answering any dialogs, then check the rules still hold
+  await G(() => { Sim.G.settings.autoPause = false; Sim.G.speed = 5; Sim.G.paused = false; Sim.G.hour += 300 * 24; });
+  const t0 = Date.now();
+  while (Date.now() - t0 < (QUICK ? 6000 : 15000)) {
+    if (await page.locator('#modal:not([hidden]) [data-x="no"]').count()) await clickEl(page, '#modal [data-x="no"]');
+    await page.waitForTimeout(500);
+  }
+  const dip = await G(() => {
+    const g = Sim.G, bad = [];
+    for (const f of g.dip.factions) {
+      if (!f.members.length) bad.push(f.name + ' is empty');
+      if (!f.members.includes(f.leader)) bad.push(f.name + ' leader is not a member');
+      for (const m of f.members) { if (g.dip.facOf[m] !== f.id) bad.push(m + ' faction index is wrong'); if (!g.countries[m].alive) bad.push(m + ' is dead but in ' + f.name); }
+      for (const a of f.members) for (const b of f.members) if (a < b && Sim.atWar(a, b)) bad.push(a + ' and ' + b + ' share ' + f.name + ' but are at war');
+    }
+    for (const k of Object.keys(g.dip.pacts)) { const [a, b] = k.split('|'); if (g.dip.pacts[k] > g.hour && Sim.atWar(a, b)) bad.push('pact ' + k + ' but at war'); }
+    for (const a of Object.keys(g.countries)) for (const b of Object.keys(g.countries)) if (a < b && g.countries[a].alive && g.countries[b].alive && Sim.atWar(a, b) && Sim.allied(a, b)) bad.push(a + ' and ' + b + ' are allied and at war');
+    for (const a of g.armies) { const o = g.owner[a.prov]; if (o !== a.owner && !Sim.allied(o, a.owner) && !Sim.atWar(o, a.owner)) bad.push('army of ' + a.owner + ' stands in neutral ' + o); }
+    return { bad, factions: g.dip.factions.map(f => f.name + ' (' + f.members.length + ')'), pacts: Object.keys(g.dip.pacts).length, trades: Object.keys(g.dip.trade).length };
+  });
+  check('diplomacy: the AI forms factions and treaties', dip.factions.length > 1 || dip.pacts + dip.trades > 3, dip.factions.join(', ') + ` · ${dip.pacts} pacts · ${dip.trades} trade deals`);
+  check('diplomacy: rules hold after a long AI run', dip.bad.length === 0, dip.bad.slice(0, 4).join('; '));
+  check('diplomacy: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/diplomacy.png') });
+  await page.close();
+}
+
 async function mobileRun(browser) {
   const ctx = await browser.newContext({ viewport: { width: 400, height: 820 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
@@ -303,7 +413,7 @@ async function mobileRun(browser) {
   let browser;
   try { browser = await launcher.launch(); } catch (e) { console.error('Cannot launch ' + BROWSER + ': ' + e.message.split('\n')[0]); process.exit(2); }
   console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''})`);
-  try { await desktopRun(browser); await mobileRun(browser); }
+  try { await desktopRun(browser); await diplomacyRun(browser); await mobileRun(browser); }
   catch (e) { check('harness: completed without crashing', false, e.message.split('\n')[0]); }
   await browser.close();
   const failed = results.filter(r => !r.ok);

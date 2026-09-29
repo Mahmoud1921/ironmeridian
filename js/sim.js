@@ -35,7 +35,9 @@ const Sim = (function () {
       countries: {}, owner: MAP.provs.map(p => p.owner),
       armies: [], nextArmy: 1, battles: [], nextBattle: 1, wars: [], nextWar: 1,
       log: [], stats: { captured: 0, lost: 0, battlesWon: 0, battlesLost: 0 },
-      settings: { autoPause: true, pauseWar: true, pauseBattle: false, pauseLoss: true, pauseCapitulation: true }
+      settings: { autoPause: true, pauseWar: true, pauseBattle: false, pauseLoss: true, pauseCapitulation: true },
+      // diplomacy: relation changes, factions, pacts, guarantees, trade deals, cooldowns and war claims
+      dip: { rel: {}, factions: [], facOf: {}, nextFac: 1, pacts: {}, guar: [], trade: {}, cd: {}, claims: {} }
     };
     for (const d of COUNTRY_DEFS) {
       const capital = MAP.provs.find(p => p.capital && p.cityTag === d.tag);
@@ -120,9 +122,21 @@ const Sim = (function () {
     }
     return false;
   }
+  function factionOf(tag) { const id = G.dip.facOf[root(tag)]; return id ? G.dip.factions.find(f => f.id === id) || null : null; }
+  const pairKey = (a, b) => a < b ? a + '|' + b : b + '|' + a;
+  function hasPact(a, b) { const u = G.dip.pacts[pairKey(root(a), root(b))]; return !!u && u > G.hour; }
+  // everyone who fights alongside a nation: its overlord's family plus its faction
+  function coalition(tag) {
+    const out = new Set(family(tag));
+    const f = factionOf(tag);
+    if (f) for (const m of f.members) if (G.countries[m] && G.countries[m].alive) family(m).forEach(t => out.add(t));
+    return [...out];
+  }
   function allied(a, b) {
     if (a === b) return true;
     if (root(a) === root(b)) return true;
+    const fa = G.dip.facOf[root(a)];
+    if (fa && fa === G.dip.facOf[root(b)]) return true;
     for (const w of G.wars) { const sa = sideOf(w, a); if (sa && sa === sideOf(w, b)) return true; }
     return false;
   }
@@ -138,9 +152,18 @@ const Sim = (function () {
   function isAtWar(tag) { return G.wars.some(w => sideOf(w, tag)); }
   function canEnter(tag, prov) { const o = G.owner[prov]; return o === tag || allied(tag, o) || atWar(tag, o); }
 
-  function declareWar(att, def, silent) {
+  function declareWar(att, def, silent, opts) {
     if (att === def || atWar(att, def) || allied(att, def)) return null;
-    const A = family(att), D = family(def).filter(t => !A.includes(t));
+    if (hasPact(att, def) && !(opts && opts.breakPact)) return null;
+    const A = coalition(att), D = coalition(def).filter(t => !A.includes(t));
+    // guarantors of anyone attacked come to their defence
+    for (const g of G.dip.guar) {
+      if (!D.includes(g.of) || A.includes(g.by) || D.includes(g.by) || !G.countries[g.by]?.alive) continue;
+      for (const t of coalition(g.by)) if (!A.includes(t) && !D.includes(t)) D.push(t);
+    }
+    // a war ends every pact between the two sides and sours relations
+    for (const a of A) for (const d of D) { delete G.dip.pacts[pairKey(root(a), root(d))]; delete G.dip.trade[pairKey(a, d)]; }
+    const rk = pairKey(att, def); G.dip.rel[rk] = (G.dip.rel[rk] || 0) - 50;
     const war = { id: G.nextWar++, attackers: A, defenders: D, leaderA: att, leaderD: def, goal: 'Conquer ' + G.countries[def].name, start: G.hour };
     const total = A.length + D.length;
     war.name = total >= 8 ? 'World War' : G.countries[att].name + '–' + G.countries[def].name + ' War';
@@ -442,6 +465,7 @@ const Sim = (function () {
     G.ownVer++;
     for (const a of G.armies.filter(a => a.owner === tag)) removeArmy(a);
     c.alive = false; c.queue = [];
+    dropFromDiplomacy(tag);
     for (const o of Object.values(G.countries)) if (o.overlord === tag) o.overlord = null;
     for (const w of G.wars) { w.attackers = w.attackers.filter(t => t !== tag); w.defenders = w.defenders.filter(t => t !== tag); }
     const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
@@ -451,6 +475,16 @@ const Sim = (function () {
     for (const w of ended) notify('The ' + w.name + ' has ended.', -1, 'info', false);
     if (tag === G.player) { G.over = true; G.paused = true; hooks.gameOver(false); }
     else if (!Object.values(G.countries).some(o => o.alive && o.tag !== G.player && atWar(o.tag, G.player)) && ended.some(w => sideOf(w, G.player) !== null)) { /* player's war ended */ }
+  }
+
+  function dropFromDiplomacy(tag) {
+    const D = G.dip;
+    for (const f of D.factions) f.members = f.members.filter(t => t !== tag);
+    delete D.facOf[tag];
+    D.factions = D.factions.filter(f => { if (!f.members.length) return false; if (!f.members.includes(f.leader)) f.leader = f.members[0]; return true; });
+    D.guar = D.guar.filter(g => g.by !== tag && g.of !== tag);
+    for (const k of Object.keys(D.pacts)) if (k.split('|').includes(tag)) delete D.pacts[k];
+    for (const k of Object.keys(D.trade)) if (k.split('|').includes(tag)) delete D.trade[k];
   }
 
   // ---------- supply ----------
@@ -696,6 +730,7 @@ const Sim = (function () {
       const war = isAtWar(c.tag);
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
+    if (typeof Diplo !== 'undefined') Diplo.dayTick();
     playerOrders();
   }
 
@@ -711,6 +746,7 @@ const Sim = (function () {
     get G() { return G; }, set G(v) { G = v; },
     get MAP() { return MAP; },
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,
+    factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
     orderMove, orderHold, orderDefend, orderRetreat, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply
