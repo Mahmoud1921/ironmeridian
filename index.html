@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--BUILD:HEAD-->
+<title>Iron Meridian</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Saira+Stencil+One&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<!--/BUILD:HEAD-->
+</head>
+<body>
+<!--BUILD:BODY-->
+<div id="app">
+  <canvas id="map" aria-label="World map"></canvas>
+
+  <div id="hud" hidden>
+    <header id="topbar">
+      <button id="tb-nation" aria-label="Go to capital"></button>
+      <div id="tb-stats"></div>
+      <div id="tb-clock">
+        <button class="iconbtn" id="tb-slower" aria-label="Slower"><svg viewBox="0 0 16 16"><path d="M3 7h10v2H3z" fill="currentColor"/></svg></button>
+        <button class="iconbtn" id="tb-play" aria-label="Resume"></button>
+        <button class="iconbtn" id="tb-faster" aria-label="Faster"><svg viewBox="0 0 16 16"><path d="M7 3h2v4h4v2H9v4H7V9H3V7h4z" fill="currentColor"/></svg></button>
+        <div id="tb-date" class="num"></div>
+        <div id="tb-speed" aria-label="Game speed"></div>
+      </div>
+      <button class="iconbtn" id="tb-menu" aria-label="Menu"><svg viewBox="0 0 16 16"><path d="M2 3h12v2H2zM2 7h12v2H2zM2 11h12v2H2z" fill="currentColor"/></svg></button>
+    </header>
+
+    <aside id="leftpanel" class="panel" hidden></aside>
+
+    <aside id="rightpanel" class="panel">
+      <nav id="rp-tabs">
+        <button class="tab on" data-tab="army">Army</button>
+        <button class="tab" data-tab="recruit">Recruit</button>
+        <button class="tab" data-tab="diplo">Nations</button>
+        <button class="tab" data-tab="wars">Wars<span class="badge" id="tab-wars-badge" hidden></span></button>
+        <button class="tab" data-tab="log">Log</button>
+      </nav>
+      <div id="rp-body"></div>
+    </aside>
+
+    <div id="mapctl">
+      <button class="btn sm active" id="mc-pol" title="Political map">Political</button>
+      <button class="btn sm" id="mc-ter" title="Terrain map">Terrain</button>
+      <button class="btn sm" id="mc-in" aria-label="Zoom in">+</button>
+      <button class="btn sm" id="mc-out" aria-label="Zoom out">−</button>
+      <button class="btn sm" id="mc-world" title="Show the whole world">World</button>
+    </div>
+
+    <footer id="bottombar">
+      <div id="unittray" class="panel"></div>
+      <div id="armytray" class="panel"></div>
+    </footer>
+    <div id="toasts" aria-live="polite"></div>
+    <div id="hint" hidden></div>
+    <div id="battle" class="panel" hidden></div>
+  </div>
+
+  <div id="start" hidden>
+    <section id="st-left">
+      <div id="st-title">IRON<br>MERIDIAN<small>THE WORLD · 1936</small></div>
+      <p class="note">Choose a nation to lead. Click a card, or click any country on the map.</p>
+      <div class="label">Great powers and contenders</div>
+      <div class="majors" id="st-majors"></div>
+      <div class="label">All other nations</div>
+      <input class="search" id="st-search" placeholder="Search nations" aria-label="Search nations">
+      <div id="st-all"></div>
+    </section>
+    <div id="st-map-gap"></div>
+    <section id="st-right">
+      <svg id="st-flag"></svg>
+      <div id="st-name"></div>
+      <div class="label" id="st-gov"></div>
+      <div id="st-diff" style="display:flex;align-items:center;gap:10px"></div>
+      <div class="bignums" id="st-nums"></div>
+      <div class="label">Resources</div>
+      <div class="res" id="st-res"></div>
+      <div class="label">Starting situation</div>
+      <p id="st-sit" style="margin:0"></p>
+      <button class="btn primary" id="st-play">Play</button>
+    </section>
+  </div>
+
+  <div id="modal" hidden></div>
+  <div id="loading"><div class="display">IRON MERIDIAN</div><div class="label">Surveying the world…</div></div>
+</div>
+<!--/BUILD:BODY-->
+<!--BUILD:SCRIPTS-->
+<script src="js/geo.js"></script>
+<script src="js/countries.js"></script>
+<script src="js/mapgen.js"></script>
+<script src="js/units.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+<!--/BUILD:SCRIPTS-->
+</body>
+</html>
