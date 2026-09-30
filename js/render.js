@@ -54,7 +54,8 @@ const Render = (function () {
   function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
   function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
   const rgbStr = c => 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
-  let lastOwn = null, lastMode = null;
+  let lastOwn = null, lastMode = null, lastDead = 0, lastDeadHour = -1;
+  const deadCount = () => { let n = 0; for (const t in Sim.G.countries) if (!Sim.G.countries[t].alive) n++; return n; };
   function provColor(p, owner) {
     const T = TERRAIN[p.terrain];
     const j = ((p.id * 2654435761) >>> 0) % 100 / 100 - 0.5;
@@ -67,11 +68,13 @@ const Render = (function () {
     const G = Sim.G;
     const own = G ? G.owner : MAP.provs.map(p => p.owner);
     let changed = null;
-    if (lastOwn && lastMode === state.mode && lastOwn.length === own.length) {
+    // occupation stripes go once a nation is gone for good: its land is simply the conqueror's now
+    const dead = G ? deadCount() : 0;
+    if (lastOwn && lastMode === state.mode && lastOwn.length === own.length && dead === lastDead) {
       changed = [];
       for (let i = 0; i < own.length; i++) if (own[i] !== lastOwn[i]) changed.push(i);
     }
-    lastOwn = own.slice(); lastMode = state.mode;
+    lastOwn = own.slice(); lastMode = state.mode; lastDead = dead;
     if (!changed) fillCache = MAP.provs.map(p => provColor(p, own[p.id]));
     else for (const i of changed) fillCache[i] = provColor(MAP.provs[i], own[i]);
     lmCountryBorders = MAP.lms.map(() => new Path2D());
@@ -233,7 +236,7 @@ const Render = (function () {
         if (bb[2] < vx0 || bb[0] > vx1 || bb[3] < vy0 || bb[1] > vy1) continue;
         g.fillStyle = fillCache[p.id];
         g.fill(provPaths[p.id]);
-        if (G && state.mode === 'political' && G.owner[p.id] !== p.core) {
+        if (G && state.mode === 'political' && G.owner[p.id] !== p.core && G.countries[p.core] && G.countries[p.core].alive) {
           const pat = g.createPattern(stripes(COUNTRY_BY_TAG[p.core].color), 'repeat');
           pat.setTransform(new DOMMatrix().scale(1 / z));
           g.globalAlpha = 0.55; g.fillStyle = pat; g.fill(provPaths[p.id]); g.globalAlpha = 1;
@@ -306,7 +309,7 @@ const Render = (function () {
 
   function draw() {
     stepCamera();
-    if (state.dirtyOwners || !lmCountryBorders.length) recolor();
+    if (state.dirtyOwners || !lmCountryBorders.length || (Sim.G && Sim.G.hour !== lastDeadHour && (lastDeadHour = Sim.G.hour, deadCount() !== lastDead))) recolor();
     if (!layer) buildLayer();
     const G = Sim.G;
     const z = cam.z;
@@ -342,6 +345,7 @@ const Render = (function () {
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
+    if (G && G.ind) drawBuildings(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
     if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
@@ -443,6 +447,81 @@ const Render = (function () {
         if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
         ctx.fillStyle = 'rgba(20,18,12,0.55)'; ctx.fillText(p.name, sx, sy + 16);
       }
+    }
+  }
+
+  // ---------- buildings: each finished industry or military work stands in its own province ----------
+  const bSpots = new Map();
+  function spotsFor(p) {
+    let s = bSpots.get(p.id); if (s) return s;
+    s = [];
+    const sp = p.spacing || 1;
+    for (let i = 0; i < 40 && s.length < 8; i++) {
+      const ring = i < 16 ? 0.48 : i < 30 ? 0.34 : 0.22;
+      const an = i * 2.39996 + p.id * 0.61;
+      const x = p.x + Math.cos(an) * sp * ring, y = p.y + Math.sin(an) * sp * ring * 0.85;
+      if (provinceAt(x, y) !== p.id) continue;
+      if (s.some(q => Math.hypot(q[0] - x, q[1] - y) < sp * 0.2)) continue;
+      s.push([x, y]);
+    }
+    for (let i = 0; s.length < 8; i++) s.push([p.x + (i - 2) * sp * 0.12, p.y + sp * 0.2]);
+    bSpots.set(p.id, s);
+    return s;
+  }
+  function buildingsIn(pid) {
+    const I = Sim.G.ind[pid], out = [];
+    if (I) for (const k of Economy.KIND_KEYS) if (I[k]) out.push([k, I[k]]);
+    for (const k of Economy.INFRA_KEYS) { const l = Economy.infra(pid, k); if (l) out.push([k, l]); }
+    return out;
+  }
+  let bDrawn = 0;
+  function drawBuildings(z, vx0, vy0, vx1, vy1) {
+    bDrawn = 0;
+    if (typeof Buildings === 'undefined' || typeof Economy === 'undefined') return;
+    const G = Sim.G, era = Economy.eraId();
+    const me = G.countries[G.player];
+    const pend = new Map();
+    if (me && me.eco && me.eco.queue) for (const q of me.eco.queue) { if (!pend.has(q.prov)) pend.set(q.prov, []); pend.get(q.prov).push(q); }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const p of MAP.provs) {
+      if (p.x < vx0 - 3 || p.x > vx1 + 3 || p.y < vy0 - 3 || p.y > vy1 + 3) continue;
+      const px = (p.spacing || 1) * z;
+      if (px < 30) continue;
+      const list = buildingsIn(p.id), q = pend.get(p.id);
+      if (!list.length && !q) continue;
+      const size = Math.max(20, Math.min(44, px * 0.36));
+      const col = COUNTRY_BY_TAG[G.owner[p.id]] ? COUNTRY_BY_TAG[G.owner[p.id]].color : '#8a7a5c';
+      const spots = spotsFor(p).slice(0, px < 50 ? 3 : px < 80 ? 5 : 8);
+      let n = 0;
+      const put = (kind, count, job) => {
+        if (n >= spots.length) return;
+        const [wx, wy] = spots[n++];
+        const [sx, sy] = worldToScreen(wx, wy);
+        if (sx < -size || sx > W + size || sy < -size || sy > H + size) return;
+        const x = sx - size / 2, y = sy - size * 0.8;
+        const img = Buildings.icon(kind, era, col, size * dpr, (p.id + n) % 4);
+        if (!img) return;
+        if (job) ctx.globalAlpha = 0.5;
+        bDrawn++;
+        ctx.drawImage(img, x, y, size, size);
+        ctx.globalAlpha = 1;
+        if (job) {
+          // scaffolding and a ring that fills as the work goes on
+          ctx.strokeStyle = 'rgba(214,176,82,0.95)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x + size * 0.15, y + size * 0.9); ctx.lineTo(x + size * 0.15, y + size * 0.25); ctx.moveTo(x + size * 0.85, y + size * 0.9); ctx.lineTo(x + size * 0.85, y + size * 0.25);
+          ctx.moveTo(x + size * 0.15, y + size * 0.45); ctx.lineTo(x + size * 0.85, y + size * 0.45); ctx.moveTo(x + size * 0.15, y + size * 0.7); ctx.lineTo(x + size * 0.85, y + size * 0.7); ctx.stroke();
+          const f = Math.max(0, Math.min(1, 1 - job.left / job.total)), r = Math.max(3, size * 0.16), cx = x + size - r * 0.4, cy = y + r;
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = 'rgba(20,18,14,0.8)'; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.closePath(); ctx.fillStyle = '#d6b052'; ctx.fill();
+        } else if (count > 1 && size >= 16) {
+          const bx = x + size - 3, by = y + size - 3;
+          ctx.font = '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif';
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,16,12,0.9)'; ctx.strokeText(count, bx, by);
+          ctx.fillStyle = '#f1ead2'; ctx.fillText(count, bx, by);
+        }
+      };
+      if (q) for (const j of q) put(j.kind, 1, j);
+      for (const [k, c] of list) put(k, c, null);
     }
   }
 
@@ -971,5 +1050,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

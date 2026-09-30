@@ -496,6 +496,30 @@ async function economyRun(browser) {
   const done = await G(() => { const c = Sim.G.countries.GER; const before = Sim.G.ind.reduce((s, I, i) => s + (I && Sim.G.owner[i] === 'GER' ? (I.farm || 0) : 0), 0); for (let d = 0; d < 120 && c.eco.queue.some(q => q.kind === 'farm'); d++) for (let h = 0; h < 24; h++) Sim.hourTick(); return Sim.G.ind.reduce((s, I, i) => s + (I && Sim.G.owner[i] === 'GER' ? (I.farm || 0) : 0), 0) - before; });
   check('economy: construction completes', done >= 1, done + ' farm(s) built');
 
+  // buildings: icons in the build list, a Build in picker, and finished works drawn on the map
+  await G(() => UI.openTab('econ'));
+  check('economy: every build button has a painted icon', await waitFor(page, () => { const l = [...document.querySelectorAll('#rp-body [data-build] canvas[data-bicon]')]; return l.length >= 6 && l.length === document.querySelectorAll('#rp-body [data-build]').length && l.every(c => c.dataset.done); }, null, 1500));
+  const bpid = await G(() => { const g = Sim.G; const p = Sim.MAP.provs.find(p => g.owner[p.id] === 'GER' && !p.capital && Economy.canBuild('GER', 'fort', p.id).ok); return p ? p.id : -1; });
+  await G(id => { const s = document.querySelector('#build-prov'); s.value = id; s.dispatchEvent(new Event('change')); }, bpid);
+  await page.waitForTimeout(300);
+  const q2 = await G(() => Sim.G.countries.GER.eco.queue.length);
+  await clickEl(page, '#rp-body [data-build="fort"]:not([disabled])');
+  check('economy: Build in picker builds in the chosen province', bpid >= 0 && await waitFor(page, ([q, id]) => { const Q = Sim.G.countries.GER.eco.queue; return Q.length === q + 1 && Q[Q.length - 1].prov === id; }, [q2, bpid]));
+  await G(p => { const pr = Sim.MAP.provs[p]; Object.assign(Render.cam, { x: pr.x, y: pr.y, z: 50, tx: pr.x, ty: pr.y, tz: 50, anim: false }); }, bpid);
+  check('map: buildings are drawn in their provinces', await waitFor(page, () => Render._bld() > 0, null, 1500));
+  await G(() => { const s = document.querySelector('#build-prov'); s.value = -1; s.dispatchEvent(new Event('change')); });
+  // troops gather in the province the player picks
+  await clickEl(page, '.tab[data-tab="recruit"]');
+  await waitFor(page, () => !!document.querySelector('#rec-prov'), null, 1500);
+  const spid = await G(() => { const g = Sim.G, c = g.countries.GER; c.manpower += 1e6; c.equipment += 1e5; const p = Sim.MAP.provs.find(p => g.owner[p.id] === 'GER' && p.id !== c.capital); const s = document.querySelector('#rec-prov'); s.value = p.id; s.dispatchEvent(new Event('change')); return p.id; });
+  await page.waitForTimeout(300);
+  const r0 = await G(() => Sim.G.countries.GER.queue.length);
+  await clickEl(page, '#rp-body [data-rec]:not([disabled])');
+  const spawned = await waitFor(page, ([q, id]) => { const Q = Sim.G.countries.GER.queue; return Q.length === q + 1 && Q[Q.length - 1].prov === id; }, [r0, spid]);
+  const readyAt = spawned && await G(id => { const c = Sim.G.countries.GER; c.queue.forEach(q => { if (q.prov === id) q.hours = 1; }); for (let h = 0; h < 3 && c.queue.some(q => q.prov === id); h++) Sim.hourTick(); return Sim.G.owner[id] !== 'GER' || Sim.G.armies.some(a => a.owner === 'GER' && a.prov === id && a.reserve); }, spid);
+  check('train: new troops gather in the chosen province', spawned && readyAt);
+  await clickEl(page, '.tab[data-tab="econ"]');
+
   // buy fuel from a nation with a surplus, through the Nations tab trade form (after freeing a trade slot)
   await G(() => { for (const d of Economy.dealsOf('GER')) Economy.cancel(d.id, null, 'gone'); });
   const seller = await G(() => { const t = Object.values(Sim.G.countries).filter(c => c.alive && c.tag !== 'GER' && !c.eco.none && !Sim.atWar(c.tag, 'GER') && Economy.balance(c.tag, 'fuel') > 3 && Economy.canDeal('GER', c.tag, null).ok).sort((a, b) => Economy.balance(b.tag, 'fuel') - Economy.balance(a.tag, 'fuel'))[0]; if (!t) return null; Sim.G.dip.rel[Sim.pairKey('GER', t.tag)] = 60; return t.tag; });

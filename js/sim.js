@@ -69,6 +69,7 @@ const Sim = (function () {
     if (typeof Navy !== 'undefined') Navy.setup();
     if (typeof Air !== 'undefined') Air.setup();
     if (typeof Events !== 'undefined') Events.setup();
+    if (typeof Routes !== 'undefined') Routes.setup();
     return G;
   }
 
@@ -79,6 +80,7 @@ const Sim = (function () {
     G = g;
     rng = mulberry32(1936 + g.hour * 13 + g.player.charCodeAt(0) * 7 + g.player.charCodeAt(1));
     if (typeof Economy !== 'undefined') Economy.restore();
+    if (typeof Routes !== 'undefined') { Routes.restore(); if (!G.routes.length) Routes.setup(); }
     if (typeof Navy !== 'undefined' && G.fleets) Navy.restore();
     if (typeof Air !== 'undefined') Air.restore();
     if (typeof Events !== 'undefined' && !G.ev) Events.setup();
@@ -636,18 +638,24 @@ const Sim = (function () {
   function supplyReach(tag, prov) {
     let best = sourceValue(tag, prov);
     if (best >= 1) return 1;
-    const seen = new Set([prov]); let fr = [prov];
+    // supply fades 12% a province, or only 6% along a railway
+    const RT = typeof Routes !== 'undefined' && Routes.any();
+    const fac = new Map([[prov, 1]]); let fr = [prov];
     for (let d = 1; d <= 7 && fr.length; d++) {
-      const f = Math.pow(0.88, d);
-      if (f <= best) break;
       const nx = [];
-      for (const q of fr) for (const n of MAP.provs[q].nb) {
-        if (seen.has(n)) continue; seen.add(n);
-        const o = G.owner[n];
-        if (o !== tag && !allied(tag, o)) continue;
-        const v = sourceValue(tag, n) * f;
-        if (v > best) best = v;
-        nx.push(n);
+      for (const q of fr) {
+        const fq = fac.get(q);
+        if (fq * 0.94 <= best) continue;
+        for (const n of MAP.provs[q].nb) {
+          const f = fq * (RT && Routes.railEdge(tag, q, n) ? 0.94 : 0.88);
+          if (f <= best || (fac.has(n) && fac.get(n) >= f)) continue;
+          const o = G.owner[n];
+          if (o !== tag && !allied(tag, o)) continue;
+          fac.set(n, f);
+          const v = sourceValue(tag, n) * f;
+          if (v > best) best = v;
+          nx.push(n);
+        }
       }
       fr = nx;
     }
@@ -658,11 +666,12 @@ const Sim = (function () {
     const p = MAP.provs[a.prov];
     const owner = G.owner[a.prov];
     const friendly = owner === a.owner || allied(a.owner, owner);
-    let base = friendly ? 0.55 + 0.09 * p.infra : 0.4;
+    const rInf = typeof Routes !== 'undefined' ? Routes.infraAt(a.prov, a.owner) : 0;
+    let base = friendly ? 0.55 + 0.09 * (p.infra + rInf) : 0.4;
     if (p.core !== a.owner && !allied(p.core, a.owner)) base *= 0.85;
     const reach = Math.max(0.12, supplyReach(a.owner, a.prov));
     const EC = typeof Economy !== 'undefined' && Economy.infra;
-    const cap = 4 + p.infra * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
+    const cap = 4 + (p.infra + rInf) * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
     let demand = 0;
     for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
@@ -680,20 +689,27 @@ const Sim = (function () {
     if (t.locked && !(typeof Tech !== 'undefined' && Tech.unlocked(tag, type))) return false;
     return c.manpower >= mpCost(tag, type) && c.equipment >= t.eq;
   }
-  function recruit(tag, type, armyId) {
+  // prov: where the new division gathers (one of your own provinces); the capital when left out
+  function recruit(tag, type, armyId, prov) {
     const c = G.countries[tag], t = UNIT_TYPES[type];
     if (!canRecruit(tag, type)) return false;
     c.manpower -= mpCost(tag, type); c.equipment -= t.eq;
-    c.queue.push({ type, hours: t.days * 24, total: t.days * 24, armyId: armyId || 0 });
+    const item = { type, hours: t.days * 24, total: t.days * 24, armyId: armyId || 0 };
+    if (Number.isInteger(prov) && prov >= 0 && G.owner[prov] === tag) item.prov = prov;
+    c.queue.push(item);
     return true;
+  }
+  function spawnProv(c, item) {
+    if (item && Number.isInteger(item.prov) && G.owner[item.prov] === c.tag) return item.prov;
+    return c.capital >= 0 && G.owner[c.capital] === c.tag ? c.capital : -1;
   }
   function mpCost(tag, type) { return Math.round(UNIT_TYPES[type].mp * Math.max(0.5, 1 + (typeof Tech !== 'undefined' ? Tech.mod(tag, 'recruitCost', { unit: type }) : 0))); }
   function finishRecruit(c, item) {
     const target = item.armyId ? army(item.armyId) : null;
     const u = makeUnit(item.type, 1); u.org = 0.5;
     if (target && target.owner === c.tag && !target.sea && (G.owner[target.prov] === c.tag)) { target.units.push(u); return; }
-    const cap = c.capital;
-    if (cap < 0 || G.owner[cap] !== c.tag) return;
+    const cap = spawnProv(c, item);
+    if (cap < 0) return;
     let reserve = G.armies.find(a => a.owner === c.tag && a.prov === cap && a.reserve && a.units.length < 12);
     if (!reserve) { reserve = newArmy(c.tag, cap, []); reserve.reserve = true; }
     reserve.units.push(u);
@@ -840,7 +856,7 @@ const Sim = (function () {
         startBattle(a, next); continue;
       }
       a.entrench = 0;
-      a.rate = armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1);
+      a.rate = armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1) * (typeof Routes !== 'undefined' ? Routes.speedMul(a.owner, a.prov, next) : 1);
       a.progress += a.rate;
       recoverOrg(a, 0.3);
       if (a.order === 'redeploy') for (const u of a.units) u.org = Math.max(0.2, u.org - 0.01);
@@ -878,8 +894,9 @@ const Sim = (function () {
     if (typeof Navy !== 'undefined' && G.fleets) Navy.daily();
     if (typeof Air !== 'undefined' && G.wings) Air.daily();
     if (ECO) Economy.daily();
+    if (typeof Routes !== 'undefined') Routes.daily();
     if (TX) Tech.daily();
-    if (ECO && Math.floor(G.hour / 24) % 30 === 0) Economy.monthly();
+    if (ECO && Math.floor(G.hour / 24) % 30 === 0) { Economy.monthly(); if (typeof Routes !== 'undefined') Routes.monthly(); }
     for (const c of Object.values(G.countries)) {
       if (!c.alive) continue;
       const war = isAtWar(c.tag);
@@ -950,7 +967,7 @@ const Sim = (function () {
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     isHuman, humans, tell, army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
-    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
+    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit, spawnProv,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();

@@ -151,6 +151,7 @@ const Economy = (function () {
     if (kind === 'strat') m += mod(tag, 'strategic', ctx);
     if (kind === 'shop') m += mod(tag, 'luxuries', ctx);
     if (typeof Air !== 'undefined') m *= 1 - Air.bombDamage(p.id);
+    if (typeof Routes !== 'undefined' && G().owner[p.id] === tag) m *= Routes.outMul(p.id);
     if (p.core !== tag) {
       const coreAlive = G().countries[p.core] && G().countries[p.core].alive;
       m *= coreAlive ? Math.min(1, 0.5 + mod(tag, 'occupied')) : 0.85;
@@ -357,9 +358,11 @@ const Economy = (function () {
       const q = Math.max(0, Math.min(d.amount, avail));
       // goods shipped by sea can be sunk on the way; the buyer pays only for what arrives
       const arrive = !setupOnly && typeof Navy !== 'undefined' && g.fleets ? q * Navy.convoyFactor(d) : q;
+      // a road or railway to the partner delivers more for the same price
+      const boost = typeof Routes !== 'undefined' && g.routes ? 1 + Routes.tradeBoost(d.from, d.to) : 1;
       if (!setupOnly && typeof Navy !== 'undefined' && g.fleets) Navy.recordConvoy(d, q, arrive);
       d.delivered = arrive;
-      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive;
+      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive * boost;
       const paid = d.price * (arrive / d.amount);
       b.eco.dealOut += paid; s.eco.dealIn += paid;
       const bonus = paid * tradeBonusRate(d.from);

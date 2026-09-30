@@ -355,8 +355,15 @@ table.goods tr.bad td { color: #ffb3a6; background: rgba(207,84,67,.12); }
 table.goods tr.sub td { border-top: 0; font-size: 11.5px; padding-top: 0; text-align: left; }
 table.goods .tr { font-size: 10px; opacity: .8; }
 .builds { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 6px 0 4px; }
-.builds .btn { display: flex; justify-content: space-between; align-items: center; gap: 4px; text-align: left; min-width: 0; }
-.builds .btn span { line-height: 1.15; }
+.builds .btn { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 6px; align-items: center; text-align: left; min-width: 0; }
+.builds .btn span { line-height: 1.15; min-width: 0; overflow-wrap: anywhere; grid-column: 2; align-self: end; }
+.builds .btn canvas.bicon { grid-row: 1 / span 2; }
+.builds .btn small { grid-column: 2; align-self: start; }
+canvas.bicon { width: 38px; height: 38px; flex: none; margin: -4px 0 -4px -5px; }
+.row canvas.bicon { width: 30px; height: 30px; margin: -4px 0; }
+.pickrow { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 13px; }
+.pickrow label { flex: none; opacity: .8; }
+.pickrow .field { flex: 1; width: auto; min-width: 0; padding: 5px 8px; font-size: 14px; }
 .builds .btn small { opacity: .7; font-size: 10.5px; flex: none; }
 .row.deal .sub { white-space: normal; }
 .tform { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
@@ -4841,6 +4848,7 @@ const Sim = (function () {
     if (typeof Navy !== 'undefined') Navy.setup();
     if (typeof Air !== 'undefined') Air.setup();
     if (typeof Events !== 'undefined') Events.setup();
+    if (typeof Routes !== 'undefined') Routes.setup();
     return G;
   }
 
@@ -4851,6 +4859,7 @@ const Sim = (function () {
     G = g;
     rng = mulberry32(1936 + g.hour * 13 + g.player.charCodeAt(0) * 7 + g.player.charCodeAt(1));
     if (typeof Economy !== 'undefined') Economy.restore();
+    if (typeof Routes !== 'undefined') { Routes.restore(); if (!G.routes.length) Routes.setup(); }
     if (typeof Navy !== 'undefined' && G.fleets) Navy.restore();
     if (typeof Air !== 'undefined') Air.restore();
     if (typeof Events !== 'undefined' && !G.ev) Events.setup();
@@ -5408,18 +5417,24 @@ const Sim = (function () {
   function supplyReach(tag, prov) {
     let best = sourceValue(tag, prov);
     if (best >= 1) return 1;
-    const seen = new Set([prov]); let fr = [prov];
+    // supply fades 12% a province, or only 6% along a railway
+    const RT = typeof Routes !== 'undefined' && Routes.any();
+    const fac = new Map([[prov, 1]]); let fr = [prov];
     for (let d = 1; d <= 7 && fr.length; d++) {
-      const f = Math.pow(0.88, d);
-      if (f <= best) break;
       const nx = [];
-      for (const q of fr) for (const n of MAP.provs[q].nb) {
-        if (seen.has(n)) continue; seen.add(n);
-        const o = G.owner[n];
-        if (o !== tag && !allied(tag, o)) continue;
-        const v = sourceValue(tag, n) * f;
-        if (v > best) best = v;
-        nx.push(n);
+      for (const q of fr) {
+        const fq = fac.get(q);
+        if (fq * 0.94 <= best) continue;
+        for (const n of MAP.provs[q].nb) {
+          const f = fq * (RT && Routes.railEdge(tag, q, n) ? 0.94 : 0.88);
+          if (f <= best || (fac.has(n) && fac.get(n) >= f)) continue;
+          const o = G.owner[n];
+          if (o !== tag && !allied(tag, o)) continue;
+          fac.set(n, f);
+          const v = sourceValue(tag, n) * f;
+          if (v > best) best = v;
+          nx.push(n);
+        }
       }
       fr = nx;
     }
@@ -5430,11 +5445,12 @@ const Sim = (function () {
     const p = MAP.provs[a.prov];
     const owner = G.owner[a.prov];
     const friendly = owner === a.owner || allied(a.owner, owner);
-    let base = friendly ? 0.55 + 0.09 * p.infra : 0.4;
+    const rInf = typeof Routes !== 'undefined' ? Routes.infraAt(a.prov, a.owner) : 0;
+    let base = friendly ? 0.55 + 0.09 * (p.infra + rInf) : 0.4;
     if (p.core !== a.owner && !allied(p.core, a.owner)) base *= 0.85;
     const reach = Math.max(0.12, supplyReach(a.owner, a.prov));
     const EC = typeof Economy !== 'undefined' && Economy.infra;
-    const cap = 4 + p.infra * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
+    const cap = 4 + (p.infra + rInf) * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
     let demand = 0;
     for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
@@ -5452,20 +5468,27 @@ const Sim = (function () {
     if (t.locked && !(typeof Tech !== 'undefined' && Tech.unlocked(tag, type))) return false;
     return c.manpower >= mpCost(tag, type) && c.equipment >= t.eq;
   }
-  function recruit(tag, type, armyId) {
+  // prov: where the new division gathers (one of your own provinces); the capital when left out
+  function recruit(tag, type, armyId, prov) {
     const c = G.countries[tag], t = UNIT_TYPES[type];
     if (!canRecruit(tag, type)) return false;
     c.manpower -= mpCost(tag, type); c.equipment -= t.eq;
-    c.queue.push({ type, hours: t.days * 24, total: t.days * 24, armyId: armyId || 0 });
+    const item = { type, hours: t.days * 24, total: t.days * 24, armyId: armyId || 0 };
+    if (Number.isInteger(prov) && prov >= 0 && G.owner[prov] === tag) item.prov = prov;
+    c.queue.push(item);
     return true;
+  }
+  function spawnProv(c, item) {
+    if (item && Number.isInteger(item.prov) && G.owner[item.prov] === c.tag) return item.prov;
+    return c.capital >= 0 && G.owner[c.capital] === c.tag ? c.capital : -1;
   }
   function mpCost(tag, type) { return Math.round(UNIT_TYPES[type].mp * Math.max(0.5, 1 + (typeof Tech !== 'undefined' ? Tech.mod(tag, 'recruitCost', { unit: type }) : 0))); }
   function finishRecruit(c, item) {
     const target = item.armyId ? army(item.armyId) : null;
     const u = makeUnit(item.type, 1); u.org = 0.5;
     if (target && target.owner === c.tag && !target.sea && (G.owner[target.prov] === c.tag)) { target.units.push(u); return; }
-    const cap = c.capital;
-    if (cap < 0 || G.owner[cap] !== c.tag) return;
+    const cap = spawnProv(c, item);
+    if (cap < 0) return;
     let reserve = G.armies.find(a => a.owner === c.tag && a.prov === cap && a.reserve && a.units.length < 12);
     if (!reserve) { reserve = newArmy(c.tag, cap, []); reserve.reserve = true; }
     reserve.units.push(u);
@@ -5612,7 +5635,7 @@ const Sim = (function () {
         startBattle(a, next); continue;
       }
       a.entrench = 0;
-      a.rate = armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1);
+      a.rate = armySpeed(a) * TERRAIN[MAP.provs[next].terrain].move * (atWar(a.owner, G.owner[next]) ? 0.6 : 1) * (typeof Routes !== 'undefined' ? Routes.speedMul(a.owner, a.prov, next) : 1);
       a.progress += a.rate;
       recoverOrg(a, 0.3);
       if (a.order === 'redeploy') for (const u of a.units) u.org = Math.max(0.2, u.org - 0.01);
@@ -5650,8 +5673,9 @@ const Sim = (function () {
     if (typeof Navy !== 'undefined' && G.fleets) Navy.daily();
     if (typeof Air !== 'undefined' && G.wings) Air.daily();
     if (ECO) Economy.daily();
+    if (typeof Routes !== 'undefined') Routes.daily();
     if (TX) Tech.daily();
-    if (ECO && Math.floor(G.hour / 24) % 30 === 0) Economy.monthly();
+    if (ECO && Math.floor(G.hour / 24) % 30 === 0) { Economy.monthly(); if (typeof Routes !== 'undefined') Routes.monthly(); }
     for (const c of Object.values(G.countries)) {
       if (!c.alive) continue;
       const war = isAtWar(c.tag);
@@ -5722,7 +5746,7 @@ const Sim = (function () {
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     isHuman, humans, tell, army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
-    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
+    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit, spawnProv,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();
@@ -6484,6 +6508,7 @@ const Economy = (function () {
     if (kind === 'strat') m += mod(tag, 'strategic', ctx);
     if (kind === 'shop') m += mod(tag, 'luxuries', ctx);
     if (typeof Air !== 'undefined') m *= 1 - Air.bombDamage(p.id);
+    if (typeof Routes !== 'undefined' && G().owner[p.id] === tag) m *= Routes.outMul(p.id);
     if (p.core !== tag) {
       const coreAlive = G().countries[p.core] && G().countries[p.core].alive;
       m *= coreAlive ? Math.min(1, 0.5 + mod(tag, 'occupied')) : 0.85;
@@ -6690,9 +6715,11 @@ const Economy = (function () {
       const q = Math.max(0, Math.min(d.amount, avail));
       // goods shipped by sea can be sunk on the way; the buyer pays only for what arrives
       const arrive = !setupOnly && typeof Navy !== 'undefined' && g.fleets ? q * Navy.convoyFactor(d) : q;
+      // a road or railway to the partner delivers more for the same price
+      const boost = typeof Routes !== 'undefined' && g.routes ? 1 + Routes.tradeBoost(d.from, d.to) : 1;
       if (!setupOnly && typeof Navy !== 'undefined' && g.fleets) Navy.recordConvoy(d, q, arrive);
       d.delivered = arrive;
-      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive;
+      s.eco.exp[d.good] += q; b.eco.imp[d.good] += arrive * boost;
       const paid = d.price * (arrive / d.amount);
       b.eco.dealOut += paid; s.eco.dealIn += paid;
       const bonus = paid * tradeBonusRate(d.from);
@@ -7120,6 +7147,277 @@ const Economy = (function () {
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId
   };
+})();
+
+// Roads and railways between a nation's buildings, and across the border to trade partners.
+// They build themselves: roads within 300 km, railways within 450 km in 1914 and 1936 between heavy works.
+// At most 3 home links per building site, and no link where the network already offers a path under
+// 1.5 times the straight line. Routes give output, army speed, supply and tolls, and cost upkeep.
+// Everything lives in G.routes as plain data, so saves and the online game carry it.
+'use strict';
+const Routes = (function () {
+  const ROAD_KM = 300, RAIL_KM = 450, MAX_LINKS = 3, DETOUR = 1.5;
+  const HEAVY = new Set(['mine', 'fuel', 'strat', 'arsenal', 'port', 'dock', 'hub']);
+  const DAYS = { road: 20, rail: 45 }, UPKEEP = { road: 0.5, rail: 1.5 }, TOLL = { road: 0.3, rail: 1 };
+  const OUT = { road: 1.1, rail: 1.2 }, SPEED = { road: 1.3, rail: 2 }, TRADE = { road: 0.1, rail: 0.2 };
+  const G = () => Sim.G, MAP = () => Sim.MAP;
+  const railEra = () => { const e = typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936'; return e === 'ww2-1936' || e === 'greatwar-1914'; };
+  const list = () => { const g = G(); if (!g.routes) g.routes = []; return g.routes; };
+  const kindOf = r => r.rail ? 'rail' : 'road';
+  function km(a, b) { const P = MAP().provs, p = P[a], q = P[b]; return GEO.haversineKm(p.lon, p.lat, q.lon, q.lat); }
+  const atWar = (a, b) => a !== b && Sim.atWar(a, b);
+  const friend = (a, b) => a === b || Sim.allied(a, b);
+
+  // ---------- building sites ----------
+  function sitesByOwner() {
+    const g = G(), out = {};
+    const ind = g.ind || [], inf = g.inf || [];
+    for (let i = 0; i < g.owner.length; i++) {
+      const I = ind[i], F = inf[i];
+      let any = false, heavy = false;
+      if (I) for (const k in I) if (I[k] > 0) { any = true; if (HEAVY.has(k)) heavy = true; }
+      if (F) for (const k in F) if (F[k] > 0) { any = true; if (HEAVY.has(k)) heavy = true; }
+      if (!any) continue;
+      const o = g.owner[i];
+      (out[o] || (out[o] = [])).push({ pid: i, heavy });
+    }
+    return out;
+  }
+  // the chain of province centres from a to b through provinces ok() allows, by the shortest distance
+  function pathThrough(a, b, ok, maxKm) {
+    const P = MAP().provs, best = new Map([[a, 0]]), prev = new Map(), open = [a];
+    while (open.length) {
+      let bi = 0; for (let i = 1; i < open.length; i++) if (best.get(open[i]) < best.get(open[bi])) bi = i;
+      const u = open.splice(bi, 1)[0];
+      if (u === b) break;
+      for (const n of P[u].nb) {
+        if (n !== b && !ok(n)) continue;
+        const d = best.get(u) + km(u, n);
+        if (d > maxKm) continue;
+        if (!best.has(n) || d < best.get(n)) { best.set(n, d); prev.set(n, u); open.push(n); }
+      }
+    }
+    if (!best.has(b)) return null;
+    const path = [b]; while (path[0] !== a) path.unshift(prev.get(path[0]));
+    return path;
+  }
+  function netLen(adj, from, to) {
+    const best = new Map([[from, 0]]), open = [from];
+    while (open.length) {
+      let bi = 0; for (let i = 1; i < open.length; i++) if (best.get(open[i]) < best.get(open[bi])) bi = i;
+      const u = open.splice(bi, 1)[0];
+      if (u === to) return best.get(u);
+      for (const [v, w] of adj.get(u) || []) { const d = best.get(u) + w; if (!best.has(v) || d < best.get(v)) { best.set(v, d); open.push(v); } }
+    }
+    return Infinity;
+  }
+  const newRoute = (tag, a, b, rail, path, open, trade) => {
+    const g = G(), r = { id: g.routeNext = (g.routeNext || 0) + 1, tag, a, b, rail, path, km: Math.round(km(a, b)), state: open ? 'open' : 'building', born: open ? -1e9 : g.hour };
+    if (!open) r.left = r.total = DAYS[kindOf(r)];
+    if (trade) { r.trade = trade; r.cross = path.findIndex(p => g.owner[p] === trade); }
+    return r;
+  };
+
+  // ---------- the network of one nation ----------
+  const keys = {};
+  function rebuild(tag, sites, open) {
+    const g = G(), R = list(), rail = railEra();
+    const S = new Map((sites || []).map(s => [s.pid, s]));
+    const mine = R.filter(r => r.tag === tag && !r.trade);
+    const deg = new Map(), adj = new Map();
+    const link = (a, b, d) => { deg.set(a, (deg.get(a) || 0) + 1); deg.set(b, (deg.get(b) || 0) + 1); (adj.get(a) || adj.set(a, []).get(a)).push([b, d]); (adj.get(b) || adj.set(b, []).get(b)).push([a, d]); };
+    const have = new Set();
+    for (const r of mine) {
+      link(r.a, r.b, r.km); have.add(Math.min(r.a, r.b) + '-' + Math.max(r.a, r.b));
+      // a road between two heavy works becomes a railway once railways exist
+      if (!r.rail && rail && S.get(r.a)?.heavy && S.get(r.b)?.heavy && r.km <= RAIL_KM) { r.rail = true; r.state = 'building'; r.left = r.total = DAYS.rail; r.born = g.hour; }
+    }
+    const L = sites || [], pairs = [];
+    for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+      const a = L[i], b = L[j];
+      if (have.has(Math.min(a.pid, b.pid) + '-' + Math.max(a.pid, b.pid))) continue;
+      const P = MAP().provs, pa = P[a.pid], pb = P[b.pid];
+      if (Math.abs(pa.lat - pb.lat) > 5 || Math.abs(pa.lon - pb.lon) > 9) continue;   // quick reject before the exact distance
+      const d = km(a.pid, b.pid), isRail = rail && a.heavy && b.heavy;
+      if (d <= (isRail ? RAIL_KM : ROAD_KM)) pairs.push({ a: a.pid, b: b.pid, d, rail: isRail });
+    }
+    pairs.sort((p, q) => p.d - q.d);
+    for (const p of pairs) {
+      if ((deg.get(p.a) || 0) >= MAX_LINKS || (deg.get(p.b) || 0) >= MAX_LINKS) continue;
+      if (netLen(adj, p.a, p.b) < DETOUR * p.d) continue;
+      const path = pathThrough(p.a, p.b, n => g.owner[n] === tag, p.d * 2.2);
+      if (!path) continue;
+      link(p.a, p.b, p.d);
+      R.push(newRoute(tag, p.a, p.b, p.rail, path, open));
+    }
+  }
+  // routes whose ends or land changed hands are dropped (a route through enemy-held land is only cut)
+  function valid(r, sites) {
+    const g = G(), own = g.owner;
+    const isSite = (t, pid) => own[pid] === t && (sites[t] || []).some(s => s.pid === pid);
+    const held = (pid, t) => own[pid] === t || atWar(t, own[pid]);
+    if (!r.trade) {
+      const endOk = pid => (own[pid] === r.tag && isSite(r.tag, pid)) || atWar(r.tag, own[pid]);
+      return endOk(r.a) && endOk(r.b) && r.path.every(p => held(p, r.tag));
+    }
+    if (!g.countries[r.tag]?.alive || !g.countries[r.trade]?.alive) return false;
+    return r.path.every(p => own[p] === r.tag || own[p] === r.trade || atWar(r.tag, own[p]) || atWar(r.trade, own[p]));
+  }
+  // trade routes: one per land neighbour we trade with, between the nearest pair of buildings in range
+  function tradeRoutes(sites, open) {
+    const g = G(), R = list(), rail = railEra(), seen = new Set();
+    const dealsBetween = new Set();
+    for (const d of g.dip.trade) dealsBetween.add(Sim.pairKey(d.from, d.to));
+    // routes of ended deals go quiet; after a year without a new deal they fade away
+    for (const r of R) if (r.trade) {
+      const live = dealsBetween.has(Sim.pairKey(r.tag, r.trade));
+      if (live) { if (r.idle !== undefined) delete r.idle; }
+      else if (r.idle === undefined) r.idle = g.hour;
+    }
+    for (let i = R.length - 1; i >= 0; i--) if (R[i].trade && R[i].idle !== undefined && g.hour - R[i].idle > 24 * 365) R.splice(i, 1);
+    for (const k of dealsBetween) {
+      if (seen.has(k)) continue; seen.add(k);
+      const [A, B] = k.split('|');
+      if (!A || !B || !g.countries[A] || !g.countries[B]) continue;
+      if (R.some(r => r.trade && Sim.pairKey(r.tag, r.trade) === k)) continue;
+      if (typeof Diplo !== 'undefined' && Diplo.borders && !Diplo.borders(A, B)) continue;
+      let best = null;
+      for (const a of sites[A] || []) for (const b of sites[B] || []) {
+        const P = MAP().provs, pa = P[a.pid], pb = P[b.pid];
+        if (Math.abs(pa.lat - pb.lat) > 5 || Math.abs(pa.lon - pb.lon) > 9) continue;
+        const d = km(a.pid, b.pid), isRail = rail && a.heavy && b.heavy;
+        if (d <= (isRail ? RAIL_KM : ROAD_KM) && (!best || d < best.d)) best = { a: a.pid, b: b.pid, d, rail: isRail };
+      }
+      if (!best) continue;
+      const path = pathThrough(best.a, best.b, n => g.owner[n] === A || g.owner[n] === B, best.d * 2.2);
+      if (path) R.push(newRoute(A, best.a, best.b, best.rail, path, open, B));
+    }
+  }
+
+  // ---------- state ----------
+  function cut(r) {
+    const g = G(), own = g.owner;
+    if (r.trade && atWar(r.tag, r.trade)) return true;
+    for (const p of r.path) {
+      const o = own[p];
+      if (atWar(r.tag, o) || (r.trade && atWar(r.trade, o))) return true;
+      // bombers can put a railway out of action
+      if (r.rail && typeof Air !== 'undefined' && Air.bombDamage(p) > 0.2) return true;
+    }
+    return false;
+  }
+  const working = r => r.state === 'open' && r.idle === undefined && !cut(r);
+
+  // bonuses are looked up many times an hour, so they are indexed once a day
+  let idx = null;
+  function index() {
+    const R = list(), out = new Map(), edge = new Map(), onRoute = new Map();
+    for (const r of R) {
+      const w = working(r);
+      r.cutNow = r.state === 'open' && r.idle === undefined && !w;
+      const k = kindOf(r);
+      if (w) {
+        for (const pid of [r.a, r.b]) out.set(pid, Math.max(out.get(pid) || 1, OUT[k]));
+        for (const pid of r.path) { const l = onRoute.get(pid) || []; l.push(r); onRoute.set(pid, l); }
+      }
+      if (r.state === 'open' && r.idle === undefined) for (let i = 1; i < r.path.length; i++) {
+        const a = r.path[i - 1], b = r.path[i], key = Math.min(a, b) * 100000 + Math.max(a, b);
+        (edge.get(key) || edge.set(key, []).get(key)).push(r);
+      }
+    }
+    idx = { out, edge, onRoute };
+  }
+  const I = () => { if (!idx) index(); return idx; };
+
+  function daily(open) {
+    const g = G(); if (!g || !g.ind) return;
+    const sites = sitesByOwner(), R = list();
+    // drop routes that no longer make sense
+    for (let i = R.length - 1; i >= 0; i--) if (!valid(R[i], sites)) R.splice(i, 1);
+    // rebuild a nation's network only when its buildings, land or era changed
+    const rail = railEra() ? 'r' : '';
+    for (const t in g.countries) {
+      const c = g.countries[t];
+      if (!c.alive) { if (keys[t]) delete keys[t]; continue; }
+      const S = sites[t] || [];
+      const key = rail + S.length + ':' + S.reduce((h, s) => (h * 31 + s.pid * 2 + (s.heavy ? 1 : 0)) >>> 0, 7) + ':' + R.filter(r => r.tag === t && !r.trade).length;
+      if (keys[t] === key) continue;
+      rebuild(t, S, open);
+      keys[t] = rail + S.length + ':' + S.reduce((h, s) => (h * 31 + s.pid * 2 + (s.heavy ? 1 : 0)) >>> 0, 7) + ':' + R.filter(r => r.tag === t && !r.trade).length;
+    }
+    if (g.dip && g.dip.trade) tradeRoutes(sites, open);
+    // construction goes on by itself, but not while an enemy holds part of the way
+    for (const r of R) if (r.state === 'building' && !cut(r)) {
+      r.left -= 1;
+      if (r.left <= 0) { r.state = 'open'; delete r.left; delete r.total; r.opened = g.hour; }
+    }
+    index();
+  }
+  // a network for the nations as they start, already built
+  function setup() { const g = G(); g.routes = []; g.routeNext = 0; for (const k in keys) delete keys[k]; daily(true); }
+  function restore() { for (const k in keys) delete keys[k]; idx = null; if (G()) list(); }
+
+  function monthly() {
+    const g = G();
+    const add = (t, v) => { const c = g.countries[t]; if (c && c.alive && c.eco && !c.eco.none) c.eco.gold += v; };
+    const rel = new Set();
+    for (const r of list()) {
+      if (r.idle !== undefined) continue;
+      const k = kindOf(r), w = working(r);
+      const share = r.trade ? 0.5 : 1;
+      add(r.tag, (w ? TOLL[k] : 0) - UPKEEP[k] * share);
+      if (r.trade) {
+        add(r.trade, (w ? TOLL[k] : 0) - UPKEEP[k] * share);
+        const key = Sim.pairKey(r.tag, r.trade);
+        if (w && !rel.has(key) && typeof Diplo !== 'undefined') { rel.add(key); Diplo.addRel(r.tag, r.trade, 1); }
+      }
+    }
+  }
+
+  // ---------- what routes give ----------
+  // output of the buildings at either end of a working route
+  function outMul(pid) { return I().out.get(pid) || 1; }
+  // armies moving from one province to the next along a route
+  function speedMul(tag, from, to) {
+    const l = I().edge.get(Math.min(from, to) * 100000 + Math.max(from, to));
+    if (!l) return 1;
+    let m = 1;
+    for (const r of l) {
+      const k = kindOf(r), mine = friend(tag, r.tag) || (r.trade && friend(tag, r.trade));
+      if (mine && !r.cutNow) m = Math.max(m, SPEED[k]);
+      else if (!mine && !r.rail && atWar(tag, r.tag)) m = Math.max(m, SPEED.road);   // captured roads, but not railways
+    }
+    return m;
+  }
+  // provinces along a working route count one more level of infrastructure for supply
+  function infraAt(pid, tag) { const l = I().onRoute.get(pid); return l && l.some(r => friend(tag, r.tag) || (r.trade && friend(tag, r.trade))) ? 1 : 0; }
+  // supply loses less over a railway
+  function railEdge(tag, a, b) {
+    const l = I().edge.get(Math.min(a, b) * 100000 + Math.max(a, b));
+    return !!l && l.some(r => r.rail && !r.cutNow && (friend(tag, r.tag) || (r.trade && friend(tag, r.trade))));
+  }
+  // extra goods a deal delivers over a working trade route
+  function tradeBoost(from, to) {
+    let b = 0;
+    for (const r of list()) if (r.trade && ((r.tag === from && r.trade === to) || (r.tag === to && r.trade === from)) && working(r)) b = Math.max(b, TRADE[kindOf(r)]);
+    return b;
+  }
+  const any = () => list().length > 0;
+  function of(pid) { return list().filter(r => r.a === pid || r.b === pid); }
+  function summary(tag) {
+    let open = 0, building = 0, cutN = 0, idle = 0, up = 0, toll = 0, rails = 0;
+    for (const r of list()) {
+      if (r.tag !== tag && r.trade !== tag) continue;
+      const k = kindOf(r);
+      if (r.idle !== undefined) { idle++; continue; }
+      if (r.rail) rails++;
+      if (r.state === 'building') building++; else if (r.cutNow) cutN++; else open++;
+      up += UPKEEP[k] * (r.trade ? 0.5 : 1);
+      if (working(r)) toll += TOLL[k];
+    }
+    return { open, building, cut: cutN, idle, rails, upkeep: up, tolls: toll };
+  }
+  return { setup, restore, daily, monthly, outMul, speedMul, infraAt, railEdge, tradeBoost, any, of, summary, working, isCut: r => !!r.cutNow, kindOf, HEAVY, ROAD_KM, RAIL_KM, reindex: () => { idx = null; } };
 })();
 
 // Research: an era tree (4 branches, a locked choice at tier 3), a national or culture branch,
@@ -11227,6 +11525,397 @@ const Figures = (function () {
   return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
 })();
 
+// Buildings as small low-poly 3D models, lit and shaded like the troop figures: industries and
+// military works in the look of each era, with roofs and flags in the owner's colours.
+// Used on the map (in the province where they were built) and, turning slowly, in the build lists.
+'use strict';
+const Buildings = (function () {
+  // same camera and sun as the troop figures
+  const ELEV = 50 * Math.PI / 180, SE = Math.sin(ELEV), CE = Math.cos(ELEV);
+  const LIGHT = norm([-0.45, 0.35, 0.82]);
+  function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
+  function hexRGB(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  const mix = (a, b, t) => [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t));
+
+  // era look: ancient (431 BC, 117 AD), medieval, napoleonic, great war, 1936
+  function styleOf(era) {
+    if (!era) return 'mod';
+    if (era.startsWith('greece') || era.startsWith('rome')) return 'anc';
+    if (era.startsWith('medieval')) return 'med';
+    if (era.startsWith('napoleonic')) return 'nap';
+    if (era.startsWith('greatwar')) return 'ind';
+    return 'mod';
+  }
+  const old = s => s === 'anc' || s === 'med';
+
+  // ---------- solids: every face is turned to face outwards, so back faces can be culled ----------
+  let parts;
+  function face(pts, c, out) {
+    const a = pts[0], b = pts[1], d = pts[2];
+    const n = [(b[1] - a[1]) * (d[2] - a[2]) - (b[2] - a[2]) * (d[1] - a[1]), (b[2] - a[2]) * (d[0] - a[0]) - (b[0] - a[0]) * (d[2] - a[2]), (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0])];
+    if (n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0) pts = pts.slice().reverse();
+    parts.push({ v: pts, c });
+  }
+  // a prism: polygon (x, y points, any winding) extruded from z0 to z1; top and walls, no floor
+  function extrude(poly, z0, z1, c, top) {
+    let area = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; area += p[0] * q[1] - q[0] * p[1]; }
+    const ccw = area > 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i], q = poly[(i + 1) % poly.length], dx = q[0] - p[0], dy = q[1] - p[1];
+      face([[p[0], p[1], z0], [q[0], q[1], z0], [q[0], q[1], z1], [p[0], p[1], z1]], c, ccw ? [dy, -dx, 0] : [-dy, dx, 0]);
+    }
+    face(poly.map(p => [p[0], p[1], z1]), top || c, [0, 0, 1]);
+  }
+  const B = (x, y, z, sx, sy, sz, c, top) => extrude([[x - sx / 2, y - sy / 2], [x + sx / 2, y - sy / 2], [x + sx / 2, y + sy / 2], [x - sx / 2, y + sy / 2]], z, z + sz, c, top);
+  const ring = (x, y, r, n, a0) => Array.from({ length: n }, (_, i) => { const a = (a0 || 0) + i / n * Math.PI * 2; return [x + Math.cos(a) * r, y + Math.sin(a) * r]; });
+  const cyl = (x, y, z, r, h, c, top) => extrude(ring(x, y, r, 8, Math.PI / 8), z, z + h, c, top);
+  // gable roof over a box footprint; the ridge runs along x (or along y with alongY)
+  function roof(x, y, z, sx, sy, h, c, alongY) {
+    const hx = sx / 2, hy = sy / 2;
+    if (!alongY) {
+      const r0 = [x - hx, y, z + h], r1 = [x + hx, y, z + h];
+      face([[x - hx, y - hy, z], [x + hx, y - hy, z], r1, r0], c, [0, -1, 1]);
+      face([[x - hx, y + hy, z], [x + hx, y + hy, z], r1, r0], c, [0, 1, 1]);
+      face([[x - hx, y - hy, z], [x - hx, y + hy, z], r0], c, [-1, 0, 0]);
+      face([[x + hx, y - hy, z], [x + hx, y + hy, z], r1], c, [1, 0, 0]);
+    } else {
+      const r0 = [x, y - hy, z + h], r1 = [x, y + hy, z + h];
+      face([[x - hx, y - hy, z], [x - hx, y + hy, z], r1, r0], c, [-1, 0, 1]);
+      face([[x + hx, y - hy, z], [x + hx, y + hy, z], r1, r0], c, [1, 0, 1]);
+      face([[x - hx, y - hy, z], [x + hx, y - hy, z], r0], c, [0, -1, 0]);
+      face([[x - hx, y + hy, z], [x + hx, y + hy, z], r1], c, [0, 1, 0]);
+    }
+  }
+  // a pyramid or cone (n sides) standing on z
+  function cone(x, y, z, r, h, c, n, sy) {
+    const pts = ring(x, y, r, n || 8, Math.PI / (n || 8)).map(p => [p[0], y + (p[1] - y) * (sy || 1), z]), apex = [x, y, z + h];
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; face([p, q, apex], c, [(p[0] + q[0]) / 2 - x, (p[1] + q[1]) / 2 - y, r * 0.5]); }
+  }
+  // a square beam between two points (legs, girders, masts, rails)
+  function beam(a, b, w, c) {
+    const d = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    let u = Math.abs(d[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+    u = norm([d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]]);
+    const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+    const h = w / 2, off = (p, s, t) => [p[0] + (u[0] * s + v[0] * t) * h, p[1] + (u[1] * s + v[1] * t) * h, p[2] + (u[2] * s + v[2] * t) * h];
+    const C = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (let i = 0; i < 4; i++) {
+      const [s0, t0] = C[i], [s1, t1] = C[(i + 1) % 4];
+      face([off(a, s0, t0), off(a, s1, t1), off(b, s1, t1), off(b, s0, t0)], c, [(u[0] * (s0 + s1) + v[0] * (t0 + t1)), (u[1] * (s0 + s1) + v[1] * (t0 + t1)), (u[2] * (s0 + s1) + v[2] * (t0 + t1))]);
+    }
+    face([off(b, -1, -1), off(b, 1, -1), off(b, 1, 1), off(b, -1, 1)], c, d);
+    face([off(a, -1, -1), off(a, 1, -1), off(a, 1, 1), off(a, -1, 1)], c, d.map(k => -k));
+  }
+  // a wheel standing up, axle along y
+  function wheel(x, y, z, r, w, c) {
+    const pts = ring(0, 0, r, 8, Math.PI / 8);
+    const L = pts.map(p => [x + p[0], y - w / 2, z + r + p[1]]), R = pts.map(p => [x + p[0], y + w / 2, z + r + p[1]]);
+    face(L, c, [0, -1, 0]); face(R, c, [0, 1, 0]);
+    for (let i = 0; i < 8; i++) { const j = (i + 1) % 8; face([L[i], L[j], R[j], R[i]], c, [pts[i][0] + pts[j][0], 0, pts[i][1] + pts[j][1]]); }
+  }
+  // a half-round roof (hangars, wagon covers), axis along x
+  function vault(x, y, z, len, r, c) {
+    const arc = Array.from({ length: 7 }, (_, i) => { const a = Math.PI - i / 6 * Math.PI; return [Math.cos(a) * r, Math.sin(a) * r]; });
+    for (let i = 0; i < 6; i++) { const p = arc[i], q = arc[i + 1]; face([[x - len / 2, y + p[0], z + p[1]], [x + len / 2, y + p[0], z + p[1]], [x + len / 2, y + q[0], z + q[1]], [x - len / 2, y + q[0], z + q[1]]], c, [0, p[0] + q[0], p[1] + q[1]]); }
+    face(arc.map(p => [x + len / 2, y + p[0], z + p[1]]), c, [1, 0, 0]);
+    face(arc.map(p => [x - len / 2, y + p[0], z + p[1]]), c, [-1, 0, 0]);
+  }
+  const puff = (x, y, z, s, c) => B(x, y, z, s, s, s, c || [214, 210, 202]);
+
+  // palette: roofs, awnings and flags lean toward the owner's colour, the rest stays natural
+  function palette(color) {
+    const base = hexRGB(color || '#8a7a5c');
+    return {
+      nat: mix(base, [120, 100, 80], 0.25), natDark: mix(mix(base, [60, 50, 40], 0.4), [0, 0, 0], 0.15), natLight: mix(base, [236, 226, 204], 0.35),
+      tile: mix([176, 86, 58], base, 0.3), thatch: mix([178, 146, 78], base, 0.25), wood: [128, 94, 58], woodD: [92, 66, 40], plaster: mix([222, 210, 180], base, 0.1), stone: [176, 168, 150], stoneD: [140, 132, 116],
+      brick: [150, 74, 52], brickD: [112, 56, 42], slate: mix([88, 90, 96], base, 0.35), flag: mix(base, [255, 255, 255], 0.1), steel: [120, 126, 128], concrete: [158, 158, 150], dark: [40, 38, 34],
+      grain: [214, 186, 88], soil: [128, 102, 66], grass: [104, 128, 70], water: [66, 112, 150], glow: [240, 140, 50], white: [232, 228, 216], coal: [46, 44, 42], ore: [150, 170, 190]
+    };
+  }
+
+  const house = (x, y, sx, sy, h, rh, wall, rf, alongY) => { B(x, y, 0, sx, sy, h, wall); roof(x, y, h, sx + 0.5, sy + 0.5, rh, rf, alongY); };
+  const flag = (x, y, z, P) => { beam([x, y, z], [x, y, z + 5], 0.25, P.dark); B(x, y + 1, z + 3.8, 0.12, 2, 1.2, P.flag); };
+  function horse(x, y, P) {
+    for (const [lx, ly] of [[0.9, -0.3], [0.9, 0.3], [-0.9, -0.3], [-0.9, 0.3]]) B(x + lx, y + ly, 0, 0.3, 0.3, 1.5, [112, 82, 56]);
+    B(x, y, 1.4, 2.6, 0.8, 1.0, [112, 82, 56]); B(x + 1.5, y, 2.0, 0.6, 0.5, 1.4, [112, 82, 56]); B(x + 1.9, y, 3.0, 0.9, 0.45, 0.45, [100, 72, 48]);
+  }
+
+  const ART = {
+    farm(s, P) {
+      for (let i = 0; i < 4; i++) B(-2 + i * 1.6, 0, 0, 1.1, 9, 0.35, P.grain);           // rows of grain
+      B(-2 + 2.4, 0, 0, 7.4, 9.6, 0.12, P.soil);
+      if (s === 'anc') house(4.5, 0, 4, 3.4, 2.4, 1.3, P.plaster, P.tile);
+      else if (s === 'med') { house(4.5, 0, 4, 3.4, 2.2, 2.2, P.plaster, P.thatch); B(4.5, -1.75, 0, 1, 0.1, 1.6, P.woodD); }
+      else if (s === 'nap') { house(4.5, 0.5, 4.2, 3.6, 2.8, 1.8, P.white, P.natDark); B(4.5, -1.35, 0, 1, 0.1, 1.7, P.woodD); }
+      else { house(4.2, 1, 3.8, 4.4, 3.2, 2, P.natDark, P.slate, true); B(4.2, -1.25, 0, 1.6, 0.1, 2.2, P.white); cyl(4.5, -3.4, 0, 1.1, 6, P.concrete, P.steel); cone(4.5, -3.4, 6, 1.2, 1.1, P.steel); }
+    },
+    mine(s, P) {
+      if (old(s) || s === 'nap') {
+        cone(-1, 1, 0, 5.2, 4.2, [138, 122, 102], 6, 0.85);                              // the hillside
+        B(-1, -3.6, 0, 2.2, 0.6, 2.2, P.dark);                                              // adit mouth
+        beam([-2.3, -3.9, 0], [-2.3, -3.9, 2.4], 0.4, P.wood); beam([0.3, -3.9, 0], [0.3, -3.9, 2.4], 0.4, P.wood); beam([-2.5, -3.9, 2.4], [0.5, -3.9, 2.4], 0.45, P.wood);
+        cone(3.8, -2.6, 0, 1.6, 1.4, s === 'anc' ? [190, 124, 76] : [110, 106, 100], 6);   // ore heap
+        B(2.6, -4.4, 0, 1.6, 1, 0.8, P.woodD); wheel(2.0, -4.4, 0, 0.35, 0.2, P.dark); wheel(3.2, -4.4, 0, 0.35, 0.2, P.dark);
+      } else {
+        house(-3, 0, 4, 4.4, 3.4, 1.5, P.brick, P.slate);                                   // winding house
+        for (const [dx, dy] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) beam([2.5 + dx, dy, 0], [2.5 + dx * 0.25, dy * 0.25, 8], 0.35, P.steel);
+        beam([2.5, 0, 8], [-1.8, 0, 3.4], 0.3, P.steel);                                    // cable
+        wheel(2.5, 0, 7.2, 1.1, 0.35, P.dark);
+        cone(5.4, -2.6, 0, 1.8, 1.6, P.coal, 6);
+      }
+    },
+    fuel(s, P) {
+      if (s === 'mod') {
+        for (const [dx, dy] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) beam([-2 + dx, dy, 0], [-2 + dx * 0.2, dy * 0.2, 10], 0.35, P.dark);
+        for (const z of [3, 6]) { const k = 1 - z / 10 * 0.8; B(-2, 0, z, 3.2 * k + 0.3, 3.2 * k + 0.3, 0.25, P.dark); }
+        cyl(3.8, 1.2, 0, 2.2, 3, P.white, P.natLight); cyl(3.4, -3, 0, 1.4, 2.2, P.white, P.natLight);
+      } else if (s === 'ind' || s === 'nap') {
+        house(-3, 0, 4.4, 3.8, 3, 1.6, s === 'ind' ? P.brick : P.wood, P.slate);
+        cone(2.2, -1.6, 0, 2.2, 2.4, P.coal, 6); cone(3.6, 2, 0, 1.9, 2, [58, 56, 52], 6);
+        if (s === 'ind') { cyl(-4.2, 1, 0, 0.6, 7, P.brickD); puff(-4.2, 1.4, 7.6, 0.9); puff(-3.8, 2.2, 8.7, 1.1); }
+      } else {
+        cone(-1.5, 0, 0, 3.2, 2.8, [74, 62, 50], 8);                                        // charcoal clamp
+        puff(-1.5, 0, 3.0, 0.9); puff(-1.1, 0.8, 4.0, 1.1); puff(-1.8, 1.6, 5.2, 0.9);
+        for (let i = 0; i < 3; i++) for (let j = 0; j < 3 - i; j++) beam([3 + j * 0.8 + i * 0.4, -2, 0.35 + i * 0.7], [3 + j * 0.8 + i * 0.4, 2, 0.35 + i * 0.7], 0.65, P.wood);
+      }
+    },
+    strat(s, P, era) {
+      if (era && (era.startsWith('rome') || era.startsWith('medieval'))) {
+        house(-3, 0, 4.6, 4, 2.4, 1.6, era.startsWith('rome') ? P.plaster : P.wood, era.startsWith('rome') ? P.tile : P.thatch);
+        for (const [a, b] of [[[0.5, -3], [5.5, -3]], [[5.5, -3], [5.5, 3]], [[5.5, 3], [0.5, 3]]]) { beam([a[0], a[1], 1.1], [b[0], b[1], 1.1], 0.2, P.woodD); beam([a[0], a[1], 0.6], [b[0], b[1], 0.6], 0.2, P.woodD); beam([a[0], a[1], 0], [a[0], a[1], 1.3], 0.25, P.woodD); }
+        horse(3, 0.5, P);
+      } else if (s === 'anc') {
+        cone(-1, 1, 0, 4.2, 3.4, [138, 122, 102], 6, 0.8); B(-1, -2.4, 0, 1.8, 0.5, 1.8, P.dark);
+        cone(3.4, -2, 0, 1.8, 1.4, P.ore, 6); cone(4.4, 0.4, 0, 1.2, 1, [120, 140, 160], 6);
+      } else if (s === 'nap') {
+        B(-2.5, 0, 0, 4.4, 4, 2, P.wood); roof(-2.5, 0, 2, 4.8, 4.4, 1.4, P.slate);
+        cone(2.4, -2, 0, 1.9, 1.8, P.white, 6); cone(3.6, 1.6, 0, 1.6, 1.4, [226, 220, 204], 6);
+      } else {
+        B(-3, 0, 0, 4, 4, 3.4, P.concrete, P.steel);
+        cyl(1.5, -1, 0, 1, 8, P.steel, P.white); cyl(4.2, 1.2, 0, 1.6, 2.6, P.nat, P.natLight);
+        beam([-1, -1, 2.6], [1.5, -1, 2.6], 0.35, P.dark); beam([1.5, -1, 1.6], [4.2, 1.2, 1.6], 0.35, P.dark);
+        if (s === 'ind') puff(1.5, -0.6, 8.6, 1);
+      }
+    },
+    shop(s, P) {
+      if (old(s)) {
+        for (const [x, y] of [[-2.4, -1.4], [2.4, 1.4]]) {
+          for (const [dx, dy] of [[-1.6, -1], [1.6, -1], [-1.6, 1], [1.6, 1]]) beam([x + dx, y + dy, 0], [x + dx, y + dy, 2.4], 0.25, P.woodD);
+          for (let i = 0; i < 4; i++) B(x - 1.35 + i * 0.9, y, 2.4, 0.9, 2.4, 0.18, i % 2 ? P.white : P.nat);
+          B(x, y, 0, 3.4, 2.2, 1, P.wood, [150, 116, 76]);
+          cyl(x - 0.8, y, 1, 0.35, 0.6, [182, 116, 70]); cyl(x + 0.6, y + 0.3, 1, 0.3, 0.5, [150, 100, 60]);
+        }
+      } else if (s === 'nap') {
+        B(0, 0, 0, 7, 4, 4.2, P.plaster); roof(0, 0, 4.2, 7.4, 4.4, 1.6, P.natDark);
+        for (let i = 0; i < 4; i++) for (const z of [1.1, 2.7]) B(-2.6 + i * 1.75, -2.02, z, 0.7, 0.06, 0.9, [60, 80, 104]);
+        B(0, -2.02, 0, 1, 0.06, 1.1, P.woodD);
+      } else {
+        B(0, 0, 0, 8, 5, 3, P.brick);
+        for (let i = 0; i < 4; i++) { const x = -4 + i * 2; face([[x, -2.5, 3], [x, 2.5, 3], [x + 2, 2.5, 3], [x + 2, -2.5, 3]], P.brick, [0, 0, 1]); face([[x, -2.5, 3], [x, 2.5, 3], [x, 2.5, 4.6], [x, -2.5, 4.6]], [150, 180, 190], [-1, 0, 0]); face([[x, -2.5, 4.6], [x, 2.5, 4.6], [x + 2, 2.5, 3], [x + 2, -2.5, 3]], P.nat, [1, 0, 1]); face([[x, -2.5, 3], [x + 2, -2.5, 3], [x, -2.5, 4.6]], P.brick, [0, -1, 0]); }
+        for (let i = 0; i < 4; i++) B(-3 + i * 2, -2.52, 1, 1, 0.06, 1, [232, 214, 140]);
+      }
+    },
+    arsenal(s, P) {
+      if (old(s)) {
+        house(-1.5, 0, 5, 4, 2.4, 1.6, s === 'anc' ? P.plaster : P.wood, s === 'anc' ? P.tile : P.thatch);
+        B(-3, 1, 0, 1, 1, 5, P.stone); puff(-3, 1, 5.4, 0.8); puff(-2.6, 1.6, 6.3, 1);
+        B(-1.5, -2.02, 0, 1.4, 0.08, 1.2, P.glow);
+        B(3, -1, 0, 0.7, 0.6, 0.8, P.dark); B(3, -1, 0.8, 1.5, 0.7, 0.4, P.dark);            // anvil
+      } else if (s === 'nap') {
+        B(-1.5, 0, 0, 6, 4.4, 3, P.stone); roof(-1.5, 0, 3, 6.4, 4.8, 1.4, P.slate);
+        cyl(-3.5, 1.2, 0, 0.7, 7.4, P.brickD); puff(-3.5, 1.4, 8, 0.9); puff(-3.1, 2.1, 9, 1.1);
+        B(3.4, -2.2, 0, 1.8, 1.4, 0.8, P.wood); beam([2.2, -2.2, 1.2], [5.6, -2.2, 1.5], 0.55, [60, 62, 60]);
+        wheel(3.4, -3.1, 0, 0.7, 0.25, P.woodD); wheel(3.4, -1.3, 0, 0.7, 0.25, P.woodD);
+      } else {
+        B(0, 0, 0, 8, 5, 3.4, P.brick); roof(0, 0, 3.4, 8.4, 5.4, 1.3, P.natDark);
+        for (let i = 0; i < 4; i++) B(-2.7 + i * 1.8, -2.52, 1.1, 1, 0.06, 1.2, [232, 214, 140]);
+        cyl(-2.4, 1.6, 0, 0.6, 8.4, P.brickD); cyl(0.2, 1.6, 0, 0.6, 7.2, P.brickD);
+        puff(-2.4, 2, 9, 1); puff(-2, 2.8, 10.2, 1.3); puff(0.2, 2, 7.8, 0.9);
+      }
+    },
+    port(s, P) {
+      B(1, 0, 0, 12, 10, 0.08, P.water);
+      B(-3.5, 0, 0, 3, 10, 0.3, P.soil);
+      B(-0.5, -1.2, 0.5, 6, 1.6, 0.25, P.wood);                                              // pier
+      for (let i = 0; i < 4; i++) beam([-2.6 + i * 1.5, -1.9, 0], [-2.6 + i * 1.5, -1.9, 0.55], 0.25, P.woodD);
+      if (old(s) || s === 'nap') {
+        extrude([[1, 1.2], [5.6, 1.2], [6.6, 2], [5.6, 2.8], [1, 2.8], [0.4, 2]], 0.1, 1, P.wood);
+        beam([3.4, 2, 1], [3.4, 2, 5.4], 0.2, P.woodD);
+        B(3.4, 2, 2, 0.1, s === 'anc' ? 2.8 : 3.2, 3, s === 'anc' ? P.natLight : P.white);
+      } else {
+        extrude([[0.6, 1], [5.8, 1], [7, 2], [5.8, 3], [0.6, 3]], 0.1, 1.2, [70, 74, 80]);
+        B(2.6, 2, 1.2, 2.4, 1.4, 1.2, P.white); cyl(4.2, 2, 1.2, 0.4, 1.8, P.nat);
+      }
+    },
+    dock(s, P) {
+      B(0, 0, 0, 12, 10, 0.08, P.water);
+      if (old(s)) {
+        for (let i = 0; i < 3; i++) {
+          const x = -3.4 + i * 3.4;
+          for (const dy of [-2.6, 2.6]) beam([x - 1.4, dy, 0], [x - 1.4, dy, 2.2], 0.3, P.stone);
+          roof(x, 0, 2.2, 3, 6, 1.4, s === 'anc' ? P.tile : P.natDark, true);
+        }
+        extrude([[-4, -1], [-2.6, -1.4], [-2.6, 0.6], [-4, 0.2]], 0, 0.8, P.wood);
+      } else {
+        B(-1, 0, 0, 8, 4.4, 0.5, P.concrete);
+        extrude([[-4.5, -1.2], [1.5, -1.2], [3, 0], [1.5, 1.2], [-4.5, 1.2]], 0.5, 2, [96, 100, 106]);
+        beam([4.6, 3, 0], [4.6, 3, 9], 0.45, P.nat); beam([4.6, 3, 9], [-1.5, 0, 9], 0.4, P.nat); beam([4.6, 3, 7], [1.5, 1.5, 9], 0.3, P.nat);
+        beam([-1, 0, 9], [-1, 0, 4], 0.1, P.dark); B(-1, 0, 3.6, 0.8, 0.8, 0.5, P.dark);
+      }
+    },
+    air(s, P) {
+      B(1, -1, 0, 12, 3.4, 0.1, [96, 102, 94]);
+      vault(-2.6, 2.6, 0, 5, 2.2, s === 'ind' ? [150, 128, 96] : P.concrete);
+      const px = 2.6, py = -1, h = 0.8;
+      B(px, py, h, 3.6, 0.6, 0.6, s === 'ind' ? [168, 150, 110] : P.nat);                  // fuselage
+      B(px + 0.6, py, h + 0.3, 1.1, 5.4, 0.12, s === 'ind' ? [190, 172, 128] : P.natLight); // wing
+      if (s === 'ind') { B(px + 0.6, py, h + 1.2, 1.1, 5.4, 0.12, [190, 172, 128]); beam([px + 0.6, py - 2.2, h + 0.3], [px + 0.6, py - 2.2, h + 1.2], 0.1, P.dark); beam([px + 0.6, py + 2.2, h + 0.3], [px + 0.6, py + 2.2, h + 1.2], 0.1, P.dark); }
+      B(px - 1.6, py, h + 0.2, 0.7, 2, 0.1, P.natLight); B(px - 1.7, py, h + 0.4, 0.6, 0.1, 0.8, P.natLight);
+      beam([px + 0.4, py - 0.4, 0], [px + 0.4, py - 0.4, h], 0.12, P.dark); beam([px + 0.4, py + 0.4, 0], [px + 0.4, py + 0.4, h], 0.12, P.dark);
+      flag(-5.4, -2, 0, P);
+    },
+    hub(s, P) {
+      if (s === 'ind' || s === 'mod') {
+        for (let x = -5; x <= 5; x += 1.25) B(x, -2.4, 0, 0.35, 2.4, 0.12, P.woodD);
+        beam([-5.5, -3.1, 0.2], [5.5, -3.1, 0.2], 0.16, P.steel); beam([-5.5, -1.7, 0.2], [5.5, -1.7, 0.2], 0.16, P.steel);
+        house(-2, 2, 6, 3.2, 2.8, 1.2, s === 'ind' ? P.brick : P.concrete, P.natDark);
+        B(2.4, -2.4, 0.7, 3.4, 1.8, 1.6, P.natDark); wheel(1.4, -3.3, 0.1, 0.35, 0.15, P.dark); wheel(3.4, -3.3, 0.1, 0.35, 0.15, P.dark);
+        B(3.6, 2.2, 0, 1.4, 1.4, 1.2, P.wood); B(3.6, 2.2, 1.2, 1.2, 1.2, 1, [150, 116, 76]);
+      } else {
+        B(-3, 1, 0, 1.6, 1.6, 1.4, P.wood); B(-1.3, 1, 0, 1.6, 1.6, 1.4, [150, 116, 76]); B(-2.2, 1, 1.4, 1.6, 1.6, 1.4, P.wood);
+        cyl(-3.4, -1.6, 0, 0.7, 1.4, [140, 104, 64]); cyl(-2, -2, 0, 0.7, 1.4, [140, 104, 64]);
+        B(3, 0, 0.9, 3.8, 2, 1, P.wood);                                                    // wagon
+        for (const [dx, dy] of [[-1.3, -1.15], [1.3, -1.15], [-1.3, 1.15], [1.3, 1.15]]) wheel(3 + dx, dy, 0, 0.6, 0.2, P.woodD);
+        if (s !== 'anc') vault(3, 0, 1.9, 3.6, 1.1, P.white);
+      }
+    },
+    fort(s, P) {
+      if (s === 'med') {
+        B(0, 0, 0, 6, 6, 3, P.stone, P.stoneD);                                            // curtain walls
+        B(0, 0, 0, 3, 3, 6, P.stone);                                                       // keep
+        for (const [dx, dy] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) { cyl(dx, dy, 0, 1.1, 4.4, P.stoneD); cone(dx, dy, 4.4, 1.3, 1.6, P.natDark); }
+        for (let i = 0; i < 3; i++) { B(-1 + i, -1.5, 6, 0.5, 0.3, 0.5, P.stone); B(-1 + i, 1.5, 6, 0.5, 0.3, 0.5, P.stone); }
+        B(0, -3.02, 0, 1.4, 0.1, 1.9, P.dark);
+        flag(0, 0, 6, P);
+      } else if (s === 'anc') {
+        const W = 5.4;
+        for (const [x, y, sx, sy] of [[0, -W / 2, W, 0.8], [0, W / 2, W, 0.8], [-W / 2, 0, 0.8, W], [W / 2, 0, 0.8, W]]) {
+          if (y < 0) { B(-1.8, y, 0, 1.8, sy, 2.6, P.plaster); B(1.8, y, 0, 1.8, sy, 2.6, P.plaster); B(0, y, 2, 1.8, sy, 0.6, P.plaster); }
+          else B(x, y, 0, sx, sy, 2.6, P.plaster);
+        }
+        for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) B(dx * W / 2, dy * W / 2, 0, 1.4, 1.4, 3.4, P.stone);
+        house(0.6, 0.6, 2.6, 2, 1.8, 1, P.plaster, P.tile);
+        flag(-W / 2, -W / 2, 3.4, P);
+      } else if (s === 'nap') {
+        const star = []; for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2, r = i % 2 ? 3.2 : 5.4; star.push([Math.cos(a) * r, Math.sin(a) * r]); }
+        extrude(star, 0, 1.4, [132, 142, 104], [148, 160, 116]);
+        B(0, 0, 1.4, 3, 3, 1.4, P.stone); roof(0, 0, 2.8, 3.2, 3.2, 0.9, P.slate);
+        beam([3.2, -1, 1.5], [4.8, -1.4, 1.8], 0.35, P.dark);
+        flag(1.3, 1.3, 2.8, P);
+      } else {
+        cone(0, 0, 0, 5.2, 1.2, s === 'ind' ? [120, 108, 84] : [112, 120, 92], 8);        // earthworks
+        extrude(ring(0, 0, 3, 8, Math.PI / 8), 0.8, 2.3, P.concrete, [170, 170, 162]);
+        B(0, -2.9, 1.3, 2.6, 0.2, 0.5, P.dark);
+        beam([0, -2.4, 1.6], [0.3, -5, 1.9], 0.4, P.dark);
+        if (s === 'ind') for (let i = -2; i <= 2; i++) beam([i * 1.6 - 0.6, 4.2, 0.1], [i * 1.6 + 0.6, 4.8, 0.9], 0.12, P.dark);
+        flag(2, 1.5, 2.3, P);
+      }
+    },
+    radar(s, P) {
+      B(0, 1.6, 0, 3, 2.6, 2.2, P.concrete, P.steel);
+      for (const [dx, dy] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) beam([dx - 1, dy - 1.6, 0], [-1 + dx * 0.2, -1.6 + dy * 0.2, 6], 0.25, P.steel);
+      // the dish: a shallow cone tipped toward the sky
+      const tilt = -0.7, cs = Math.cos(tilt), sn = Math.sin(tilt), cx = -1, cy = -1.6, cz = 6.6;
+      const rim = ring(0, 0, 2.8, 10).map(p => { const x = 0, y = p[0], z = p[1]; return [cx + x * cs + z * sn, cy + y, cz - x * sn + z * cs]; });
+      const apex = [cx - 1 * cs, cy, cz + 1 * sn];
+      for (let i = 0; i < rim.length; i++) { const p = rim[i], q = rim[(i + 1) % rim.length]; parts.push({ v: [p, q, apex], c: P.white, two: true }); }
+    }
+  };
+
+  // ---------- rasterise (the same flat-shaded painter as the troop figures) ----------
+  const models = new Map();
+  function model(kind, era, color) {
+    const key = kind + '|' + era + '|' + color;
+    let m = models.get(key);
+    if (m) return m;
+    parts = [];
+    const P = palette(color);
+    ART[kind](styleOf(era), P, era);
+    // every building flies its owner's flag, like the troops wear their colours
+    if (kind !== 'air' && kind !== 'fort') {
+      let x0 = Infinity, y1 = -Infinity;
+      for (const f of parts) for (const v of f.v) { x0 = Math.min(x0, v[0]); y1 = Math.max(y1, v[1]); }
+      flag(x0 + 0.4, y1 - 0.4, 0, P);
+    }
+    m = parts; parts = null;
+    let r = 1, top = 1;
+    for (const f of m) for (const v of f.v) { r = Math.max(r, Math.hypot(v[0], v[1])); top = Math.max(top, v[2]); }
+    m.r = r; m.top = top;
+    if (models.size > 400) models.clear();
+    models.set(key, m);
+    return m;
+  }
+  // draw a model into ctx with its footprint centred at (cx, cy), fitted to a box px wide
+  function render(g, m, yaw, cx, cy, px) {
+    const k = Math.min(px * 0.46 / m.r, px * 0.8 / (m.top * CE + m.r * SE));
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    const faces = [];
+    for (const p of m) {
+      const w = p.v.map(v => [v[0] * cs - v[1] * sn, v[0] * sn + v[1] * cs, v[2]]);
+      const a = w[0], b = w[1], c = w[2];
+      let n = norm([(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]), (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])]);
+      let facing = n[1] * -CE + n[2] * SE;
+      if (facing <= 0.001) { if (!p.two) continue; n = n.map(q => -q); }
+      const lit = 0.62 + 0.6 * Math.max(0, n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]);
+      let depth = 0; for (const v of w) depth += -v[1] * CE + v[2] * SE;
+      faces.push({ w, depth: depth / w.length, col: 'rgb(' + p.c.map(q => Math.min(255, Math.round(q * lit))).join(',') + ')' });
+    }
+    faces.sort((a, b) => a.depth - b.depth);
+    g.fillStyle = 'rgba(0,0,0,0.26)';
+    g.beginPath(); g.ellipse(cx + m.r * k * 0.08, cy + m.r * k * SE * 0.05, m.r * k * 0.95, m.r * k * SE * 0.85, 0, 0, Math.PI * 2); g.fill();
+    g.lineJoin = 'round'; g.lineWidth = Math.max(0.5, px / 90);
+    for (const f of faces) {
+      g.beginPath();
+      f.w.forEach((v, i) => { const x = cx + v[0] * k, y = cy - (v[1] * SE + v[2] * CE) * k; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.closePath(); g.fillStyle = f.col; g.strokeStyle = f.col; g.fill(); g.stroke();
+    }
+  }
+  const YAW0 = -0.55;   // a three-quarter view
+  // a cached sprite for the map: px square (device pixels), four slightly different angles
+  const cache = new Map();
+  let paintedThisFrame = 0, frameMark = 0;
+  function icon(kind, era, color, px, turn) {
+    px = Math.max(12, Math.round(px / 4) * 4);
+    const key = kind + '|' + era + '|' + color + '|' + px + '|' + (turn || 0);
+    let cv = cache.get(key);
+    if (cv) return cv;
+    // new sprites are painted a few per frame so zooming into a busy region never stalls
+    const now = performance.now();
+    if (now - frameMark > 12) { frameMark = now; paintedThisFrame = 0; }
+    if (paintedThisFrame++ > 24) return null;
+    cv = document.createElement('canvas'); cv.width = cv.height = px;
+    const g = cv.getContext('2d');
+    render(g, model(kind, era, color), YAW0 + (turn || 0) * 0.5, px / 2, px * 0.66, px * 0.92);
+    if (cache.size > 900) cache.clear();
+    cache.set(key, cv);
+    return cv;
+  }
+  // a live drawing at any angle, for the slowly turning icons in the build lists
+  function paint(ctx, kind, era, color, x, y, px, yaw) {
+    if (!ART[kind]) return;
+    render(ctx, model(kind, era, color), yaw === undefined ? YAW0 : yaw, x + px / 2, y + px * 0.66, px * 0.92);
+  }
+  // turn every <canvas data-bicon="kind"> under a root element to the given angle
+  function spin(root, era, color, yaw) {
+    root.querySelectorAll('canvas[data-bicon]').forEach(cv => {
+      const c = cv.getContext('2d'); c.clearRect(0, 0, cv.width, cv.height);
+      paint(c, cv.dataset.bicon, era, color, 0, 0, cv.width, yaw);
+      cv.dataset.done = '1';
+    });
+  }
+  return { icon, paint, spin, styleOf, KINDS: Object.keys(ART) };
+})();
+
 // Canvas map renderer and camera (pan / zoom / picking).
 'use strict';
 const Render = (function () {
@@ -11283,7 +11972,8 @@ const Render = (function () {
   function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
   function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
   const rgbStr = c => 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
-  let lastOwn = null, lastMode = null;
+  let lastOwn = null, lastMode = null, lastDead = 0, lastDeadHour = -1;
+  const deadCount = () => { let n = 0; for (const t in Sim.G.countries) if (!Sim.G.countries[t].alive) n++; return n; };
   function provColor(p, owner) {
     const T = TERRAIN[p.terrain];
     const j = ((p.id * 2654435761) >>> 0) % 100 / 100 - 0.5;
@@ -11296,11 +11986,13 @@ const Render = (function () {
     const G = Sim.G;
     const own = G ? G.owner : MAP.provs.map(p => p.owner);
     let changed = null;
-    if (lastOwn && lastMode === state.mode && lastOwn.length === own.length) {
+    // occupation stripes go once a nation is gone for good: its land is simply the conqueror's now
+    const dead = G ? deadCount() : 0;
+    if (lastOwn && lastMode === state.mode && lastOwn.length === own.length && dead === lastDead) {
       changed = [];
       for (let i = 0; i < own.length; i++) if (own[i] !== lastOwn[i]) changed.push(i);
     }
-    lastOwn = own.slice(); lastMode = state.mode;
+    lastOwn = own.slice(); lastMode = state.mode; lastDead = dead;
     if (!changed) fillCache = MAP.provs.map(p => provColor(p, own[p.id]));
     else for (const i of changed) fillCache[i] = provColor(MAP.provs[i], own[i]);
     lmCountryBorders = MAP.lms.map(() => new Path2D());
@@ -11462,7 +12154,7 @@ const Render = (function () {
         if (bb[2] < vx0 || bb[0] > vx1 || bb[3] < vy0 || bb[1] > vy1) continue;
         g.fillStyle = fillCache[p.id];
         g.fill(provPaths[p.id]);
-        if (G && state.mode === 'political' && G.owner[p.id] !== p.core) {
+        if (G && state.mode === 'political' && G.owner[p.id] !== p.core && G.countries[p.core] && G.countries[p.core].alive) {
           const pat = g.createPattern(stripes(COUNTRY_BY_TAG[p.core].color), 'repeat');
           pat.setTransform(new DOMMatrix().scale(1 / z));
           g.globalAlpha = 0.55; g.fillStyle = pat; g.fill(provPaths[p.id]); g.globalAlpha = 1;
@@ -11535,7 +12227,7 @@ const Render = (function () {
 
   function draw() {
     stepCamera();
-    if (state.dirtyOwners || !lmCountryBorders.length) recolor();
+    if (state.dirtyOwners || !lmCountryBorders.length || (Sim.G && Sim.G.hour !== lastDeadHour && (lastDeadHour = Sim.G.hour, deadCount() !== lastDead))) recolor();
     if (!layer) buildLayer();
     const G = Sim.G;
     const z = cam.z;
@@ -11571,6 +12263,7 @@ const Render = (function () {
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
+    if (G && G.ind) drawBuildings(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
     if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
@@ -11672,6 +12365,81 @@ const Render = (function () {
         if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
         ctx.fillStyle = 'rgba(20,18,12,0.55)'; ctx.fillText(p.name, sx, sy + 16);
       }
+    }
+  }
+
+  // ---------- buildings: each finished industry or military work stands in its own province ----------
+  const bSpots = new Map();
+  function spotsFor(p) {
+    let s = bSpots.get(p.id); if (s) return s;
+    s = [];
+    const sp = p.spacing || 1;
+    for (let i = 0; i < 40 && s.length < 8; i++) {
+      const ring = i < 16 ? 0.48 : i < 30 ? 0.34 : 0.22;
+      const an = i * 2.39996 + p.id * 0.61;
+      const x = p.x + Math.cos(an) * sp * ring, y = p.y + Math.sin(an) * sp * ring * 0.85;
+      if (provinceAt(x, y) !== p.id) continue;
+      if (s.some(q => Math.hypot(q[0] - x, q[1] - y) < sp * 0.2)) continue;
+      s.push([x, y]);
+    }
+    for (let i = 0; s.length < 8; i++) s.push([p.x + (i - 2) * sp * 0.12, p.y + sp * 0.2]);
+    bSpots.set(p.id, s);
+    return s;
+  }
+  function buildingsIn(pid) {
+    const I = Sim.G.ind[pid], out = [];
+    if (I) for (const k of Economy.KIND_KEYS) if (I[k]) out.push([k, I[k]]);
+    for (const k of Economy.INFRA_KEYS) { const l = Economy.infra(pid, k); if (l) out.push([k, l]); }
+    return out;
+  }
+  let bDrawn = 0;
+  function drawBuildings(z, vx0, vy0, vx1, vy1) {
+    bDrawn = 0;
+    if (typeof Buildings === 'undefined' || typeof Economy === 'undefined') return;
+    const G = Sim.G, era = Economy.eraId();
+    const me = G.countries[G.player];
+    const pend = new Map();
+    if (me && me.eco && me.eco.queue) for (const q of me.eco.queue) { if (!pend.has(q.prov)) pend.set(q.prov, []); pend.get(q.prov).push(q); }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const p of MAP.provs) {
+      if (p.x < vx0 - 3 || p.x > vx1 + 3 || p.y < vy0 - 3 || p.y > vy1 + 3) continue;
+      const px = (p.spacing || 1) * z;
+      if (px < 30) continue;
+      const list = buildingsIn(p.id), q = pend.get(p.id);
+      if (!list.length && !q) continue;
+      const size = Math.max(20, Math.min(44, px * 0.36));
+      const col = COUNTRY_BY_TAG[G.owner[p.id]] ? COUNTRY_BY_TAG[G.owner[p.id]].color : '#8a7a5c';
+      const spots = spotsFor(p).slice(0, px < 50 ? 3 : px < 80 ? 5 : 8);
+      let n = 0;
+      const put = (kind, count, job) => {
+        if (n >= spots.length) return;
+        const [wx, wy] = spots[n++];
+        const [sx, sy] = worldToScreen(wx, wy);
+        if (sx < -size || sx > W + size || sy < -size || sy > H + size) return;
+        const x = sx - size / 2, y = sy - size * 0.8;
+        const img = Buildings.icon(kind, era, col, size * dpr, (p.id + n) % 4);
+        if (!img) return;
+        if (job) ctx.globalAlpha = 0.5;
+        bDrawn++;
+        ctx.drawImage(img, x, y, size, size);
+        ctx.globalAlpha = 1;
+        if (job) {
+          // scaffolding and a ring that fills as the work goes on
+          ctx.strokeStyle = 'rgba(214,176,82,0.95)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x + size * 0.15, y + size * 0.9); ctx.lineTo(x + size * 0.15, y + size * 0.25); ctx.moveTo(x + size * 0.85, y + size * 0.9); ctx.lineTo(x + size * 0.85, y + size * 0.25);
+          ctx.moveTo(x + size * 0.15, y + size * 0.45); ctx.lineTo(x + size * 0.85, y + size * 0.45); ctx.moveTo(x + size * 0.15, y + size * 0.7); ctx.lineTo(x + size * 0.85, y + size * 0.7); ctx.stroke();
+          const f = Math.max(0, Math.min(1, 1 - job.left / job.total)), r = Math.max(3, size * 0.16), cx = x + size - r * 0.4, cy = y + r;
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = 'rgba(20,18,14,0.8)'; ctx.fill();
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.closePath(); ctx.fillStyle = '#d6b052'; ctx.fill();
+        } else if (count > 1 && size >= 16) {
+          const bx = x + size - 3, by = y + size - 3;
+          ctx.font = '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif';
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,16,12,0.9)'; ctx.strokeText(count, bx, by);
+          ctx.fillStyle = '#f1ead2'; ctx.fillText(count, bx, by);
+        }
+      };
+      if (q) for (const j of q) put(j.kind, 1, j);
+      for (const [k, c] of list) put(k, c, null);
     }
   }
 
@@ -12200,7 +12968,7 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
 
 // Interface: start screen, top bar, dossier panels, army tray, orders and input.
@@ -12209,7 +12977,7 @@ const UI = (function () {
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let MAP;
-  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1 };
+  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1, spawnProv: -1, buildProv: -1 };
   let pending = null; // {kind, armies}
   let startPick = 'GER';
   const HPS = [0, 3, 8, 18, 36, 72]; // game hours per real second by speed level
@@ -12234,6 +13002,20 @@ const UI = (function () {
     if (left) el.scrollLeft = left;
     return true;
   }
+  // your own provinces for a picker: capital first, then cities by size, then the rest by name
+  function ownProvs() {
+    const G = Sim.G, cap = G.countries[G.player].capital;
+    return MAP.provs.filter(p => G.owner[p.id] === G.player)
+      .sort((a, b) => (b.id === cap) - (a.id === cap) || (!!b.city - !!a.city) || (a.city && b.city ? b.pop - a.pop : a.name.localeCompare(b.name)));
+  }
+  function provSelect(id, cur, first) {
+    const cap = Sim.G.countries[Sim.G.player].capital;
+    return `<select class="field provpick" id="${id}" aria-label="Province">${first ? `<option value="-1"${cur < 0 ? ' selected' : ''}>${esc(first)}</option>` : ''}${ownProvs().map(p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)}${p.id === cap ? ' (capital)' : ''}</option>`).join('')}</select>`;
+  }
+  // where new troops gather: the province you last chose while you still hold it, else the capital
+  function spawnPick() { const G = Sim.G; return sel.spawnProv >= 0 && G.owner[sel.spawnProv] === G.player ? sel.spawnProv : G.countries[G.player].capital; }
+  function buildPick() { const G = Sim.G; return sel.buildProv >= 0 && G.owner[sel.buildProv] === G.player ? sel.buildProv : -1; }
+  const bicon = (k, n) => `<canvas class="bicon" data-bicon="${k}" width="${n || 76}" height="${n || 76}" aria-hidden="true"></canvas>`;
   let lockUntil = 0;
   let hoverEl = null;
   let hoverBtn = false;
@@ -12564,10 +13346,11 @@ const UI = (function () {
     const works = `<dt>Military</dt><dd>${INF.map(k => esc(Economy.kindName(k)) + (Economy.INFRA[k].max > 1 ? ' ' + Economy.infra(p.id, k) : '')).join(', ') || 'None'}</dd>`
       + (Seas.isCoastal(p.id) ? `<dt>Coast</dt><dd>${Seas.zonesOf(p.id).map(z => `<a href="#" class="lnk" data-zone="${z}">${esc(Seas.zone(z).name)}</a>`).join(', ')}</dd>` : '')
       + (Air.bombDamage(p.id) > 0.01 ? `<dt>Bomb damage</dt><dd class="bad">${pct(Air.bombDamage(p.id))} of output lost</dd>` : '');
-    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}"><span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
+    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
     const wingsHere = G.wings.filter(w => w.base === p.id);
-    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
-      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>` : '';
+    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>
+      <button class="btn sm${spawnPick() === p.id ? ' on' : ''}" id="lp-spawn" style="width:100%;margin-top:6px" ${spawnPick() === p.id ? 'disabled' : ''}>${spawnPick() === p.id ? 'New troops gather here' : 'Send new troops here'}</button>` : '';
     const armies = G.armies.filter(a => a.prov === p.id && !(a.sea && a.sea.phase !== 'prep'));
     const armyRows = armies.map(a => {
       const comp = compStr(a);
@@ -12581,7 +13364,7 @@ const UI = (function () {
       <div class="label">${isCap ? 'Capital province' : p.city ? 'City province' : 'Province'}</div>
       <h2 class="display" style="font-size:24px;margin:2px 0 6px">${esc(p.name)}</h2>
       <div class="owner">${flagSVG(owner)}<div><div>${esc(oc.name)}</div>${relationPill(owner)}</div></div>
-      ${p.core !== owner ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
+      ${p.core !== owner && G.countries[p.core] && G.countries[p.core].alive ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
       <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}${works}
       <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
@@ -12598,6 +13381,8 @@ const UI = (function () {
     el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
     el.querySelectorAll('[data-wing]').forEach(r => r.onclick = () => selectWing(+r.dataset.wing));
     el.querySelectorAll('[data-pbuild]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.pbuild, p.id); toast(r.ok ? r.text : r.why, p.id, 'info'); renderLeft(); renderRight(); refreshTop(); });
+    if ($('#lp-spawn')) $('#lp-spawn').onclick = () => { sel.spawnProv = p.id; toast('New troops will gather in ' + p.name + '.', p.id, 'info'); renderLeft(); renderRight(); };
+    spinBuildings(performance.now(), true);
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
   }
@@ -12882,7 +13667,8 @@ const UI = (function () {
     const G = Sim.G, c = G.countries[G.player];
     const target = myArmiesSel().length === 1 ? myArmiesSel()[0] : null;
     let html = `<dl class="kv"><dt>Manpower</dt><dd>${fmtN(c.manpower)}</dd><dt>${esc(Economy.goodName('arms'))}</dt><dd>${fmtN(c.equipment)} (+${Math.round(c.eco ? c.eco.arms : 0)}/day)</dd></dl>
-      <p class="note">New divisions ${target ? 'join <b>' + esc(target.name) + '</b> if it is inside your borders when training ends, otherwise they' : ''} gather in a reserve army at ${esc(MAP.provs[c.capital]?.name || 'the capital')}.</p><div class="list">`;
+      <div class="pickrow"><label for="rec-prov">New troops gather in</label>${provSelect('rec-prov', spawnPick())}</div>
+      <p class="note">${target ? 'They join <b>' + esc(target.name) + '</b> instead if it is inside your borders when training ends. ' : ''}You can also open one of your provinces on the map and press Send new troops here.</p><div class="list">`;
     // an era may reserve units for some nations (Spartans for Sparta, legionaries for Rome)
     const trainable = (typeof Eras !== 'undefined' && !Eras.isBase() ? Eras.unitsFor(G.player) : LAND_TYPES).filter(t => !UNIT_TYPES[t].locked || Tech.unlocked(G.player, t));
     for (const t of trainable) {
@@ -12894,7 +13680,7 @@ const UI = (function () {
     }
     html += '</div>';
     if (c.queue.length) {
-      html += '<hr class="sep"><div class="label">In training</div><div class="list" style="margin-top:6px">' + c.queue.map(q => `<div class="row"><div class="grow"><div>${UNIT_TYPES[q.type].name}</div><div class="bar prog"><i style="width:${Math.round((1 - q.hours / q.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(q.hours / 24)} d</span></div>`).join('') + '</div>';
+      html += '<hr class="sep"><div class="label">In training</div><div class="list" style="margin-top:6px">' + c.queue.map(q => `<div class="row"><div class="grow"><div>${UNIT_TYPES[q.type].name} <span class="sub">in ${esc(MAP.provs[Sim.spawnProv(c, q)]?.name || '?')}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.hours / q.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(q.hours / 24)} d</span></div>`).join('') + '</div>';
     }
     return html;
   }
@@ -13033,11 +13819,13 @@ const UI = (function () {
       ${e.gold < 0 ? '<div class="why bad">In debt: you cannot build or buy, and stability falls.</div>' : ''}
       <p class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes. ${Economy.anyShort(G.player) ? '<a href="#" class="lnk" data-gotrade="goods">Some goods are running short: see Trade.</a>' : 'Goods, partners and deals are in the Trade tab.'}</p>`;
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
-    if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
-    html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+    const bp = buildPick();
+    if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row">${bicon(q.kind, 60)}<div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
+    html += `<div class="pickrow"><label for="build-prov">Build in</label>${provSelect('build-prov', bp, 'Best province for each')}</div>
+      <div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, bp); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="label" style="margin-top:8px">Military works</div>
-      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
-      <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
+      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k, bp); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player, bp).gold} gold</small></button>`; }).join('')}</div>
+      <div class="note">${bp < 0 ? 'Each building goes to your best province for it. Pick a province above, or click one on the map, to choose the place yourself.' : 'Buildings go up in ' + esc(MAP.provs[bp].name) + ' and appear there on the map.'}</div>`;
     return html;
   }
   function dealRow(d) {
@@ -13244,8 +14032,12 @@ const UI = (function () {
     bindTrade(body);
     body.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
       const t = myArmiesSel().length === 1 ? myArmiesSel()[0].id : 0;
-      if (Sim.recruit(G.player, b.dataset.rec, t)) { renderRight(); refreshTop(); }
+      if (Sim.recruit(G.player, b.dataset.rec, t, spawnPick())) { renderRight(); refreshTop(); }
     });
+    const pick = (id, fn) => { const s = body.querySelector('#' + id); if (s) s.onchange = () => { fn(+s.value); s.blur(); renderRight(); }; };
+    pick('rec-prov', v => { sel.spawnProv = v; });
+    pick('build-prov', v => { sel.buildProv = v; if (v >= 0) { const p = MAP.provs[v]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } });
+    spinBuildings(performance.now(), true);
     body.querySelectorAll('[data-war]').forEach(b => b.onclick = () => confirmWar(b.dataset.war));
     body.querySelectorAll('[data-dip]').forEach(b => b.onclick = () => { sel.dip = b.dataset.dip; renderRight(); body.scrollTop = 0; });
     body.querySelectorAll('[data-dipback]').forEach(b => b.onclick = () => { sel.dip = null; renderRight(); body.scrollTop = 0; });
@@ -13254,7 +14046,7 @@ const UI = (function () {
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
     body.querySelectorAll('[data-canceldeal]').forEach(b => b.onclick = () => { const r = Diplo.act('canceltrade', G.player, b.dataset.with, { id: +b.dataset.canceldeal }); toast(r.text, -1, 'info'); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-lift]').forEach(b => b.onclick = () => { const r = Diplo.act('lift', G.player, b.dataset.lift); toast(r.text, -1, 'info'); renderRight(); });
-    body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
+    body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build, buildPick()); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
     body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => { const r = Politics.take(G.player, b.dataset.dec); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-evopen]').forEach(b => b.onclick = () => showEvent());
@@ -13809,6 +14601,16 @@ const UI = (function () {
   let lastRefresh = 0, lastFront = 0, inFrame = false;
   // the unit models in the Train list turn slowly: one full turn every ten seconds
   const SPIN_MS = 10000;
+  // the build lists turn their building models slowly, like the units in Train (a turn every 10 s)
+  let bspinAt = 0;
+  function spinBuildings(now, force) {
+    if (!force && now - bspinAt < 50) return;
+    bspinAt = now;
+    const G = Sim.G; if (!G) return;
+    const yaw = -0.55 + (now % 10000) / 10000 * Math.PI * 2, era = Economy.eraId(), col = COUNTRY_BY_TAG[G.player].color;
+    if (!sel.collapsed && sel.tab === 'econ') try { Buildings.spin($('#rp-body'), era, col, yaw); } catch (e) { }
+    if (!$('#leftpanel').hidden) try { Buildings.spin($('#leftpanel'), era, col, yaw); } catch (e) { }
+  }
   function spinModels(now) {
     if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
     const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
@@ -13820,6 +14622,7 @@ const UI = (function () {
     panStep(dtPan);
     const G = Sim.G; if (!G) return;
     spinModels(now);
+    spinBuildings(now);
     // an event card answered elsewhere (or a finished conference) closes; one still waiting comes back
     const evCard = $('#modal').hidden ? null : $('#modal [data-evn]');
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;
@@ -13840,7 +14643,8 @@ const UI = (function () {
         inFrame = true;
         refreshTop();
         run($('#bottombar'), renderTrays);
-        if (document.activeElement?.id !== 'dp-search') run($('#drawer'), renderRight);
+        const ae = document.activeElement;
+        if (ae?.id !== 'dp-search' && !(ae?.tagName === 'SELECT' && ae.closest('#drawer'))) run($('#drawer'), renderRight);
         else run($('#ucard'), renderCard);
         if (!$('#leftpanel').hidden) run($('#leftpanel'), renderLeft);
         if (treeOpen) run($('#techtree'), renderTree);

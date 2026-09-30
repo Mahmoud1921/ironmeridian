@@ -4,7 +4,7 @@ const UI = (function () {
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let MAP;
-  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1 };
+  const sel = { prov: -1, armies: [], battle: 0, tab: 'army', fleet: 0, wing: 0, zone: -1, spawnProv: -1, buildProv: -1 };
   let pending = null; // {kind, armies}
   let startPick = 'GER';
   const HPS = [0, 3, 8, 18, 36, 72]; // game hours per real second by speed level
@@ -29,6 +29,20 @@ const UI = (function () {
     if (left) el.scrollLeft = left;
     return true;
   }
+  // your own provinces for a picker: capital first, then cities by size, then the rest by name
+  function ownProvs() {
+    const G = Sim.G, cap = G.countries[G.player].capital;
+    return MAP.provs.filter(p => G.owner[p.id] === G.player)
+      .sort((a, b) => (b.id === cap) - (a.id === cap) || (!!b.city - !!a.city) || (a.city && b.city ? b.pop - a.pop : a.name.localeCompare(b.name)));
+  }
+  function provSelect(id, cur, first) {
+    const cap = Sim.G.countries[Sim.G.player].capital;
+    return `<select class="field provpick" id="${id}" aria-label="Province">${first ? `<option value="-1"${cur < 0 ? ' selected' : ''}>${esc(first)}</option>` : ''}${ownProvs().map(p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)}${p.id === cap ? ' (capital)' : ''}</option>`).join('')}</select>`;
+  }
+  // where new troops gather: the province you last chose while you still hold it, else the capital
+  function spawnPick() { const G = Sim.G; return sel.spawnProv >= 0 && G.owner[sel.spawnProv] === G.player ? sel.spawnProv : G.countries[G.player].capital; }
+  function buildPick() { const G = Sim.G; return sel.buildProv >= 0 && G.owner[sel.buildProv] === G.player ? sel.buildProv : -1; }
+  const bicon = (k, n) => `<canvas class="bicon" data-bicon="${k}" width="${n || 76}" height="${n || 76}" aria-hidden="true"></canvas>`;
   let lockUntil = 0;
   let hoverEl = null;
   let hoverBtn = false;
@@ -359,10 +373,11 @@ const UI = (function () {
     const works = `<dt>Military</dt><dd>${INF.map(k => esc(Economy.kindName(k)) + (Economy.INFRA[k].max > 1 ? ' ' + Economy.infra(p.id, k) : '')).join(', ') || 'None'}</dd>`
       + (Seas.isCoastal(p.id) ? `<dt>Coast</dt><dd>${Seas.zonesOf(p.id).map(z => `<a href="#" class="lnk" data-zone="${z}">${esc(Seas.zone(z).name)}</a>`).join(', ')}</dd>` : '')
       + (Air.bombDamage(p.id) > 0.01 ? `<dt>Bomb damage</dt><dd class="bad">${pct(Air.bombDamage(p.id))} of output lost</dd>` : '');
-    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}"><span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
+    const infraBtn = k => { const chk = Economy.canBuild(G.player, k, p.id); const lvl = Economy.infra(p.id, k); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}${lvl && Economy.INFRA[k].max > 1 ? ' ' + (lvl + 1) : ''}</span><small>${Economy.buildCost(k, G.player, p.id).gold} gold</small></button>`; };
     const wingsHere = G.wings.filter(w => w.base === p.id);
-    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
-      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>` : '';
+    const buildHere = owner === G.player && !G.over ? `<div class="label" style="margin-top:6px">Build here</div><div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, p.id); return `<button class="btn sm" data-pbuild="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Makes about ' + f1(Economy.baseOut(k, p) * Economy.provMul(k, p, owner)) + ' ' + Economy.goodName(Economy.KINDS[k].good).toLowerCase() + ' a day' : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+      <div class="label" style="margin-top:6px">Military works</div><div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(infraBtn).join('')}</div>
+      <button class="btn sm${spawnPick() === p.id ? ' on' : ''}" id="lp-spawn" style="width:100%;margin-top:6px" ${spawnPick() === p.id ? 'disabled' : ''}>${spawnPick() === p.id ? 'New troops gather here' : 'Send new troops here'}</button>` : '';
     const armies = G.armies.filter(a => a.prov === p.id && !(a.sea && a.sea.phase !== 'prep'));
     const armyRows = armies.map(a => {
       const comp = compStr(a);
@@ -376,7 +391,7 @@ const UI = (function () {
       <div class="label">${isCap ? 'Capital province' : p.city ? 'City province' : 'Province'}</div>
       <h2 class="display" style="font-size:24px;margin:2px 0 6px">${esc(p.name)}</h2>
       <div class="owner">${flagSVG(owner)}<div><div>${esc(oc.name)}</div>${relationPill(owner)}</div></div>
-      ${p.core !== owner ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
+      ${p.core !== owner && G.countries[p.core] && G.countries[p.core].alive ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
       <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}${works}
       <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
@@ -393,6 +408,8 @@ const UI = (function () {
     el.querySelectorAll('[data-zone]').forEach(r => r.onclick = e => { e.preventDefault(); selectZone(+r.dataset.zone, true); });
     el.querySelectorAll('[data-wing]').forEach(r => r.onclick = () => selectWing(+r.dataset.wing));
     el.querySelectorAll('[data-pbuild]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.pbuild, p.id); toast(r.ok ? r.text : r.why, p.id, 'info'); renderLeft(); renderRight(); refreshTop(); });
+    if ($('#lp-spawn')) $('#lp-spawn').onclick = () => { sel.spawnProv = p.id; toast('New troops will gather in ' + p.name + '.', p.id, 'info'); renderLeft(); renderRight(); };
+    spinBuildings(performance.now(), true);
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
   }
@@ -677,7 +694,8 @@ const UI = (function () {
     const G = Sim.G, c = G.countries[G.player];
     const target = myArmiesSel().length === 1 ? myArmiesSel()[0] : null;
     let html = `<dl class="kv"><dt>Manpower</dt><dd>${fmtN(c.manpower)}</dd><dt>${esc(Economy.goodName('arms'))}</dt><dd>${fmtN(c.equipment)} (+${Math.round(c.eco ? c.eco.arms : 0)}/day)</dd></dl>
-      <p class="note">New divisions ${target ? 'join <b>' + esc(target.name) + '</b> if it is inside your borders when training ends, otherwise they' : ''} gather in a reserve army at ${esc(MAP.provs[c.capital]?.name || 'the capital')}.</p><div class="list">`;
+      <div class="pickrow"><label for="rec-prov">New troops gather in</label>${provSelect('rec-prov', spawnPick())}</div>
+      <p class="note">${target ? 'They join <b>' + esc(target.name) + '</b> instead if it is inside your borders when training ends. ' : ''}You can also open one of your provinces on the map and press Send new troops here.</p><div class="list">`;
     // an era may reserve units for some nations (Spartans for Sparta, legionaries for Rome)
     const trainable = (typeof Eras !== 'undefined' && !Eras.isBase() ? Eras.unitsFor(G.player) : LAND_TYPES).filter(t => !UNIT_TYPES[t].locked || Tech.unlocked(G.player, t));
     for (const t of trainable) {
@@ -689,7 +707,7 @@ const UI = (function () {
     }
     html += '</div>';
     if (c.queue.length) {
-      html += '<hr class="sep"><div class="label">In training</div><div class="list" style="margin-top:6px">' + c.queue.map(q => `<div class="row"><div class="grow"><div>${UNIT_TYPES[q.type].name}</div><div class="bar prog"><i style="width:${Math.round((1 - q.hours / q.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(q.hours / 24)} d</span></div>`).join('') + '</div>';
+      html += '<hr class="sep"><div class="label">In training</div><div class="list" style="margin-top:6px">' + c.queue.map(q => `<div class="row"><div class="grow"><div>${UNIT_TYPES[q.type].name} <span class="sub">in ${esc(MAP.provs[Sim.spawnProv(c, q)]?.name || '?')}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.hours / q.total) * 100)}%"></i></div></div><span class="sub">${Math.ceil(q.hours / 24)} d</span></div>`).join('') + '</div>';
     }
     return html;
   }
@@ -828,11 +846,13 @@ const UI = (function () {
       ${e.gold < 0 ? '<div class="why bad">In debt: you cannot build or buy, and stability falls.</div>' : ''}
       <p class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes. ${Economy.anyShort(G.player) ? '<a href="#" class="lnk" data-gotrade="goods">Some goods are running short: see Trade.</a>' : 'Goods, partners and deals are in the Trade tab.'}</p>`;
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
-    if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row"><div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
-    html += `<div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
+    const bp = buildPick();
+    if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row">${bicon(q.kind, 60)}<div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';
+    html += `<div class="pickrow"><label for="build-prov">Build in</label>${provSelect('build-prov', bp, 'Best province for each')}</div>
+      <div class="builds">${Economy.KIND_KEYS.map(k => { const chk = Economy.canBuild(G.player, k, bp); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? 'Builds in ' + MAP.provs[chk.prov].name : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
       <div class="label" style="margin-top:8px">Military works</div>
-      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}"><span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player).gold} gold</small></button>`; }).join('')}</div>
-      <div class="note">Build picks your best province. To choose the place yourself, click one of your provinces on the map.</div>`;
+      <div class="builds">${Economy.infraKinds().filter(k => Economy.INFRA[k].needs !== 'air' || Air.available()).map(k => { const chk = Economy.canBuild(G.player, k, bp); return `<button class="btn sm" data-build="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.ok ? INFRA_TIP[k] + ' Builds in ' + MAP.provs[chk.prov].name + '.' : chk.why)}">${bicon(k)}<span>${esc(Economy.kindName(k))}</span><small>${chk.ok ? chk.cost.gold : Economy.buildCost(k, G.player, bp).gold} gold</small></button>`; }).join('')}</div>
+      <div class="note">${bp < 0 ? 'Each building goes to your best province for it. Pick a province above, or click one on the map, to choose the place yourself.' : 'Buildings go up in ' + esc(MAP.provs[bp].name) + ' and appear there on the map.'}</div>`;
     return html;
   }
   function dealRow(d) {
@@ -1039,8 +1059,12 @@ const UI = (function () {
     bindTrade(body);
     body.querySelectorAll('[data-rec]').forEach(b => b.onclick = () => {
       const t = myArmiesSel().length === 1 ? myArmiesSel()[0].id : 0;
-      if (Sim.recruit(G.player, b.dataset.rec, t)) { renderRight(); refreshTop(); }
+      if (Sim.recruit(G.player, b.dataset.rec, t, spawnPick())) { renderRight(); refreshTop(); }
     });
+    const pick = (id, fn) => { const s = body.querySelector('#' + id); if (s) s.onchange = () => { fn(+s.value); s.blur(); renderRight(); }; };
+    pick('rec-prov', v => { sel.spawnProv = v; });
+    pick('build-prov', v => { sel.buildProv = v; if (v >= 0) { const p = MAP.provs[v]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, 6)); } });
+    spinBuildings(performance.now(), true);
     body.querySelectorAll('[data-war]').forEach(b => b.onclick = () => confirmWar(b.dataset.war));
     body.querySelectorAll('[data-dip]').forEach(b => b.onclick = () => { sel.dip = b.dataset.dip; renderRight(); body.scrollTop = 0; });
     body.querySelectorAll('[data-dipback]').forEach(b => b.onclick = () => { sel.dip = null; renderRight(); body.scrollTop = 0; });
@@ -1049,7 +1073,7 @@ const UI = (function () {
     body.querySelectorAll('[data-prov]').forEach(b => b.onclick = () => { if (+b.dataset.prov >= 0) selectProvince(+b.dataset.prov, true); });
     body.querySelectorAll('[data-canceldeal]').forEach(b => b.onclick = () => { const r = Diplo.act('canceltrade', G.player, b.dataset.with, { id: +b.dataset.canceldeal }); toast(r.text, -1, 'info'); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-lift]').forEach(b => b.onclick = () => { const r = Diplo.act('lift', G.player, b.dataset.lift); toast(r.text, -1, 'info'); renderRight(); });
-    body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
+    body.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const r = Economy.build(G.player, b.dataset.build, buildPick()); toast(r.ok ? r.text : r.why, r.ok ? r.prov : -1, 'info'); renderRight(); refreshTop(); renderLeft(); });
     body.querySelectorAll('[data-unbuild]').forEach(b => b.onclick = () => { Economy.cancelBuild(G.player, +b.dataset.unbuild); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => { const r = Politics.take(G.player, b.dataset.dec); toast(r.ok ? r.text : r.why, -1, 'info'); renderRight(); refreshTop(); });
     body.querySelectorAll('[data-evopen]').forEach(b => b.onclick = () => showEvent());
@@ -1604,6 +1628,16 @@ const UI = (function () {
   let lastRefresh = 0, lastFront = 0, inFrame = false;
   // the unit models in the Train list turn slowly: one full turn every ten seconds
   const SPIN_MS = 10000;
+  // the build lists turn their building models slowly, like the units in Train (a turn every 10 s)
+  let bspinAt = 0;
+  function spinBuildings(now, force) {
+    if (!force && now - bspinAt < 50) return;
+    bspinAt = now;
+    const G = Sim.G; if (!G) return;
+    const yaw = -0.55 + (now % 10000) / 10000 * Math.PI * 2, era = Economy.eraId(), col = COUNTRY_BY_TAG[G.player].color;
+    if (!sel.collapsed && sel.tab === 'econ') try { Buildings.spin($('#rp-body'), era, col, yaw); } catch (e) { }
+    if (!$('#leftpanel').hidden) try { Buildings.spin($('#leftpanel'), era, col, yaw); } catch (e) { }
+  }
   function spinModels(now) {
     if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
     const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
@@ -1615,6 +1649,7 @@ const UI = (function () {
     panStep(dtPan);
     const G = Sim.G; if (!G) return;
     spinModels(now);
+    spinBuildings(now);
     // an event card answered elsewhere (or a finished conference) closes; one still waiting comes back
     const evCard = $('#modal').hidden ? null : $('#modal [data-evn]');
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;
@@ -1635,7 +1670,8 @@ const UI = (function () {
         inFrame = true;
         refreshTop();
         run($('#bottombar'), renderTrays);
-        if (document.activeElement?.id !== 'dp-search') run($('#drawer'), renderRight);
+        const ae = document.activeElement;
+        if (ae?.id !== 'dp-search' && !(ae?.tagName === 'SELECT' && ae.closest('#drawer'))) run($('#drawer'), renderRight);
         else run($('#ucard'), renderCard);
         if (!$('#leftpanel').hidden) run($('#leftpanel'), renderLeft);
         if (treeOpen) run($('#techtree'), renderTree);
