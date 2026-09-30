@@ -912,6 +912,24 @@ const UI = (function () {
     const me = Sim.G.player, cap = Math.abs(Economy.balance(tag, tf.good)), need = tf.buy ? Math.max(1, -Economy.balance(me, tf.good)) : cap;
     tf.open = tag; tf.adj = 0;
     tf.amount = AMOUNTS.filter(a => a <= Math.max(1, Math.min(cap || need, need))).pop() || 1;
+    // start at a price they would take: at least their asking price when buying, at most their limit when selling
+    const w = Economy.worldPrice(tf.good), ba = Economy.bidAsk(tag, tf.good, me), step = x => Math.round(x * 20) / 20;
+    tf.adj = tf.buy ? Math.max(0, Math.ceil((ba.ask / w - 1) * 20 - 1e-6) / 20) : Math.min(0, Math.floor((ba.bid / w - 1) * 20 + 1e-6) / 20);
+    tf.adj = Math.max(-0.4, Math.min(0.8, step(tf.adj)));
+  }
+  // the world market: every good's price, how it compares with normal, and where it went in the last month
+  function worldMarket() {
+    const rows = Economy.GOODS.map(k => {
+      const p = Economy.worldPrice(k), rel = p / Economy.BASE_PRICE[k], tr = Economy.priceTrend(k);
+      const pct = Math.round((rel - 1) * 100), x = Math.max(0, Math.min(100, (Math.log(rel) / Math.log(2) + 1) * 50));
+      const arrow = Math.abs(tr) < 0.01 ? '<span class="tr">steady</span>' : `<span class="tr ${tr > 0 ? 'up' : 'down'}">${tr > 0 ? '▲' : '▼'} ${Math.abs(Math.round(tr * 100)) || '<1'}%</span>`;
+      return `<div class="wm" data-wm="${k}" title="${esc(Economy.goodName(k))}: ${p.toFixed(2)} gold a unit, ${pct === 0 ? 'the normal price' : Math.abs(pct) + '% ' + (pct > 0 ? 'above' : 'below') + ' normal'}">
+        <span class="wn">${gIcon(k)}${esc(shortGood(k))}</span><b class="num">${p.toFixed(2)}</b>
+        <span class="wbar"><i style="left:${x}%" class="${pct > 10 ? 'hi' : pct < -10 ? 'lo' : ''}"></i></span>
+        <span class="wp ${pct > 10 ? 'neg' : pct < -10 ? 'pos' : ''}">${pct > 0 ? '+' : ''}${pct}%</span>${arrow}</div>`;
+    }).join('');
+    return `<div class="wmarket"><div class="sectionlabel"><span class="label">World market · gold a unit</span><span class="label">vs normal · month</span></div>${rows}
+      <p class="note">Nations pay more than this when they badly need a good, and only buy below it when their stores are full. Prices rise when the world lacks a good.</p></div>`;
   }
   function tradePanel() {
     const G = Sim.G, me = G.player, c = G.countries[me], e = c.eco;
@@ -926,6 +944,7 @@ const UI = (function () {
         <button data-tv="deals" class="${sel.tv === 'deals' ? 'on' : ''}" role="tab" aria-selected="${sel.tv === 'deals'}">Deals<small>${deals.length} active</small></button>
       </div>`;
     if (sel.tv === 'goods') {
+      h += worldMarket();
       h += `<div class="rows">${Economy.GOODS.map(k => {
         const n = Economy.balance(me, k), imp = e.imp[k], exp = e.exp[k], short = n < -0.05, sur = n > Math.max(1, e.need[k] * 0.1);
         const w = Math.min(50, Math.abs(n) / Math.max(4, e.need[k] || 1) * 50), days = Economy.daysLeft(me, k);
@@ -933,7 +952,7 @@ const UI = (function () {
           <div class="gi">${gIcon(k)}</div>
           <div class="nm">${esc(Economy.goodName(k))} <span class="net ${short ? 'neg' : sur ? 'pos' : ''}">${sgn(n)} a day</span></div>
           <div class="act">${short ? `<button class="btn sm primary" data-find="buy:${k}">Find sellers</button>` : sur ? `<button class="btn sm" data-find="sell:${k}">Find buyers</button>` : ''}</div>
-          <div class="meta">Made ${f1(e.prod[k])} · used ${f1(e.need[k])}${imp > 0.05 ? ' · bought ' + f1(imp) : ''}${exp > 0.05 ? ' · sold ' + f1(exp) : ''} · ${short ? (e.stock[k] > 0.5 ? 'stock lasts ' + days + ' days' : '<span class="neg">no stock left</span>') : 'stock ' + fmtN(e.stock[k])}</div>
+          <div class="meta">World price <b class="num">${Economy.worldPrice(k).toFixed(2)}</b> · made ${f1(e.prod[k])} · used ${f1(e.need[k])}${imp > 0.05 ? ' · bought ' + f1(imp) : ''}${exp > 0.05 ? ' · sold ' + f1(exp) : ''} · ${short ? (e.stock[k] > 0.5 ? 'stock lasts ' + days + ' days' : '<span class="neg">no stock left</span>') : 'stock ' + fmtN(e.stock[k])}</div>
           <div class="dbar"><i style="${n < 0 ? `right:50%;width:${w}%;background:var(--bad)` : `left:50%;width:${w}%;background:var(--good)`}"></i></div>
         </div>`;
       }).join('')}
@@ -945,19 +964,19 @@ const UI = (function () {
         <div class="ln"><span>I want to</span><div class="seg"><button class="chip ${tf.buy ? 'on' : ''}" data-tb="1">Buy</button><button class="chip ${!tf.buy ? 'on' : ''}" data-tb="0">Sell</button></div></div>
         <div class="ln"><span>Good</span>${Economy.GOODS.map(k => `<button class="chip ${k === tf.good ? 'on' : ''}" data-tg="${k}" title="${esc(Economy.goodName(k))}">${gIcon(k)}${esc(shortGood(k))}</button>`).join('')}</div>
       </div>
-      <div class="sectionlabel"><span class="label">${list.filter(x => tf.buy ? x.b > 0.5 : x.b < -0.5).length} nations ${tf.buy ? 'have spare' : 'need'} ${esc(gname)}</span><span class="label">World price ${Economy.worldPrice(tf.good).toFixed(2)}</span></div>
+      <div class="sectionlabel"><span class="label">${list.filter(x => tf.buy ? x.b > 0.5 : x.b < -0.5).length} nations ${tf.buy ? 'have spare' : 'need'} ${esc(gname)}</span><span class="label">World price ${Economy.worldPrice(tf.good).toFixed(2)} a unit</span></div>
       <div class="rows">${list.map(({ c: p, b }) => {
         const open = tf.open === p.tag, t = tfTerms();
         const chk = Diplo.can('trade', me, p.tag, t);
         const ans = chk.ok ? Economy.answerDeal(me, p.tag, t) : null;
         const pill = !chk.ok ? '<span class="pill no">Blocked</span>' : ans.yes ? '<span class="pill yes">Likely yes</span>' : '<span class="pill no">Unlikely</span>';
-        const r = Diplo.rel(me, p.tag);
+        const r = Diplo.rel(me, p.tag), ba = Economy.bidAsk(p.tag, tf.good, me);
         return `<div class="partner ${open ? 'open' : ''}" data-partner="${p.tag}">
-          <div class="top">${flagSVG(p.tag)}<div class="grow"><div class="nm">${esc(p.name)}</div><div class="sub">${b > 0.05 ? 'Spare ' + f1(b) : b < -0.05 ? 'Short by ' + f1(-b) : 'None spare'} ${esc(gname)} a day · relations ${r > 0 ? '+' : ''}${r}${Diplo.borders(me, p.tag) ? '' : ' · by sea'}</div></div>
+          <div class="top">${flagSVG(p.tag)}<div class="grow"><div class="nm">${esc(p.name)}</div><div class="sub">${b > 0.05 ? 'Spare ' + f1(b) : b < -0.05 ? 'Short by ' + f1(-b) : 'None spare'} ${esc(gname)} a day · ${tf.buy ? 'sells from ' + ba.ask.toFixed(2) : 'pays up to ' + ba.bid.toFixed(2)} a unit${!tf.buy && ba.need >= 0.7 ? ' (badly needs it)' : !tf.buy && ba.need < 0 ? ' (has plenty)' : ''} · relations ${r > 0 ? '+' : ''}${r}${Diplo.borders(me, p.tag) ? '' : ' · by sea'}</div></div>
             ${open ? pill : pill + `<button class="btn sm" data-offer="${p.tag}">Offer</button>`}</div>
           ${open ? `<div class="dealform">
             <div class="stepper"><span>Amount a day</span><button class="iconbtn" data-amt="-1" aria-label="Less"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${tf.amount}</b><button class="iconbtn" data-amt="1" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button><small>${Math.abs(b) > 0.05 ? (tf.buy ? 'they spare ' : 'they need ') + f1(Math.abs(b)) : ''}</small></div>
-            <div class="stepper"><span>Gold a day</span><button class="iconbtn" data-adj="-0.05" aria-label="Lower price"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${t.price}</b><button class="iconbtn" data-adj="0.05" aria-label="Higher price"><svg class="i"><use href="#i-plus"/></svg></button><small>${tf.adj === 0 ? 'world price' : (tf.adj > 0 ? '+' : '') + Math.round(tf.adj * 100) + '%'}</small></div>
+            <div class="stepper"><span>Gold a day</span><button class="iconbtn" data-adj="-0.05" aria-label="Lower price"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${t.price}</b><button class="iconbtn" data-adj="0.05" aria-label="Higher price"><svg class="i"><use href="#i-plus"/></svg></button><small>${tf.adj === 0 ? 'world price' : (tf.adj > 0 ? '+' : '') + Math.round(tf.adj * 100) + '% vs world'}</small></div>
             <div class="summary">${esc(tf.buy ? `You buy ${tf.amount} ${gname} a day from ${p.name} for ${t.price} gold a day.` : `You sell ${tf.amount} ${gname} a day to ${p.name} for ${t.price} gold a day.`)}<small>${esc(!chk.ok ? chk.why + '.' : 'Uses 1 deal slot and ' + Diplo.COST.trade + ' political power. ' + (ans.yes ? 'They would agree.' : 'They would refuse: ' + ans.why.toLowerCase() + '.'))}</small></div>
             <div style="display:flex;gap:6px;justify-content:space-between"><button class="btn sm danger" data-emb="${p.tag}" ${Diplo.can('embargo', me, p.tag).ok ? '' : 'disabled'}>Embargo</button><span style="display:flex;gap:6px"><button class="btn sm ghost" data-tcancel="1">Cancel</button><button class="btn sm primary" data-send="${p.tag}" ${chk.ok && c.pp >= Diplo.COST.trade ? '' : 'disabled'}>Send offer</button></span></div>
           </div>` : ''}
@@ -968,7 +987,7 @@ const UI = (function () {
       h += grp('Buying', deals.filter(d => d.to === me)) + grp('Selling', deals.filter(d => d.from === me));
       const emb = G.dip.embargo.filter(x => x.by === me || x.of === me);
       h += '<div class="sectionlabel"><span class="label">Embargoes</span></div>' + (emb.length ? '<div class="list">' + emb.map(x => `<div class="row">${flagSVG(x.by === me ? x.of : x.by)}<div class="grow">${x.by === me ? 'Your embargo on ' + esc(G.countries[x.of].name) : esc(G.countries[x.by].name) + ' embargoes you'}</div>${x.by === me ? `<button class="btn sm" data-lift="${x.of}">Lift</button>` : ''}</div>`).join('') + '</div>' : '<p class="note">None. Embargo a nation from its row under Partners.</p>');
-      h += `<div class="sectionlabel"><span class="label">World prices, gold per unit</span></div><div class="prices">${Economy.GOODS.map(k => `<span>${gIcon(k)}${esc(Economy.goodName(k))}</span><span class="num">${Economy.worldPrice(k).toFixed(2)}</span>`).join('')}</div>`;
+      h += '<p class="note" style="margin-top:10px">World prices are under <a href="#" data-gotrade="goods">Goods</a>.</p>';
     }
     return h;
   }
@@ -981,7 +1000,7 @@ const UI = (function () {
     body.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { tf.good = b.dataset.tg; if (tf.open) openOffer(tf.open); redo(); });
     body.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => { openOffer(b.dataset.offer); redo(); });
     body.querySelectorAll('[data-amt]').forEach(b => b.onclick = () => { const i = AMOUNTS.indexOf(tf.amount); tf.amount = AMOUNTS[Math.max(0, Math.min(AMOUNTS.length - 1, (i < 0 ? 4 : i) + +b.dataset.amt))]; redo(); });
-    body.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { tf.adj = Math.max(-0.25, Math.min(0.25, Math.round((tf.adj + +b.dataset.adj) * 100) / 100)); redo(); });
+    body.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { tf.adj = Math.max(-0.4, Math.min(0.8, Math.round((tf.adj + +b.dataset.adj) * 100) / 100)); redo(); });
     body.querySelectorAll('[data-tcancel]').forEach(b => b.onclick = () => { tf.open = null; redo(); });
     body.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
       const r = Diplo.act('trade', me, b.dataset.send, tfTerms());

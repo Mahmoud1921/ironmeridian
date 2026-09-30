@@ -532,8 +532,15 @@ const Diplo = (function () {
     if (typeof Economy !== 'undefined') Economy.aiTrade(c);
     if (Sim.root(tag) !== tag) return;                  // puppets follow their overlord
     const others = Object.values(g.countries).filter(o => o.alive && o.tag !== tag);
-    // warm up to like-minded neighbours
-    const friend = others.filter(o => o.gov === c.gov && borders(tag, o.tag) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 4)];
+    // warm up to whoever it needs: a seller of what it lacks that is too cold to trade with, its suppliers, else like-minded neighbours
+    let friend = null;
+    if (typeof Economy !== 'undefined' && c.eco && c.eco.need) {
+      const lack = Economy.GOODS.filter(k => Economy.needOf(tag, k) >= 0.4);
+      friend = others.filter(o => !Sim.atWar(tag, o.tag) && rel(tag, o.tag) < 0 && rel(tag, o.tag) > -50 && lack.some(k => Economy.balance(o.tag, k) > 1))
+        .sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0]
+        || others.filter(o => rel(tag, o.tag) < 40 && g.dip.trade.some(d => d.from === o.tag && d.to === tag && Economy.dependence(tag, d.good, o.tag) > 0.25))[0];
+    }
+    if (!friend) friend = others.filter(o => o.gov === c.gov && borders(tag, o.tag) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 4)];
     if (friend && c.pp > 40) aiDo('improve', tag, friend.tag);
     const threat = threatOf(tag);
     const fac = Sim.factionOf(tag);
@@ -568,10 +575,15 @@ const Diplo = (function () {
       if (foe) aiDo('embargo', tag, foe.tag);
     }
     // expansionist regimes press claims on weak neighbours, and go to war when refused
-    if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12) {
+    // ...but only when it is ready: no war already, no stronger neighbour at its back, stores and treasury able to carry a war
+    if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12 && warReady(c)) {
       const mine = sidePower(Sim.coalition(tag));
-      const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0)
-        .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) })).filter(x => x.v * 1.8 < mine).sort((a, b) => a.v - b.v)[0];
+      const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0 && o.tag !== threat)
+        // a nation already fighting someone else can spare only part of its army
+        .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) * (Sim.isAtWar(o.tag) ? 0.6 : 1) }))
+        // it would lose goods it buys from the victim: it needs a bigger edge to make that worth it
+        .map(x => ({ ...x, need: 1.8 + (typeof Economy !== 'undefined' ? Economy.GOODS.reduce((s, k) => s + Economy.dependence(tag, k, x.o.tag), 0) : 0) }))
+        .filter(x => x.v * x.need < mine).sort((a, b) => a.v - b.v)[0];
       if (victim && !g.dip.plan[tag]) g.dip.plan[tag] = { victim: victim.o.tag, at: g.hour + 30 * DAY };
     }
     // a month after deciding, cut the trade (done in Economy.aiTrade) and make the demand
@@ -580,10 +592,24 @@ const Diplo = (function () {
       delete g.dip.plan[tag];
       if (alive(plan.victim) && !Sim.atWar(tag, plan.victim)) aiDo('demand', tag, plan.victim);
     }
-    // losing wars: sue for peace
+    // losing wars: sue for peace. Also when clearly outmatched, or when the treasury and stores are giving out.
+    const broke = c.eco && c.eco.gold < 0 && c.eco.debtDays > 60;
+    const starving = typeof Economy !== 'undefined' && c.eco && c.eco.need && Economy.needOf(tag, 'food') >= 1 && c.eco.sat.food < 0.7;
     for (const e of Sim.enemiesOf(tag)) {
-      if (warScore(tag, e) < -45 && R() < 0.5) { aiDo('peace', tag, e, { keep: true }); break; }
+      const ws = warScore(tag, e), odds = sidePower(Sim.coalition(tag)) / Math.max(1, sidePower(Sim.coalition(e)));
+      if ((ws < -45 && R() < 0.5) || (ws < -15 && odds < 0.5 && R() < 0.4) || ((broke || starving) && ws < 5 && R() < 0.3)) { aiDo('peace', tag, e, { keep: true }); break; }
     }
+  }
+  // can it afford a new war? a sound treasury, food and fuel not running out, equipment for its army
+  function warReady(c) {
+    const tag = c.tag, e = c.eco;
+    if (e && e.need && typeof Economy !== 'undefined') {
+      if (e.gold < 0 || e.goldDelta < -2) return false;
+      if (Economy.needOf(tag, 'food') >= 0.7 || Economy.needOf(tag, 'fuel') >= 0.7) return false;
+    }
+    const divs = G().armies.filter(a => a.owner === tag).reduce((s, a) => s + a.units.length, 0);
+    if (divs < Math.max(2, (c.baseDivs || 4) * 0.9)) return false;      // rebuild the army first
+    return true;
   }
   function aiDo(action, from, to, terms) {
     if (!can(action, from, to, terms).ok) return null;

@@ -2,7 +2,8 @@
 // Automated playtest: drives the built game in a real browser like a player would,
 // clicking once per action and checking the action took effect. Reports dead clicks,
 // script errors, broken game-state invariants and frame-time spikes.
-//   node tests/playtest.js [--quick] [--seed N] [--browser chromium|firefox] [--only navy,eras]
+//   node tests/playtest.js [--quick] [--seed N] [--browser chromium|firefox] [--only navy,eras] [--serial] [--jobs N]
+// By default the eight parts run side by side, four at a time; --serial runs them one after another in one browser.
 // Exit code 1 when any check fails. Run after every change: build, playtest, fix, repeat.
 'use strict';
 const path = require('path');
@@ -20,15 +21,18 @@ let rnd = SEED; const rand = () => (rnd = (rnd * 1103515245 + 12345) % 214748364
 const pick = a => a[Math.floor(rand() * a.length)];
 
 const results = [];
-function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail || '' }); console.log((ok ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : '')); }
+const T0 = Date.now();
+function check(name, ok, detail) { results.push({ name, ok: !!ok, detail: detail || '' }); console.log((ok ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : '') + (process.env.TIMING ? '  [' + Math.round((Date.now() - T0) / 1000) + ' s]' : '')); }
 
 async function clickEl(page, sel, opts = {}) {
   const loc = page.locator(sel).first();
   if (!(await loc.count())) return false;
+  // a hidden button is a dead click: give it a moment to show, but do not sit in Playwright's 30 s default
+  await loc.waitFor({ state: 'visible', timeout: opts.timeout || 3000 }).catch(() => {});
   // scroll it into view (again if a panel refresh moved it meanwhile), like a person scrolling a list
   let box = null;
   for (let i = 0; i < 4; i++) {
-    await loc.scrollIntoViewIfNeeded().catch(() => {});
+    await loc.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
     box = await loc.boundingBox();
     const vp = page.viewportSize();
     if (box && box.y >= 0 && box.y + box.height <= vp.height && box.x >= 0 && box.x + box.width <= vp.width) break;
@@ -46,7 +50,8 @@ async function clickWorld(page, wx, wy, button = 'left') {
   await page.mouse.click(sx, sy, { button });
   return [sx, sy];
 }
-const waitFor = async (page, fn, arg, ms = 400) => { try { await page.waitForFunction(fn, arg, { timeout: ms }); return true; } catch { return false; } };
+// parts running side by side share the CPU, so a click gets a little longer to show (800 ms instead of 400)
+const waitFor = async (page, fn, arg, ms = args.includes('--report') ? 800 : 400) => { try { await page.waitForFunction(fn, arg, { timeout: ms }); return true; } catch { return false; } };
 // the main menu's New game: pick an era (optional), then Choose nation opens the nation picker
 async function toPicker(page, era) {
   await waitFor(page, () => !document.getElementById('menu').hidden, null, 3000);
@@ -101,12 +106,16 @@ window.navyInvariants = () => {
   return bad;
 };`;
 
+// random events can fire at any moment of a long run; parts that do not test events answer them at once
+// (the desktop part also signs any peace conference, which would otherwise hold the clock)
+const autoAnswer = (page, peace) => page.evaluate(peace => setInterval(() => { try { if (Sim.G && Events.open().length) while (Events.open().length) Events.choose(Events.open()[0].n, 0); if (peace && Sim.G && Sim.G.peace) Peace.done(Sim.G.peace); } catch (e) {} }, 100), !!peace);
+
 async function desktopRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  await page.goto(FILE);
+  await page.goto(FILE); await autoAnswer(page, true);
   check('boot: loading screen clears', await waitFor(page, () => document.getElementById('loading').hidden, null, 15000));
   check('boot: the main menu shows first', await page.evaluate(() => !document.getElementById('menu').hidden && document.getElementById('start').hidden));
   check('menu: New game then Choose nation opens the nation picker', await toPicker(page));
@@ -156,7 +165,7 @@ async function desktopRun(browser) {
     if (!(await waitFor(page, t => document.querySelector(`.tab[data-tab="${t}"]`).classList.contains('on'), t))) dead++;
     await page.waitForTimeout(120);
   }
-  check('tabs: switch on first click', dead === 0, dead + ' dead clicks');
+  check('tabs: switch on first click', dead === 0, dead + ' dead clicks' + (dead ? ' · ' + await page.evaluate(() => { const b = document.querySelector('.tab[data-tab="diplo"]').getBoundingClientRect(); const e = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2); const m = [...document.querySelectorAll('.modal:not([hidden]), #offer:not([hidden]), #event:not([hidden])')].map(x => x.id || x.className); return 'under ' + (e && (e.id || e.className)) + ' · ' + document.getElementById('modal').textContent.replace(/\s+/g, ' ').slice(0, 160) + ' · ' + UI._sel().tab; }) : ''));
   await page.keyboard.press('6');
   check('tabs: key 6 opens the Trade tab', await waitFor(page, () => UI._sel().tab === 'trade' && document.getElementById('drawer').classList.contains('open')));
   await page.keyboard.press('Escape');
@@ -377,12 +386,21 @@ async function desktopRun(browser) {
     const smooth = await page.evaluate(async () => {
       const G = Sim.G;
       G.speed = 3; G.paused = false;
-      const cands = G.armies.filter(x => x.owner === G.player && !x.battle && x.units.length);
+      const cands = G.armies.filter(x => x.owner === G.player && !x.battle && x.units.length), h0 = G.hour;
       let a = null;
       for (const c of cands) {
         const lm = Sim.MAP.provs[c.prov].lm;
         const targets = Sim.MAP.provs.filter(p => G.owner[p.id] === G.player && p.lm === lm && Sim.distKm(c.prov, p.id) > 250).sort((p, q) => Sim.distKm(c.prov, p.id) - Sim.distKm(c.prov, q.id)).slice(0, 20);
         // the AI may have taken much of the homeland by now (seaborne landings), so a two-step march is enough
+        for (const t of targets) if (Sim.orderMove(c, t.id, 'redeploy') && c.path.length >= 2) { a = c; break; }
+        if (a) break;
+      }
+      // the homeland may be cut in two (or lost: the test's war can end the game) by now:
+      // follow an army of a nation at peace marching through its own land instead, with the clock running
+      if (!a && G.over) { G.over = false; G.paused = false; document.querySelectorAll('#modal').forEach(m => m.hidden = true); }
+      if (!a) for (const c of G.armies.filter(x => x.owner !== G.player && !Sim.isAtWar(x.owner) && !x.battle && !x.sea && !x.path.length && x.units.length)) {
+        const lm = Sim.MAP.provs[c.prov].lm;
+        const targets = Sim.MAP.provs.filter(p => G.owner[p.id] === c.owner && p.lm === lm && Sim.distKm(c.prov, p.id) > 250).sort((p, q) => Sim.distKm(c.prov, p.id) - Sim.distKm(c.prov, q.id)).slice(0, 10);
         for (const t of targets) if (Sim.orderMove(c, t.id, 'redeploy') && c.path.length >= 2) { a = c; break; }
         if (a) break;
       }
@@ -410,15 +428,16 @@ async function desktopRun(browser) {
           }
           if (a.prov !== prov) { crossed++; prov = a.prov; }
           if (d && onScreen) last = { x: d.x, y: d.y };
-          if (performance.now() - t0 < 3500 && a.path.length) requestAnimationFrame(f); else done();
+          // a busy machine draws fewer frames: watch until there are enough of them (at most 10 s)
+          if ((performance.now() - t0 < 3500 || steps.length < 30) && performance.now() - t0 < 10000 && a.path.length) requestAnimationFrame(f); else done();
         })();
       });
       const s = steps.filter(x => x > 0).sort((x, y) => x - y);
-      return { frames: steps.length, still: steps.filter(x => x === 0).length, back, med: s[Math.floor(s.length / 2)] || 0, max: s[s.length - 1] || 0, crossed };
+      return { frames: steps.length, still: steps.filter(x => x === 0).length, back, med: s[Math.floor(s.length / 2)] || 0, max: s[s.length - 1] || 0, crossed, hours: G.hour - h0, peace: !!G.peace, own: a.owner, path: a.path.length, arrived: !a.path.length };
     });
     check('movement: an army can be sent on a long march', !!smooth && !smooth.none, smooth && smooth.none ? JSON.stringify(smooth) : '');
     if (smooth && !smooth.none) {
-      check('movement: marching troops move every frame', smooth.frames > 20 && smooth.still / smooth.frames < 0.15, `${smooth.frames - smooth.still}/${smooth.frames} frames moved`);
+      check('movement: marching troops move every frame', (smooth.frames > 20 || (smooth.arrived && smooth.frames >= 10)) && smooth.still / smooth.frames < 0.15, `${smooth.frames - smooth.still}/${smooth.frames} frames moved` + (smooth.frames - smooth.still < smooth.frames * 0.85 ? ' · ' + JSON.stringify({ hours: smooth.hours, peace: smooth.peace, own: smooth.own, path: smooth.path }) : ''));
       check('movement: no jumps or stutters along the route', smooth.max < smooth.med * 6 + 0.02 && smooth.back === 0, `median step ${smooth.med.toFixed(3)}, largest ${smooth.max.toFixed(3)}, ${smooth.back} backward steps, crossed ${smooth.crossed} provinces`);
     }
   }
@@ -457,7 +476,7 @@ async function economyRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(FILE);
+  await page.goto(FILE); await autoAnswer(page);
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await toPicker(page);
   await clickEl(page, '#start .ncard[data-tag="GER"]');
@@ -471,6 +490,21 @@ async function economyRun(browser) {
   // Economy tab
   await clickEl(page, '.tab[data-tab="trade"]');
   check('trade: the Goods part lists every good', await waitFor(page, () => document.querySelectorAll('#rp-body .good[data-good]').length === 5 && /Gold/.test(document.getElementById('tb-stats').textContent), null, 1500));
+  check('trade: Goods shows the world market price of every good', await G(() => document.querySelectorAll('#rp-body .wmarket .wm').length === 5 && /World market/.test(document.getElementById('rp-body').textContent)));
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/world-market.png') });
+  // a nation running out pays above the world price; one with full stores only buys below it and refuses a sale at it
+  const bids = await G(() => {
+    const t = Object.values(Sim.G.countries).filter(c => c.alive && c.tag !== 'GER' && c.eco && c.eco.need && c.eco.need.fuel > 1)[0], e = t.eco, keep = { s: e.stock.fuel, p: e.prod.fuel, x: e.exp.fuel, i: e.imp.fuel };
+    e.prod.fuel = 0; e.imp.fuel = 0; e.exp.fuel = 0; e.stock.fuel = e.need.fuel * 10;
+    const hi = Economy.priceMul(t.tag, 'fuel', true);
+    e.prod.fuel = e.need.fuel * 1.2; e.stock.fuel = e.need.fuel * 88;
+    const lo = Economy.priceMul(t.tag, 'fuel', true);
+    const amt = Math.max(1, Math.round(e.need.fuel * 0.2));
+    const ans = Economy.answerDeal('GER', t.tag, { good: 'fuel', amount: amt, price: Economy.fairPrice('fuel', amt), sell: true });
+    e.stock.fuel = keep.s; e.prod.fuel = keep.p; e.exp.fuel = keep.x; e.imp.fuel = keep.i;
+    return { tag: t.tag, hi: +hi.toFixed(2), lo: +lo.toFixed(2), yes: ans.yes, why: ans.why };
+  });
+  check('trade: need sets the price a nation pays', bids.hi > 1.15 && bids.lo < 0.95 && !bids.yes, JSON.stringify(bids));
   await clickEl(page, '.tab[data-tab="econ"]');
   check('economy: tab shows money and construction', await waitFor(page, () => /Health/.test(document.getElementById('rp-body').textContent) && !!document.querySelector('#rp-body [data-build]'), null, 1500));
   const q0 = await G(() => Sim.G.countries.GER.eco.queue.length), g0 = await G(() => Sim.G.countries.GER.eco.gold);
@@ -652,7 +686,7 @@ async function navyRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(FILE);
+  await page.goto(FILE); await autoAnswer(page);
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await toPicker(page);
   await clickEl(page, '#start .ncard[data-tag="ENG"]');
@@ -855,7 +889,7 @@ async function diplomacyRun(browser) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(FILE);
+  await page.goto(FILE); await autoAnswer(page);
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await toPicker(page);
   await clickEl(page, '#start .ncard[data-tag="GER"]');
@@ -1169,7 +1203,7 @@ async function politicsRun(browser) {
   check('save: a save from another era loads that era', await waitFor(page, s => Sim.G && !Eras.isBase() && Eras.info().id === 'napoleonic-1805' && Sim.G.hour === s.hour && Sim.G.owner.join() === s.owner, s1805, 3000), await G(() => JSON.stringify({ era: Eras.isBase() ? 'base' : Eras.info().id, g: !!Sim.G, hour: Sim.G && Sim.G.hour, start: !document.getElementById('start').hidden, menu: !document.getElementById('menu').hidden, modal: document.getElementById('modal').hidden ? '' : document.querySelector('#modal .panel').innerText.slice(0, 80), saves: Save.list().map(s => s.slot + ':' + (s.era || '-')) })));
   check('save: an exported file loads again', await G(t => { const r = Save.parse(t); return r.ok && r.data.player === 'ITA' && r.data.era === 'ww2-1936'; }, expText));
   check('save: a broken file is refused with a reason', await G(() => { const a = Save.parse('{"hello":1}'), b = Save.parse('not json'); return !a.ok && !b.ok && a.why.length > 5; }));
-  await page.setInputFiles('#sv-file', { name: 'save.json', mimeType: 'application/json', buffer: Buffer.from(expText) }).catch(() => {});
+  await page.setInputFiles('#sv-file', { name: 'save.json', mimeType: 'application/json', buffer: Buffer.from(expText) }, { timeout: 2000 }).catch(() => {});
   await G(() => { document.getElementById('modal').hidden = true; });
   await clickEl(page, '#tb-menu'); await clickEl(page, '#modal [data-x="saves"]');
   await page.setInputFiles('#sv-file', { name: 'save.json', mimeType: 'application/json', buffer: Buffer.from(expText) });
@@ -1274,8 +1308,42 @@ async function mobileRun(browser) {
   await ctx.close();
 }
 
+// Without --only (and without --serial) the parts run side by side, each in its own browser, a few at a time.
+const SECTIONS = ['diplomacy', 'desktop', 'economy', 'eras', 'navy', 'politics', 'menu', 'mobile'];   // longest first
+const REPORT = args.includes('--report') ? args[args.indexOf('--report') + 1] : null;
+async function parallelRun() {
+  const { spawn } = require('child_process');
+  const os = require('os');
+  const jobs = args.includes('--jobs') ? +args[args.indexOf('--jobs') + 1] : Math.max(1, Math.min(4, os.cpus().length));
+  const pass = args.filter((a, i) => ['--quick'].includes(a) || ['--seed', '--browser'].includes(args[i - 1]) || ['--seed', '--browser'].includes(a));
+  console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''}, ${jobs} parts at a time)`);
+  const t0 = Date.now(), queue = SECTIONS.slice(), all = [], times = {};
+  async function worker() {
+    while (queue.length) {
+      const k = queue.shift(), rep = path.resolve(__dirname, '.part-' + k + '.json'), s0 = Date.now();
+      let out = '';
+      const code = await new Promise(res => {
+        const ch = spawn(process.execPath, [__filename, '--only', k, '--report', rep, ...pass], { cwd: process.cwd() });
+        ch.stdout.on('data', d => out += d); ch.stderr.on('data', d => out += d);
+        ch.on('close', res);
+      });
+      times[k] = Math.round((Date.now() - s0) / 1000);
+      let part = [];
+      try { part = JSON.parse(fs.readFileSync(rep, 'utf8')).results; fs.unlinkSync(rep); } catch { part = [{ name: k + ': part finished', ok: false, detail: 'exit ' + code + ' ' + out.split('\n').slice(-3).join(' ') }]; }
+      all.push(...part);
+      console.log(`\n── ${k} (${times[k]} s)\n` + out.split('\n').filter(l => /^  (ok|FAIL)/.test(l)).join('\n'));
+    }
+  }
+  await Promise.all(Array.from({ length: jobs }, worker));
+  const failed = all.filter(r => !r.ok), secs = Math.round((Date.now() - t0) / 1000);
+  fs.writeFileSync(path.resolve(__dirname, 'last-report.json'), JSON.stringify({ when: new Date().toISOString(), browser: BROWSER, seed: SEED, seconds: secs, parts: times, results: all }, null, 1));
+  console.log(failed.length ? `\n${failed.length} of ${all.length} checks failed in ${secs} s` + failed.map(r => '\n  FAIL ' + r.name + (r.detail ? ' — ' + r.detail : '')).join('') : `\nAll ${all.length} checks passed in ${secs} s`);
+  process.exit(failed.length ? 1 : 0);
+}
+
 (async () => {
   if (!fs.existsSync(FILE.slice(7))) { console.error('Build first: python3 build.py'); process.exit(2); }
+  if (!ONLY && !args.includes('--serial')) return parallelRun();
   const launcher = pw[BROWSER];
   let browser;
   try { browser = await launcher.launch(); } catch (e) { console.error('Cannot launch ' + BROWSER + ': ' + e.message.split('\n')[0]); process.exit(2); }
@@ -1289,7 +1357,7 @@ async function mobileRun(browser) {
   catch (e) { check('harness: completed without crashing', false, e.message.split('\n')[0]); }
   await browser.close();
   const failed = results.filter(r => !r.ok);
-  fs.writeFileSync(path.resolve(__dirname, 'last-report.json'), JSON.stringify({ when: new Date().toISOString(), browser: BROWSER, seed: SEED, results }, null, 1));
+  fs.writeFileSync(REPORT || path.resolve(__dirname, 'last-report.json'), JSON.stringify({ when: new Date().toISOString(), browser: BROWSER, seed: SEED, results }, null, 1));
   console.log(failed.length ? `\n${failed.length} of ${results.length} checks failed` : `\nAll ${results.length} checks passed`);
   process.exit(failed.length ? 1 : 0);
 })();

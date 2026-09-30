@@ -515,6 +515,20 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .subtabs button.on { background: #3d3520; color: #fff6dc; box-shadow: inset 0 -2px 0 var(--brass); }
 .subtabs button.on small { color: #cbb98a; }
 .rows { display: flex; flex-direction: column; gap: 6px; }
+.wmarket { background: #141916; border: 1px solid var(--line-soft); padding: 8px 10px 4px; margin-bottom: 10px; }
+.wmarket .sectionlabel { margin: 0 0 4px; }
+.wm { display: grid; grid-template-columns: minmax(84px, 1.2fr) 44px minmax(60px, 2fr) 42px 58px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13.5px; }
+.wm .wn { display: flex; align-items: center; gap: 6px; color: var(--paper); white-space: nowrap; overflow: hidden; }
+.wm .wn svg.i { width: 15px; height: 15px; flex: none; }
+.wm b { text-align: right; font-weight: 600; }
+.wbar { height: 6px; background: linear-gradient(90deg, rgba(123,184,101,.25), #0b0e0c 40%, #0b0e0c 60%, rgba(207,84,67,.25)); position: relative; }
+.wbar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--faint); }
+.wbar i { position: absolute; top: -3px; width: 4px; height: 12px; margin-left: -2px; background: var(--brass); }
+.wbar i.hi { background: var(--bad); } .wbar i.lo { background: var(--good); }
+.wm .wp { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.wm .tr { font-size: 12px; color: var(--faint); text-align: right; white-space: nowrap; }
+.wm .tr.up { color: #e08a5c; } .wm .tr.down { color: #8fc27a; }
+.wmarket .note { margin: 4px 0 6px; font-size: 12px; }
 .good { display: grid; grid-template-columns: 30px 1fr auto; gap: 4px 10px; align-items: center; padding: 9px 10px; background: var(--panel-3); border: 1px solid var(--line-soft); }
 .good .gi { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line); background: #151a17; grid-row: span 2; }
 .good .gi svg.i { width: 18px; height: 18px; }

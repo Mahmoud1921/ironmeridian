@@ -2,3 +2,4 @@ node_modules/
 .DS_Store
 tests/shots/
 tests/last-report.json
+tests/.part-*.json

@@ -519,6 +519,20 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .subtabs button.on { background: #3d3520; color: #fff6dc; box-shadow: inset 0 -2px 0 var(--brass); }
 .subtabs button.on small { color: #cbb98a; }
 .rows { display: flex; flex-direction: column; gap: 6px; }
+.wmarket { background: #141916; border: 1px solid var(--line-soft); padding: 8px 10px 4px; margin-bottom: 10px; }
+.wmarket .sectionlabel { margin: 0 0 4px; }
+.wm { display: grid; grid-template-columns: minmax(84px, 1.2fr) 44px minmax(60px, 2fr) 42px 58px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13.5px; }
+.wm .wn { display: flex; align-items: center; gap: 6px; color: var(--paper); white-space: nowrap; overflow: hidden; }
+.wm .wn svg.i { width: 15px; height: 15px; flex: none; }
+.wm b { text-align: right; font-weight: 600; }
+.wbar { height: 6px; background: linear-gradient(90deg, rgba(123,184,101,.25), #0b0e0c 40%, #0b0e0c 60%, rgba(207,84,67,.25)); position: relative; }
+.wbar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--faint); }
+.wbar i { position: absolute; top: -3px; width: 4px; height: 12px; margin-left: -2px; background: var(--brass); }
+.wbar i.hi { background: var(--bad); } .wbar i.lo { background: var(--good); }
+.wm .wp { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.wm .tr { font-size: 12px; color: var(--faint); text-align: right; white-space: nowrap; }
+.wm .tr.up { color: #e08a5c; } .wm .tr.down { color: #8fc27a; }
+.wmarket .note { margin: 4px 0 6px; font-size: 12px; }
 .good { display: grid; grid-template-columns: 30px 1fr auto; gap: 4px 10px; align-items: center; padding: 9px 10px; background: var(--panel-3); border: 1px solid var(--line-soft); }
 .good .gi { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line); background: #151a17; grid-row: span 2; }
 .good .gi svg.i { width: 18px; height: 18px; }
@@ -5494,15 +5508,25 @@ const Sim = (function () {
     const war = isAtWar(c.tag);
     const myArmies = G.armies.filter(a => a.owner === c.tag);
     const divs = myArmies.reduce((s, a) => s + a.units.length, 0) + c.queue.length;
-    const want = Math.max(2, Math.round(c.baseDivs * (war ? 1.6 : 1.1)));
+    // army size follows the danger it faces, and what the treasury can carry
+    const threat = !war && typeof Diplo !== 'undefined' ? Diplo.threatOf(c.tag) : null;
+    const e = c.eco, broke = e && e.need && e.gold < 0 && e.debtDays > 30;
+    const want = Math.max(2, Math.round(c.baseDivs * (war ? 1.6 : threat ? 1.35 : broke ? 0.9 : 1.1)));
     let guard = 0;
-    while (divs + guard < want && guard < 3) {
-      const r = rng();
-      const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(COUNTRY_BY_TAG[c.tag], rng) : null;
-      const type = eraType || (c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry');
+    while (divs + guard < want && guard < 3 && !(broke && !war)) {
+      let type = null;
+      // short of the strategic good: pick units that do not need it
+      for (let i = 0; i < 3; i++) {
+        const r = rng();
+        const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(COUNTRY_BY_TAG[c.tag], rng) : null;
+        type = eraType || (c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry');
+        if (!(e && e.sat && e.sat.strategic < 0.6 && typeof Economy !== 'undefined' && Economy.stratUnit(type))) break;
+      }
       if (!recruit(c.tag, type, 0)) break;
       guard++;
     }
+    // at peace with a stronger hostile neighbour: move idle armies up to that border
+    if (threat) guardBorder(c.tag, threat, myArmies);
     if (war) {
       // spread out: split big idle armies while parts of the front are uncovered
       const en = enemiesOf(c.tag);
@@ -5517,6 +5541,25 @@ const Sim = (function () {
     }
     // merge small reserve armies into nearby field armies
     for (const r of myArmies.filter(a => a.reserve && a.units.length >= 4 && !a.battle && !a.path.length)) r.reserve = false;
+  }
+
+  function guardBorder(tag, foe, mine) {
+    const border = MAP.provs.filter(p => G.owner[p.id] === tag && p.nb.some(n => G.owner[n] === foe))
+      .sort((a, b) => (b.capital ? 3 : 0) + (b.city ? 1 : 0) - (a.capital ? 3 : 0) - (a.city ? 1 : 0));
+    if (!border.length) return;
+    const on = new Map(border.map(p => [p.id, 0]));
+    const idle = [];
+    for (const a of mine) {
+      const at = a.path.length ? a.path[a.path.length - 1] : a.prov;
+      if (on.has(at)) on.set(at, on.get(at) + 1);
+      else if (!a.battle && !a.path.length && !a.sea && !a.reserve && a.units.length >= 2) idle.push(a);
+    }
+    // keep about a third of the field armies home
+    for (const a of idle.slice(0, Math.ceil(idle.length * 0.65))) {
+      const tgt = border.reduce((b, p) => on.get(p.id) < on.get(b.id) ? p : b, border[0]);
+      const path = findPath(tag, a.prov, tgt.id, 'move');
+      if (path && path.length) { a.path = path; a.progress = 0; on.set(tgt.id, on.get(tgt.id) + 1); }
+    }
   }
 
   // Frontline logic shared by AI countries and player armies set to "Defend front" / "Attack".
@@ -6279,8 +6322,15 @@ const Diplo = (function () {
     if (typeof Economy !== 'undefined') Economy.aiTrade(c);
     if (Sim.root(tag) !== tag) return;                  // puppets follow their overlord
     const others = Object.values(g.countries).filter(o => o.alive && o.tag !== tag);
-    // warm up to like-minded neighbours
-    const friend = others.filter(o => o.gov === c.gov && borders(tag, o.tag) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 4)];
+    // warm up to whoever it needs: a seller of what it lacks that is too cold to trade with, its suppliers, else like-minded neighbours
+    let friend = null;
+    if (typeof Economy !== 'undefined' && c.eco && c.eco.need) {
+      const lack = Economy.GOODS.filter(k => Economy.needOf(tag, k) >= 0.4);
+      friend = others.filter(o => !Sim.atWar(tag, o.tag) && rel(tag, o.tag) < 0 && rel(tag, o.tag) > -50 && lack.some(k => Economy.balance(o.tag, k) > 1))
+        .sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0]
+        || others.filter(o => rel(tag, o.tag) < 40 && g.dip.trade.some(d => d.from === o.tag && d.to === tag && Economy.dependence(tag, d.good, o.tag) > 0.25))[0];
+    }
+    if (!friend) friend = others.filter(o => o.gov === c.gov && borders(tag, o.tag) && !Sim.atWar(tag, o.tag))[Math.floor(R() * 4)];
     if (friend && c.pp > 40) aiDo('improve', tag, friend.tag);
     const threat = threatOf(tag);
     const fac = Sim.factionOf(tag);
@@ -6315,10 +6365,15 @@ const Diplo = (function () {
       if (foe) aiDo('embargo', tag, foe.tag);
     }
     // expansionist regimes press claims on weak neighbours, and go to war when refused
-    if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12) {
+    // ...but only when it is ready: no war already, no stronger neighbour at its back, stores and treasury able to carry a war
+    if ((bloc(c.gov) === 'Authoritarian' || bloc(c.gov) === 'Communist') && c.ws >= 0.5 && g.hour > 300 * DAY && !Sim.isAtWar(tag) && R() < 0.12 && warReady(c)) {
       const mine = sidePower(Sim.coalition(tag));
-      const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0)
-        .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) })).filter(x => x.v * 1.8 < mine).sort((a, b) => a.v - b.v)[0];
+      const victim = others.filter(o => borders(tag, o.tag) && !Sim.allied(tag, o.tag) && !Sim.hasPact(tag, o.tag) && rel(tag, o.tag) < 0 && o.tag !== threat)
+        // a nation already fighting someone else can spare only part of its army
+        .map(o => ({ o, v: sidePower(Sim.coalition(o.tag).concat(guaranteedBy(o.tag))) * (Sim.isAtWar(o.tag) ? 0.6 : 1) }))
+        // it would lose goods it buys from the victim: it needs a bigger edge to make that worth it
+        .map(x => ({ ...x, need: 1.8 + (typeof Economy !== 'undefined' ? Economy.GOODS.reduce((s, k) => s + Economy.dependence(tag, k, x.o.tag), 0) : 0) }))
+        .filter(x => x.v * x.need < mine).sort((a, b) => a.v - b.v)[0];
       if (victim && !g.dip.plan[tag]) g.dip.plan[tag] = { victim: victim.o.tag, at: g.hour + 30 * DAY };
     }
     // a month after deciding, cut the trade (done in Economy.aiTrade) and make the demand
@@ -6327,10 +6382,24 @@ const Diplo = (function () {
       delete g.dip.plan[tag];
       if (alive(plan.victim) && !Sim.atWar(tag, plan.victim)) aiDo('demand', tag, plan.victim);
     }
-    // losing wars: sue for peace
+    // losing wars: sue for peace. Also when clearly outmatched, or when the treasury and stores are giving out.
+    const broke = c.eco && c.eco.gold < 0 && c.eco.debtDays > 60;
+    const starving = typeof Economy !== 'undefined' && c.eco && c.eco.need && Economy.needOf(tag, 'food') >= 1 && c.eco.sat.food < 0.7;
     for (const e of Sim.enemiesOf(tag)) {
-      if (warScore(tag, e) < -45 && R() < 0.5) { aiDo('peace', tag, e, { keep: true }); break; }
+      const ws = warScore(tag, e), odds = sidePower(Sim.coalition(tag)) / Math.max(1, sidePower(Sim.coalition(e)));
+      if ((ws < -45 && R() < 0.5) || (ws < -15 && odds < 0.5 && R() < 0.4) || ((broke || starving) && ws < 5 && R() < 0.3)) { aiDo('peace', tag, e, { keep: true }); break; }
     }
+  }
+  // can it afford a new war? a sound treasury, food and fuel not running out, equipment for its army
+  function warReady(c) {
+    const tag = c.tag, e = c.eco;
+    if (e && e.need && typeof Economy !== 'undefined') {
+      if (e.gold < 0 || e.goldDelta < -2) return false;
+      if (Economy.needOf(tag, 'food') >= 0.7 || Economy.needOf(tag, 'fuel') >= 0.7) return false;
+    }
+    const divs = G().armies.filter(a => a.owner === tag).reduce((s, a) => s + a.units.length, 0);
+    if (divs < Math.max(2, (c.baseDivs || 4) * 0.9)) return false;      // rebuild the army first
+    return true;
   }
   function aiDo(action, from, to, terms) {
     if (!can(action, from, to, terms).ok) return null;
@@ -6950,6 +7019,43 @@ const Economy = (function () {
     return Math.min(1, q / e.need[good]);
   }
   function fairPrice(good, amount) { return Math.max(1, Math.round(worldPrice(good) * amount * 10) / 10); }
+
+  // ---------- what each nation will pay or take, from its own needs ----------
+  // every nation haggles a little differently: a fixed lean per nation, -0.08 to +0.08
+  function temper(tag) { let h = 7; for (const ch of tag) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return ((h % 1000) / 1000 - 0.5) * 0.16; }
+  const WAR_GOODS = { metal: 1, fuel: 1, strategic: 1 };
+  // how badly a nation wants more of a good: 1 = about to run out, 0 = just enough, -0.8 = far more than it can use
+  function needOf(tag, good) {
+    const e = G().countries[tag].eco;
+    if (!e || !e.need) return 0;
+    const need = e.need[good];
+    if (!(need > 0.05)) return -0.8;
+    const b = balance(tag, good), sd = e.stock[good] / need;
+    if (b < -0.05) { const d = e.stock[good] / -b; return d < 30 ? 1 : d < 90 ? 0.7 : d < 180 ? 0.4 : 0.15; }
+    return sd < 30 ? 0.1 : sd < 60 ? -0.2 : sd < 85 ? -0.5 : -0.8;
+  }
+  // a factor on the world price: the most `tag` pays when buying, or the least it takes when selling, dealing with `other`
+  function priceMul(tag, good, buying, other) {
+    const g = G(), c = g.countries[tag], e = c.eco;
+    if (!e || !e.need) return 1;
+    const n = needOf(tag, good);
+    // desperate buyers pay up to half again; glutted ones only buy cheap. Sellers short themselves ask more, glutted ones take less.
+    let m = buying ? (n >= 0 ? 1 + n * 0.5 : 1 + n * 0.3) : (n > 0.3 ? 1.3 : n >= 0 ? 1.05 : 1 + n * 0.25);
+    const rich = e.gold > 800 && e.goldDelta >= 0, poor = e.gold < 120 || e.goldDelta < -1;
+    if (buying) m += rich ? 0.08 : poor ? (n >= 0.7 ? -0.03 : -0.12) : 0;
+    else m += rich ? 0.05 : poor ? -0.08 : 0;          // a poor seller wants cash now
+    if (WAR_GOODS[good] && Sim.isAtWar(tag)) m += 0.15;  // war makes metal, fuel and the strategic good dear
+    m += buying ? -temper(tag) : temper(tag);
+    if (other) {
+      const r = typeof Diplo !== 'undefined' ? Diplo.rel(tag, other) : 0;
+      m += (buying ? 1 : -1) * (r > 40 ? 0.06 : r < 0 ? -0.06 : 0);
+      if ((g.countries[other].eco.untrusted || 0) > g.hour) m += buying ? -0.15 : 0.15;
+    }
+    return buying ? Math.max(0.6, Math.min(1.8, m)) : Math.max(0.6, Math.min(1.6, m));
+  }
+  // per unit, in gold: the most `tag` would pay, and the least it would sell for
+  function bidAsk(tag, good, other) { const w = worldPrice(good); return { bid: +(w * priceMul(tag, good, true, other)).toFixed(2), ask: +(w * priceMul(tag, good, false, other)).toFixed(2), need: needOf(tag, good) }; }
+  const perUnit = t => t.price / Math.max(0.1, t.amount);
   // terms: { good, amount, price, sell }  (sell: `from` sells to `to`)
   function canDeal(from, to, t) {
     const g = G(), A = g.countries[from], B = g.countries[to];
@@ -6977,23 +7083,23 @@ const Economy = (function () {
     const fa = Sim.factionOf(from), ft = Sim.factionOf(to);
     if (fa && ft && fa !== ft && [...Sim.enemiesOf(fa.leader)].some(e => ft.members.includes(e))) return say(false, 'Your faction is at war with theirs');
     if (g.wars.some(w => Sim.sideOf(w, to) && [...Sim.enemiesOf(to)].some(e => Sim.allied(e, from)))) return say(false, 'You are allied with their enemies');
-    const fair = fairPrice(t.good, t.amount);
-    const trust = (g.countries[from].eco.untrusted || 0) > g.hour ? 0.15 : 0;
+    const w = worldPrice(t.good), unit = perUnit(t), gname = goodName(t.good).toLowerCase();
     if (t.sell) {
-      // they buy: they must need it and the price must not be steep
+      // they buy: what they pay depends on how badly they need it
       const b = balance(to, t.good), e = g.countries[to].eco;
-      const wants = b < 0 || e.stock[t.good] < e.need[t.good] * 45;
-      if (!wants) return say(false, 'They have enough ' + goodName(t.good).toLowerCase());
+      if (e.stock[t.good] >= e.need[t.good] * (STOCK_DAYS + mod(to, 'stockDays')) * 0.95 && b >= 0) return say(false, 'Their stores of ' + gname + ' are full');
       if (t.amount > Math.max(3, -b * 1.5 + e.need[t.good] * 0.3)) return say(false, 'That is more than they need');
-      if (t.price > fair * (1.1 - trust) + (r > 40 ? fair * 0.1 : 0)) return say(false, 'The price is too high');
+      const bid = w * priceMul(to, t.good, true, from);
+      if (unit > bid + 0.005) return say(false, 'They would pay at most ' + bid.toFixed(2) + ' a unit' + (needOf(to, t.good) < 0 ? ', as they have plenty' : ''));
       if (e.gold + e.goldDelta * 30 < t.price * 30) return say(false, 'They cannot afford it');
-      return say(true, 'They need it');
+      return say(true, needOf(to, t.good) >= 0.7 ? 'They badly need it' : needOf(to, t.good) >= 0 ? 'They need it' : 'It is cheap enough for them');
     }
-    // they sell: they must have it to spare and the price must be fair
+    // they sell: they must have it to spare, and the price must beat what they ask
     const b = balance(to, t.good), e = g.countries[to].eco;
     const spare = b + (e.stock[t.good] > e.need[t.good] * 60 ? e.need[t.good] * 0.2 : 0);
     if (spare < t.amount * 0.9) return say(false, spare > 0.5 ? 'They can spare only ' + spare.toFixed(1) + ' a day' : 'They have none to spare');
-    if (t.price < fair * (0.9 + trust) - (r > 40 ? fair * 0.1 : 0)) return say(false, 'The price is too low');
+    const ask = w * priceMul(to, t.good, false, from);
+    if (unit < ask - 0.005) return say(false, 'They want at least ' + ask.toFixed(2) + ' a unit');
     return say(true, 'They have it to spare');
   }
   function sign(from, to, t) {
@@ -7010,7 +7116,7 @@ const Economy = (function () {
     g.dip.trade = deals().filter(x => x !== d);
     const buyer = g.countries[d.to], seller = g.countries[d.from];
     const depn = buyer && buyer.eco && buyer.eco.need[d.good] ? Math.min(1, (d.delivered ?? d.amount) / buyer.eco.need[d.good]) : 0;
-    if (buyer && buyer.alive && buyer.eco) {
+    if (buyer && buyer.alive && buyer.eco && by !== d.to) {
       buyer.eco.shocks.push({ good: d.good, until: g.hour + 60 * DAY, stab: +(depn * 0.10).toFixed(3), from: d.from });
       g.eco.spike[d.good] = g.hour + 60 * DAY;
     }
@@ -7056,28 +7162,48 @@ const Economy = (function () {
     // drop deals with a nation it plans to attack
     const plan = g.dip.plan && g.dip.plan[t];
     if (plan) for (const d of dealsOf(t).slice()) if (d.from === plan.victim || d.to === plan.victim) aiCancel(d, t);
-    // shortages: buy from the friendliest nation with a surplus
-    const short = GOODS.map(k => ({ k, b: balance(t, k), days: daysLeft(t, k) })).filter(x => x.b < -0.5 && x.days < 120).sort((a, b) => a.days - b.days);
+    // buy what it no longer needs? stop paying for it (unless it is a war good and war is near)
+    const wary = Sim.isAtWar(t) || (typeof Diplo !== 'undefined' && Diplo.threatOf(t));
+    for (const d of dealsOf(t).filter(d => d.to === t)) {
+      const without = balance(t, d.good) - (d.delivered ?? d.amount);
+      const glut = without >= 0 && e.stock[d.good] > e.need[d.good] * 75 && !(wary && WAR_GOODS[d.good]);
+      // in debt: drop the least needed import first (luxuries before food)
+      if (glut || (e.gold < 0 && e.debtDays > 20 && d.good === 'luxuries' && needOf(t, d.good) < 0.7)) { aiCancel(d, t); break; }
+    }
+    // shortages, most urgent first: buy from whoever sells cheapest, then the friendliest
+    const short = GOODS.map(k => ({ k, b: balance(t, k), n: needOf(t, k) }))
+      .filter(x => x.b < -0.5 ? x.n >= 0.15 : (wary && WAR_GOODS[x.k] && x.n >= 0.1))
+      .sort((a, b) => b.n - a.n || a.b - b.b);
     for (const s of short.slice(0, 2)) {
       if (dealsOf(t).length >= tradeSlots(t) || e.gold < 0) break;
+      const want = s.b < -0.5 ? -s.b * 1.05 : Math.max(1, e.need[s.k] * 0.25);
       const cands = others.filter(o => balance(o.tag, s.k) > 1 && canDeal(t, o.tag, null).ok && !deals().some(d => d.good === s.k && d.from === o.tag && d.to === t))
-        .sort((a, b) => (Diplo.rel(t, b.tag) + balance(b.tag, s.k)) - (Diplo.rel(t, a.tag) + balance(a.tag, s.k)));
-      for (const o of cands.slice(0, 3)) {
-        const amt = +Math.max(1, Math.min(-s.b * 1.05, balance(o.tag, s.k) * 0.9)).toFixed(1);
-        const terms = { good: s.k, amount: amt, price: fairPrice(s.k, amt) * (Sim.isHuman(o.tag) ? 1.05 : 1), sell: false };
+        .map(o => ({ o, ask: Sim.isHuman(o.tag) ? worldPrice(s.k) : worldPrice(s.k) * priceMul(o.tag, s.k, false, t) }))
+        .sort((a, b) => a.ask - b.ask || Diplo.rel(t, b.o.tag) - Diplo.rel(t, a.o.tag));
+      for (const { o, ask } of cands.slice(0, 3)) {
+        const bid = worldPrice(s.k) * priceMul(t, s.k, true, o.tag);
+        if (ask > bid) continue;                                  // too dear: it will build its own instead
+        const amt = +Math.max(1, Math.min(want, balance(o.tag, s.k) * 0.9)).toFixed(1);
+        // meet halfway between their price and its limit; the player gets a bit over the world price
+        const unit = Sim.isHuman(o.tag) ? Math.min(bid, worldPrice(s.k) * (1.05 + Math.max(0, s.n) * 0.2)) : (ask + bid) / 2;
+        const terms = { good: s.k, amount: amt, price: Math.max(1, +(unit * amt).toFixed(1)), sell: false };
         const r = Diplo.act('trade', t, o.tag, terms);
         if (r.ok && r.accepted !== false) break;
       }
     }
-    // surpluses: offer them to nations that need them (the player sometimes)
+    // surpluses: sell to whoever bids highest (the player sometimes)
     for (const k of GOODS) {
       const b = balance(t, k);
       if (b < 2 || e.stock[k] < e.need[k] * 30 || dealsOf(t).length >= tradeSlots(t)) continue;
+      if (wary && WAR_GOODS[k] && e.stock[k] < e.need[k] * 60) continue;   // keeps war goods when war is near
+      const ask = worldPrice(k) * priceMul(t, k, false);
       const buyer = others.filter(o => balance(o.tag, k) < -1 && canDeal(t, o.tag, null).ok && Diplo.rel(t, o.tag) >= 0)
-        .sort((a, b2) => balance(a.tag, k) - balance(b2.tag, k))[0];
-      if (!buyer || (Sim.isHuman(buyer.tag) && Sim.rng() > 0.35)) continue;
-      const amt = +Math.max(1, Math.min(b * 0.9, -balance(buyer.tag, k))).toFixed(1);
-      Diplo.act('trade', t, buyer.tag, { good: k, amount: amt, price: fairPrice(k, amt), sell: true });
+        .map(o => ({ o, bid: Sim.isHuman(o.tag) ? worldPrice(k) * 1.1 : worldPrice(k) * priceMul(o.tag, k, true, t) }))
+        .filter(x => x.bid >= ask).sort((a, b2) => b2.bid - a.bid)[0];
+      if (!buyer || (Sim.isHuman(buyer.o.tag) && Sim.rng() > 0.35)) continue;
+      const amt = +Math.max(1, Math.min(b * 0.9, -balance(buyer.o.tag, k))).toFixed(1);
+      const unit = Sim.isHuman(buyer.o.tag) ? Math.max(ask, worldPrice(k)) : (ask + buyer.bid) / 2;
+      Diplo.act('trade', t, buyer.o.tag, { good: k, amount: amt, price: Math.max(1, +(unit * amt).toFixed(1)), sell: true });
       break;
     }
     // stop selling what it now lacks itself
@@ -7088,16 +7214,25 @@ const Economy = (function () {
     aiBuild(c);
   }
   function aiCancel(d, t) { if (typeof Diplo !== 'undefined') Diplo.act('canceltrade', t, d.from === t ? d.to : d.from, { id: d.id }); else cancel(d.id, t); }
+  // builds what pays best: a shortage first (dearer goods sooner), then goods the world pays well for, arsenals when war looms
   function aiBuild(c) {
     const e = c.eco, t = c.tag;
-    if (e.queue.length >= 2 || e.gold < 150) return;
-    const order = [];
-    const want = k => { const b = balance(t, k); return b < 0 ? -b / Math.max(1, e.need[k]) : 0; };
-    const pairs = [['farm', 'food'], ['mine', 'metal'], ['fuel', 'fuel'], ['strat', 'strategic'], ['shop', 'luxuries']].map(([kind, good]) => ({ kind, w: want(good) })).filter(x => x.w > 0.05).sort((a, b) => b.w - a.w);
-    for (const p of pairs) order.push(p.kind);
-    const threatened = typeof Diplo !== 'undefined' && (Diplo.threatOf(t) || Sim.isAtWar(t));
-    order.push(threatened ? 'arsenal' : (Sim.rng() < 0.5 ? 'shop' : 'arsenal'));
-    for (const kind of order) { const r = build(t, kind); if (r.ok) break; }
+    if (e.queue.length >= 2) return;
+    // keep a reserve: two months of any running loss, never below 150
+    if (e.gold < Math.max(150, -e.goldDelta * 60)) return;
+    const war = Sim.isAtWar(t), threat = typeof Diplo !== 'undefined' && Diplo.threatOf(t);
+    const opts = [['farm', 'food'], ['mine', 'metal'], ['fuel', 'fuel'], ['strat', 'strategic'], ['shop', 'luxuries']].map(([kind, good]) => {
+      const n = needOf(t, good), rel = worldPrice(good) / BASE_PRICE[good];
+      let s = (n > 0 ? 0.8 + n : 0) * Math.max(0.8, rel);                 // short: build it, sooner when importing is dear
+      if (n > -0.5) s += Math.max(0, rel - 1.15) * 0.8;                  // the world pays well: build to sell
+      if ((war || threat) && WAR_GOODS[good] && n > -0.5) s += 0.3;
+      if (kind === 'shop') s += (c.stab < 0.5 ? 0.3 : 0) + (e.goldDelta < 0 ? 0.3 : 0.1);   // shops add taxes and calm
+      if (e.queue.some(j => j.kind === kind)) s *= 0.4;
+      return { kind, s };
+    });
+    const inputs = Math.min(e.sat.metal, e.sat.fuel);
+    opts.push({ kind: 'arsenal', s: (war ? 1.4 : threat ? 1.0 : 0.35) * inputs * (e.queue.some(j => j.kind === 'arsenal') ? 0.5 : 1) });
+    for (const o of opts.filter(o => o.s >= 0.3).sort((a, b) => b.s - a.s)) { const r = build(t, o.kind); if (r.ok) break; }
   }
   // AI answer to being asked to join an embargo: yes if it costs little
   function joinsEmbargo(tag, of) {
@@ -7115,9 +7250,18 @@ const Economy = (function () {
     for (const p of partners) if ((g.countries[p].techs || []).length > mine) n++;
     return Math.min(0.15, n * 0.03);
   }
+  // world prices a month ago, for the trend arrows (kept for a year)
+  function priceTrend(good) {
+    const h = G().eco.hist && G().eco.hist[good];
+    if (!h || !h.length) return 0;
+    const was = h.length > 1 ? h[h.length - 2] : h[0];
+    return (worldPrice(good) - was) / was;
+  }
   function monthly() {
     // relations grow between partners
     const g = G();
+    const hist = g.eco.hist || (g.eco.hist = {});
+    for (const k of GOODS) { const h = hist[k] || (hist[k] = []); h.push(+worldPrice(k).toFixed(3)); if (h.length > 12) h.shift(); }
     if (typeof Diplo === 'undefined') return;
     const seen = new Set();
     for (const d of deals()) {
@@ -7136,7 +7280,7 @@ const Economy = (function () {
   }
 
   return {
-    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice,
+    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId
@@ -14163,6 +14307,24 @@ const UI = (function () {
     const me = Sim.G.player, cap = Math.abs(Economy.balance(tag, tf.good)), need = tf.buy ? Math.max(1, -Economy.balance(me, tf.good)) : cap;
     tf.open = tag; tf.adj = 0;
     tf.amount = AMOUNTS.filter(a => a <= Math.max(1, Math.min(cap || need, need))).pop() || 1;
+    // start at a price they would take: at least their asking price when buying, at most their limit when selling
+    const w = Economy.worldPrice(tf.good), ba = Economy.bidAsk(tag, tf.good, me), step = x => Math.round(x * 20) / 20;
+    tf.adj = tf.buy ? Math.max(0, Math.ceil((ba.ask / w - 1) * 20 - 1e-6) / 20) : Math.min(0, Math.floor((ba.bid / w - 1) * 20 + 1e-6) / 20);
+    tf.adj = Math.max(-0.4, Math.min(0.8, step(tf.adj)));
+  }
+  // the world market: every good's price, how it compares with normal, and where it went in the last month
+  function worldMarket() {
+    const rows = Economy.GOODS.map(k => {
+      const p = Economy.worldPrice(k), rel = p / Economy.BASE_PRICE[k], tr = Economy.priceTrend(k);
+      const pct = Math.round((rel - 1) * 100), x = Math.max(0, Math.min(100, (Math.log(rel) / Math.log(2) + 1) * 50));
+      const arrow = Math.abs(tr) < 0.01 ? '<span class="tr">steady</span>' : `<span class="tr ${tr > 0 ? 'up' : 'down'}">${tr > 0 ? '▲' : '▼'} ${Math.abs(Math.round(tr * 100)) || '<1'}%</span>`;
+      return `<div class="wm" data-wm="${k}" title="${esc(Economy.goodName(k))}: ${p.toFixed(2)} gold a unit, ${pct === 0 ? 'the normal price' : Math.abs(pct) + '% ' + (pct > 0 ? 'above' : 'below') + ' normal'}">
+        <span class="wn">${gIcon(k)}${esc(shortGood(k))}</span><b class="num">${p.toFixed(2)}</b>
+        <span class="wbar"><i style="left:${x}%" class="${pct > 10 ? 'hi' : pct < -10 ? 'lo' : ''}"></i></span>
+        <span class="wp ${pct > 10 ? 'neg' : pct < -10 ? 'pos' : ''}">${pct > 0 ? '+' : ''}${pct}%</span>${arrow}</div>`;
+    }).join('');
+    return `<div class="wmarket"><div class="sectionlabel"><span class="label">World market · gold a unit</span><span class="label">vs normal · month</span></div>${rows}
+      <p class="note">Nations pay more than this when they badly need a good, and only buy below it when their stores are full. Prices rise when the world lacks a good.</p></div>`;
   }
   function tradePanel() {
     const G = Sim.G, me = G.player, c = G.countries[me], e = c.eco;
@@ -14177,6 +14339,7 @@ const UI = (function () {
         <button data-tv="deals" class="${sel.tv === 'deals' ? 'on' : ''}" role="tab" aria-selected="${sel.tv === 'deals'}">Deals<small>${deals.length} active</small></button>
       </div>`;
     if (sel.tv === 'goods') {
+      h += worldMarket();
       h += `<div class="rows">${Economy.GOODS.map(k => {
         const n = Economy.balance(me, k), imp = e.imp[k], exp = e.exp[k], short = n < -0.05, sur = n > Math.max(1, e.need[k] * 0.1);
         const w = Math.min(50, Math.abs(n) / Math.max(4, e.need[k] || 1) * 50), days = Economy.daysLeft(me, k);
@@ -14184,7 +14347,7 @@ const UI = (function () {
           <div class="gi">${gIcon(k)}</div>
           <div class="nm">${esc(Economy.goodName(k))} <span class="net ${short ? 'neg' : sur ? 'pos' : ''}">${sgn(n)} a day</span></div>
           <div class="act">${short ? `<button class="btn sm primary" data-find="buy:${k}">Find sellers</button>` : sur ? `<button class="btn sm" data-find="sell:${k}">Find buyers</button>` : ''}</div>
-          <div class="meta">Made ${f1(e.prod[k])} · used ${f1(e.need[k])}${imp > 0.05 ? ' · bought ' + f1(imp) : ''}${exp > 0.05 ? ' · sold ' + f1(exp) : ''} · ${short ? (e.stock[k] > 0.5 ? 'stock lasts ' + days + ' days' : '<span class="neg">no stock left</span>') : 'stock ' + fmtN(e.stock[k])}</div>
+          <div class="meta">World price <b class="num">${Economy.worldPrice(k).toFixed(2)}</b> · made ${f1(e.prod[k])} · used ${f1(e.need[k])}${imp > 0.05 ? ' · bought ' + f1(imp) : ''}${exp > 0.05 ? ' · sold ' + f1(exp) : ''} · ${short ? (e.stock[k] > 0.5 ? 'stock lasts ' + days + ' days' : '<span class="neg">no stock left</span>') : 'stock ' + fmtN(e.stock[k])}</div>
           <div class="dbar"><i style="${n < 0 ? `right:50%;width:${w}%;background:var(--bad)` : `left:50%;width:${w}%;background:var(--good)`}"></i></div>
         </div>`;
       }).join('')}
@@ -14196,19 +14359,19 @@ const UI = (function () {
         <div class="ln"><span>I want to</span><div class="seg"><button class="chip ${tf.buy ? 'on' : ''}" data-tb="1">Buy</button><button class="chip ${!tf.buy ? 'on' : ''}" data-tb="0">Sell</button></div></div>
         <div class="ln"><span>Good</span>${Economy.GOODS.map(k => `<button class="chip ${k === tf.good ? 'on' : ''}" data-tg="${k}" title="${esc(Economy.goodName(k))}">${gIcon(k)}${esc(shortGood(k))}</button>`).join('')}</div>
       </div>
-      <div class="sectionlabel"><span class="label">${list.filter(x => tf.buy ? x.b > 0.5 : x.b < -0.5).length} nations ${tf.buy ? 'have spare' : 'need'} ${esc(gname)}</span><span class="label">World price ${Economy.worldPrice(tf.good).toFixed(2)}</span></div>
+      <div class="sectionlabel"><span class="label">${list.filter(x => tf.buy ? x.b > 0.5 : x.b < -0.5).length} nations ${tf.buy ? 'have spare' : 'need'} ${esc(gname)}</span><span class="label">World price ${Economy.worldPrice(tf.good).toFixed(2)} a unit</span></div>
       <div class="rows">${list.map(({ c: p, b }) => {
         const open = tf.open === p.tag, t = tfTerms();
         const chk = Diplo.can('trade', me, p.tag, t);
         const ans = chk.ok ? Economy.answerDeal(me, p.tag, t) : null;
         const pill = !chk.ok ? '<span class="pill no">Blocked</span>' : ans.yes ? '<span class="pill yes">Likely yes</span>' : '<span class="pill no">Unlikely</span>';
-        const r = Diplo.rel(me, p.tag);
+        const r = Diplo.rel(me, p.tag), ba = Economy.bidAsk(p.tag, tf.good, me);
         return `<div class="partner ${open ? 'open' : ''}" data-partner="${p.tag}">
-          <div class="top">${flagSVG(p.tag)}<div class="grow"><div class="nm">${esc(p.name)}</div><div class="sub">${b > 0.05 ? 'Spare ' + f1(b) : b < -0.05 ? 'Short by ' + f1(-b) : 'None spare'} ${esc(gname)} a day · relations ${r > 0 ? '+' : ''}${r}${Diplo.borders(me, p.tag) ? '' : ' · by sea'}</div></div>
+          <div class="top">${flagSVG(p.tag)}<div class="grow"><div class="nm">${esc(p.name)}</div><div class="sub">${b > 0.05 ? 'Spare ' + f1(b) : b < -0.05 ? 'Short by ' + f1(-b) : 'None spare'} ${esc(gname)} a day · ${tf.buy ? 'sells from ' + ba.ask.toFixed(2) : 'pays up to ' + ba.bid.toFixed(2)} a unit${!tf.buy && ba.need >= 0.7 ? ' (badly needs it)' : !tf.buy && ba.need < 0 ? ' (has plenty)' : ''} · relations ${r > 0 ? '+' : ''}${r}${Diplo.borders(me, p.tag) ? '' : ' · by sea'}</div></div>
             ${open ? pill : pill + `<button class="btn sm" data-offer="${p.tag}">Offer</button>`}</div>
           ${open ? `<div class="dealform">
             <div class="stepper"><span>Amount a day</span><button class="iconbtn" data-amt="-1" aria-label="Less"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${tf.amount}</b><button class="iconbtn" data-amt="1" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button><small>${Math.abs(b) > 0.05 ? (tf.buy ? 'they spare ' : 'they need ') + f1(Math.abs(b)) : ''}</small></div>
-            <div class="stepper"><span>Gold a day</span><button class="iconbtn" data-adj="-0.05" aria-label="Lower price"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${t.price}</b><button class="iconbtn" data-adj="0.05" aria-label="Higher price"><svg class="i"><use href="#i-plus"/></svg></button><small>${tf.adj === 0 ? 'world price' : (tf.adj > 0 ? '+' : '') + Math.round(tf.adj * 100) + '%'}</small></div>
+            <div class="stepper"><span>Gold a day</span><button class="iconbtn" data-adj="-0.05" aria-label="Lower price"><svg class="i"><use href="#i-minus"/></svg></button><b class="num">${t.price}</b><button class="iconbtn" data-adj="0.05" aria-label="Higher price"><svg class="i"><use href="#i-plus"/></svg></button><small>${tf.adj === 0 ? 'world price' : (tf.adj > 0 ? '+' : '') + Math.round(tf.adj * 100) + '% vs world'}</small></div>
             <div class="summary">${esc(tf.buy ? `You buy ${tf.amount} ${gname} a day from ${p.name} for ${t.price} gold a day.` : `You sell ${tf.amount} ${gname} a day to ${p.name} for ${t.price} gold a day.`)}<small>${esc(!chk.ok ? chk.why + '.' : 'Uses 1 deal slot and ' + Diplo.COST.trade + ' political power. ' + (ans.yes ? 'They would agree.' : 'They would refuse: ' + ans.why.toLowerCase() + '.'))}</small></div>
             <div style="display:flex;gap:6px;justify-content:space-between"><button class="btn sm danger" data-emb="${p.tag}" ${Diplo.can('embargo', me, p.tag).ok ? '' : 'disabled'}>Embargo</button><span style="display:flex;gap:6px"><button class="btn sm ghost" data-tcancel="1">Cancel</button><button class="btn sm primary" data-send="${p.tag}" ${chk.ok && c.pp >= Diplo.COST.trade ? '' : 'disabled'}>Send offer</button></span></div>
           </div>` : ''}
@@ -14219,7 +14382,7 @@ const UI = (function () {
       h += grp('Buying', deals.filter(d => d.to === me)) + grp('Selling', deals.filter(d => d.from === me));
       const emb = G.dip.embargo.filter(x => x.by === me || x.of === me);
       h += '<div class="sectionlabel"><span class="label">Embargoes</span></div>' + (emb.length ? '<div class="list">' + emb.map(x => `<div class="row">${flagSVG(x.by === me ? x.of : x.by)}<div class="grow">${x.by === me ? 'Your embargo on ' + esc(G.countries[x.of].name) : esc(G.countries[x.by].name) + ' embargoes you'}</div>${x.by === me ? `<button class="btn sm" data-lift="${x.of}">Lift</button>` : ''}</div>`).join('') + '</div>' : '<p class="note">None. Embargo a nation from its row under Partners.</p>');
-      h += `<div class="sectionlabel"><span class="label">World prices, gold per unit</span></div><div class="prices">${Economy.GOODS.map(k => `<span>${gIcon(k)}${esc(Economy.goodName(k))}</span><span class="num">${Economy.worldPrice(k).toFixed(2)}</span>`).join('')}</div>`;
+      h += '<p class="note" style="margin-top:10px">World prices are under <a href="#" data-gotrade="goods">Goods</a>.</p>';
     }
     return h;
   }
@@ -14232,7 +14395,7 @@ const UI = (function () {
     body.querySelectorAll('[data-tg]').forEach(b => b.onclick = () => { tf.good = b.dataset.tg; if (tf.open) openOffer(tf.open); redo(); });
     body.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => { openOffer(b.dataset.offer); redo(); });
     body.querySelectorAll('[data-amt]').forEach(b => b.onclick = () => { const i = AMOUNTS.indexOf(tf.amount); tf.amount = AMOUNTS[Math.max(0, Math.min(AMOUNTS.length - 1, (i < 0 ? 4 : i) + +b.dataset.amt))]; redo(); });
-    body.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { tf.adj = Math.max(-0.25, Math.min(0.25, Math.round((tf.adj + +b.dataset.adj) * 100) / 100)); redo(); });
+    body.querySelectorAll('[data-adj]').forEach(b => b.onclick = () => { tf.adj = Math.max(-0.4, Math.min(0.8, Math.round((tf.adj + +b.dataset.adj) * 100) / 100)); redo(); });
     body.querySelectorAll('[data-tcancel]').forEach(b => b.onclick = () => { tf.open = null; redo(); });
     body.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
       const r = Diplo.act('trade', me, b.dataset.send, tfTerms());

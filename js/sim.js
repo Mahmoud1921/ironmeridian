@@ -721,15 +721,25 @@ const Sim = (function () {
     const war = isAtWar(c.tag);
     const myArmies = G.armies.filter(a => a.owner === c.tag);
     const divs = myArmies.reduce((s, a) => s + a.units.length, 0) + c.queue.length;
-    const want = Math.max(2, Math.round(c.baseDivs * (war ? 1.6 : 1.1)));
+    // army size follows the danger it faces, and what the treasury can carry
+    const threat = !war && typeof Diplo !== 'undefined' ? Diplo.threatOf(c.tag) : null;
+    const e = c.eco, broke = e && e.need && e.gold < 0 && e.debtDays > 30;
+    const want = Math.max(2, Math.round(c.baseDivs * (war ? 1.6 : threat ? 1.35 : broke ? 0.9 : 1.1)));
     let guard = 0;
-    while (divs + guard < want && guard < 3) {
-      const r = rng();
-      const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(COUNTRY_BY_TAG[c.tag], rng) : null;
-      const type = eraType || (c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry');
+    while (divs + guard < want && guard < 3 && !(broke && !war)) {
+      let type = null;
+      // short of the strategic good: pick units that do not need it
+      for (let i = 0; i < 3; i++) {
+        const r = rng();
+        const eraType = typeof Eras !== 'undefined' ? Eras.pickUnitType(COUNTRY_BY_TAG[c.tag], rng) : null;
+        type = eraType || (c.mil >= 8 && r < 0.15 ? 'tanks' : r < 0.3 ? 'artillery' : 'infantry');
+        if (!(e && e.sat && e.sat.strategic < 0.6 && typeof Economy !== 'undefined' && Economy.stratUnit(type))) break;
+      }
       if (!recruit(c.tag, type, 0)) break;
       guard++;
     }
+    // at peace with a stronger hostile neighbour: move idle armies up to that border
+    if (threat) guardBorder(c.tag, threat, myArmies);
     if (war) {
       // spread out: split big idle armies while parts of the front are uncovered
       const en = enemiesOf(c.tag);
@@ -744,6 +754,25 @@ const Sim = (function () {
     }
     // merge small reserve armies into nearby field armies
     for (const r of myArmies.filter(a => a.reserve && a.units.length >= 4 && !a.battle && !a.path.length)) r.reserve = false;
+  }
+
+  function guardBorder(tag, foe, mine) {
+    const border = MAP.provs.filter(p => G.owner[p.id] === tag && p.nb.some(n => G.owner[n] === foe))
+      .sort((a, b) => (b.capital ? 3 : 0) + (b.city ? 1 : 0) - (a.capital ? 3 : 0) - (a.city ? 1 : 0));
+    if (!border.length) return;
+    const on = new Map(border.map(p => [p.id, 0]));
+    const idle = [];
+    for (const a of mine) {
+      const at = a.path.length ? a.path[a.path.length - 1] : a.prov;
+      if (on.has(at)) on.set(at, on.get(at) + 1);
+      else if (!a.battle && !a.path.length && !a.sea && !a.reserve && a.units.length >= 2) idle.push(a);
+    }
+    // keep about a third of the field armies home
+    for (const a of idle.slice(0, Math.ceil(idle.length * 0.65))) {
+      const tgt = border.reduce((b, p) => on.get(p.id) < on.get(b.id) ? p : b, border[0]);
+      const path = findPath(tag, a.prov, tgt.id, 'move');
+      if (path && path.length) { a.path = path; a.progress = 0; on.set(tgt.id, on.get(tgt.id) + 1); }
+    }
   }
 
   // Frontline logic shared by AI countries and player armies set to "Defend front" / "Attack".
