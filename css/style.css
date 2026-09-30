@@ -542,3 +542,17 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .prices { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 4px 12px; font-size: 13px; }
 .prices span:nth-child(odd) { color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .prices svg.i { width: 14px; height: 14px; }
+
+/* ---------- online play ---------- */
+.field { width: 220px; max-width: 100%; padding: 8px 10px; background: var(--panel-3); border: 1px solid var(--line); color: var(--paper); font: inherit; font-size: 15px; }
+.field:focus { outline: none; border-color: var(--brass); }
+.field.code { text-transform: uppercase; letter-spacing: .2em; font-weight: 700; }
+.netcode { font-size: 1.25em; letter-spacing: .18em; color: #fff6dc; }
+.mp-nations { max-height: min(52vh, 460px); overflow-y: auto; }
+.mp-nation { width: 100%; text-align: left; background: var(--panel-3); border: 1px solid var(--line); color: var(--paper); cursor: pointer; font: inherit; display: flex; align-items: center; gap: 10px; }
+.mp-nation:not(:disabled):hover, .mp-nation:not(:disabled):focus-visible { outline: none; border-color: var(--brass); }
+.mp-nation:disabled { opacity: .55; cursor: not-allowed; }
+.mp-nation .grow { display: flex; flex-direction: column; }
+.swatch { width: 18px; height: 18px; flex: none; border: 1px solid rgba(0,0,0,.5); }
+#tb-net { display: none; align-items: center; gap: 6px; padding: 0 10px; font-size: 13px; color: #9fd48a; white-space: nowrap; cursor: pointer; background: none; border: 0; font: inherit; }
+#tb-net.on { display: inline-flex; }

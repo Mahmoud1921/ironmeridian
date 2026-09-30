@@ -1,4 +1,4 @@
-// Main menu: Continue, New game (era, then nation), Load game, Join game (not yet), Options and Credits.
+// Main menu: Continue, New game (era, then nation), Load game, Join game (online play), Options and Credits.
 // Also keeps the player's preferences, which outlive any one game.
 'use strict';
 const Menu = (function () {
@@ -78,6 +78,7 @@ const Menu = (function () {
     else if (id === 'load') renderLoad();
     else if (id === 'options') renderOptions();
     else if (id === 'credits') renderCredits();
+    else if (id === 'join') renderJoin();
     sh.scrollTop = 0;
     const f = sh.querySelector('.era.on, [data-ld], [data-otab].on'); if (f) f.focus({ preventScroll: true });
   }
@@ -155,6 +156,61 @@ const Menu = (function () {
     const bg = $('#opt-bg'); if (bg) bg.onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useImage(f); };
     const pt = $('#opt-paint'); if (pt) pt.onclick = usePainting;
   }
+  // ---------- online play: join a friend's game with a code, or host one ----------
+  const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
+  let joinCode = '', hostNext = false, joining = false;
+  function renderJoin() {
+    const p = getPrefs();
+    if (window.IM_ARTIFACT) {
+      $('#sheet').innerHTML = `${X}<h2>Play with others</h2><p>Online play runs in the web version of the game, which anyone can open without an account:</p>
+        <p><a class="lnk" href="${PAGES_URL}" target="_blank" rel="noopener">${PAGES_URL}</a></p>
+        <p class="note">To host a game you started here, save it, export the save from Load game, and import it there.</p>`;
+      return;
+    }
+    const lob = Net.role === 'client' && Net.lobby;
+    if (lob) { renderLobby(lob); return; }
+    $('#sheet').innerHTML = `${X}<h2>Play with others</h2>
+      <p>Join a friend's game with the code they give you, or host your own. Nations nobody picks stay with the computer.</p>
+      <div class="opts">
+        <div class="k">Your name<small>Shown to the other players</small></div><input class="field" id="mp-name" maxlength="24" value="${esc(p.name || '')}" placeholder="Player" autocomplete="nickname">
+        <div class="k">Join code</div><input class="field code" id="mp-code" maxlength="12" value="${esc(joinCode)}" placeholder="ABCDE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      </div>
+      <p class="note" id="mp-status">${esc(Net.status || '')}</p>
+      <div class="foot"><button class="btn ghost" id="mp-host">Host a new game</button><button class="btn primary" id="mp-join" ${joining ? 'disabled' : ''}>Join game</button></div>
+      <p class="note">To host a saved game, load it, then open the menu with Esc and choose Invite players.</p>`;
+    const name = $('#mp-name'), code = $('#mp-code');
+    name.onchange = () => setPref('name', name.value.trim().slice(0, 24));
+    code.oninput = () => { joinCode = Net.clean(code.value); };
+    code.onkeydown = e => { if (e.key === 'Enter') go(); };
+    const go = async () => {
+      if (joining) return;
+      setPref('name', name.value.trim().slice(0, 24));
+      joinCode = Net.clean(code.value);
+      joining = true; $('#mp-join').disabled = true;
+      const r = await Net.join(joinCode, getPrefs().name || 'Player');
+      joining = false;
+      if (current !== 'join') return;
+      if (!r.ok) { renderJoin(); flash(r.why); }
+    };
+    $('#mp-join').onclick = go;
+    $('#mp-host').onclick = () => { setPref('name', name.value.trim().slice(0, 24)); hostNext = true; open('new'); };
+    if (!code.value) code.focus({ preventScroll: true });
+  }
+  function renderLobby(m) {
+    if (current !== 'join') open('join');
+    const eraName = (Eras.list().find(e => e.id === m.era) || {}).name || m.era;
+    $('#sheet').innerHTML = `${X}<h2>Pick your nation</h2>
+      <p>${esc(m.host || 'The host')}'s game · ${esc(eraName)} · ${esc(m.date || '')}. Pick any nation nobody leads yet.</p>
+      <div class="list mp-nations">${m.nations.map(n => {
+        const by = m.taken[n.tag];
+        return `<button class="row mp-nation" data-mpick="${esc(n.tag)}" ${by ? 'disabled' : ''}><span class="swatch" style="background:${esc(n.color)}"></span><span class="grow"><b>${esc(n.name)}</b><span class="sub">${n.prov} province${n.prov === 1 ? '' : 's'}${by ? ' · led by ' + esc(by) : ''}</span></span></button>`;
+      }).join('')}</div>
+      <div class="foot"><button class="btn ghost" id="mp-leave">Leave</button></div>`;
+    if (m.deny) flash(m.deny);
+    $('#sheet').querySelectorAll('[data-mpick]').forEach(b => b.onclick = () => { $('#sheet').querySelectorAll('[data-mpick]').forEach(x => x.disabled = true); b.querySelector('.sub').textContent = 'Joining…'; Net.pick(b.dataset.mpick); });
+    $('#mp-leave').onclick = () => { Net.stop(); renderJoin(); };
+  }
+  function takeHost() { const h = hostNext; hostNext = false; return h; }
   function renderCredits() {
     $('#sheet').innerHTML = `${X}<h2>Credits</h2>
       <p>Designed by mahmoud. Built with Claude.</p>
@@ -168,9 +224,15 @@ const Menu = (function () {
     $('#mm-load').onclick = () => open(current === 'load' ? null : 'load');
     $('#mm-options').onclick = () => open(current === 'options' ? null : 'options');
     $('#mm-credits').onclick = () => open(current === 'credits' ? null : 'credits');
+    $('#mm-join').onclick = () => open(current === 'join' ? null : 'join');
+    Net.hooks.lobby = m => { if (!$('#menu').hidden) renderLobby(m); };
+    Net.hooks.status = t => { const n = $('#mp-status'); if (n) n.textContent = t; };
+    // an invite link opens straight onto the join sheet with the code filled in
+    const h = /[#&]join=([A-Za-z0-9-]+)/.exec(location.hash || '');
+    if (h) { joinCode = Net.clean(h[1]); setTimeout(() => { if (!$('#menu').hidden) open('join'); }, 0); }
     $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) open(null); });
     window.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#menu').hidden && current) { e.preventDefault(); open(null); } });
     apply();
   }
-  return { init, show, hide, open, prefs: getPrefs, setPref, apply, isOpen: () => !$('#menu').hidden };
+  return { init, show, hide, open, flash, takeHost, prefs: getPrefs, setPref, apply, isOpen: () => !$('#menu').hidden };
 })();

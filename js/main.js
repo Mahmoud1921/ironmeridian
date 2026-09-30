@@ -18,7 +18,10 @@
     function tick(now) {
       const dt = Math.min(0.25, (now - last) / 1000); last = now;
       const G = Sim.G;
-      if (G && !G.paused && !G.over && !G.peace && !(G.ev && G.ev.open.length && G.settings.pauseEvent !== false)) {
+      if (G && !Net.ticks()) {
+        // a joined player's browser only shows the game; the host's browser runs it
+        Render.state.hourFrac = Net.hourFrac();
+      } else if (G && !G.paused && !G.over && !G.peace && !(G.ev && G.ev.open.length && G.settings.pauseEvent !== false)) {
         acc += dt * UI.HPS[G.speed];
         let n = 0;
         while (acc >= 1 && n < 80) { Sim.hourTick(); acc -= 1; n++; }

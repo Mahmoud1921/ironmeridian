@@ -102,7 +102,8 @@ const UI = (function () {
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
-    Sim.hooks.notify = toast;
+    Sim.hooks.notify = (text, prov, kind) => toast(text, prov, kind);
+    netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
     Events.hooks.show = () => { if ($('#modal').hidden) showEvent(); };
@@ -218,8 +219,9 @@ const UI = (function () {
   function loadGame(d) {
     const cur = Eras.isBase() ? Eras.BASE_ID : Eras.info().id;
     if (d.era !== cur) applyEra(d.era);
+    if (!d.net) { delete d.G.humans; delete d.G.__net; if (d.G.dip) d.G.dip.offers = []; }
     Sim.restore(d.G);
-    Sim.G.paused = true;
+    if (!d.net) Sim.G.paused = true;
     $('#modal').hidden = true;
     enterGame(d.player, true);
   }
@@ -242,14 +244,17 @@ const UI = (function () {
     { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
     sel.collapsed = true; // the side bar starts closed: the map is clear until a tab is opened
     renderTrays(); renderRight(); refreshTop(); renderLeft();
-    toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
+    if (!Net.isClient()) toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
     if (Sim.G.peace) showPeace(); else if (Events.open().length) showEvent();
+    if (!loaded && Menu.takeHost()) hostGame();
   }
 
   // ---------- top bar ----------
   function refreshTop() {
     const G = Sim.G; if (!G) return;
     const c = G.countries[G.player];
+    const nb = $('#tb-net');
+    if (nb) { const on = Net.active(); nb.classList.toggle('on', on); if (on) { const n = Net.playerList().length; const t = (Net.role === 'host' ? 'Code ' + Net.code : 'Online') + ' · ' + n + ' player' + (n === 1 ? '' : 's'); if (nb.textContent !== t) nb.textContent = t; } }
     setHTML($('#tb-nation'), flagSVG(c.tag) + `<span><div class="nm">${esc(c.name)}</div><div class="gov">${c.gov}</div></span>`);
     const divs = G.armies.filter(a => a.owner === c.tag).reduce((s, a) => s + a.units.length, 0);
     const nArmies = G.armies.filter(a => a.owner === c.tag).length;
@@ -307,8 +312,8 @@ const UI = (function () {
     // a tap on a phone toggles the tooltip
     bar.addEventListener('click', e => { const i = at(e); showTip(i === tipAt && e.pointerType !== 'mouse' ? -1 : i); });
   }
-  function togglePause() { const G = Sim.G; if (!G || G.over) return; G.paused = !G.paused; refreshTop(); }
-  function setSpeed(s) { const G = Sim.G; if (!G) return; G.speed = Math.max(1, Math.min(5, s)); refreshTop(); }
+  function togglePause() { const G = Sim.G; if (!G || G.over) return; Net.setPaused(!G.paused); refreshTop(); }
+  function setSpeed(s) { const G = Sim.G; if (!G) return; Net.setSpeed(s); refreshTop(); }
 
   // ---------- toasts ----------
   function toast(text, prov, kind) {
@@ -537,7 +542,7 @@ const UI = (function () {
     return html;
   }
 
-  function warCost(tag) { const G = Sim.G; return G.dip.claims[G.player + '>' + tag] > G.hour ? 0 : DECLARE_COST; }
+  function warCost(tag) { return Diplo.warCost(Sim.G.player, tag); }
   function confirmWar(tag) {
     const G = Sim.G;
     const cost = warCost(tag), pact = Sim.hasPact(G.player, tag);
@@ -550,12 +555,8 @@ const UI = (function () {
       <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Cancel</button><button class="btn danger" data-x="yes">${pact ? 'Break pact and declare war' : 'Declare war'}</button></div>`,
       x => {
         if (x !== 'yes') return;
-        const c = G.countries[G.player];
-        if (c.pp < cost) return;
-        if (!Sim.declareWar(G.player, tag, false, { breakPact: true })) { toast('War could not be declared.', -1, 'info'); return; }
-        c.pp -= cost;
-        if (pact) c.stab = Math.max(0, c.stab - 0.15);
-        if (c.ws < 0.3) c.stab = Math.max(0, c.stab - 0.08);
+        const r = Diplo.declare(G.player, tag);
+        if (!r.ok) { toast(r.text, -1, 'info'); return; }
         Render.state.dirtyOwners = true;
         renderLeft(); renderRight(); refreshTop();
       });
@@ -780,6 +781,18 @@ const UI = (function () {
   // proposals from AI nations wait their turn, one dialog at a time
   const offers = [];
   // shown as a card above the army tray, not a dialog: it never blocks the map or the panels
+  // multiplayer: proposals waiting for this player's answer come from the shared game state
+  const shownOffers = new Set();
+  function pollOffers() {
+    const G = Sim.G; if (!G || !G.humans || !G.dip || !G.dip.offers) return;
+    for (const o of G.dip.offers) {
+      if (o.decider !== G.player || shownOffers.has(o.id)) continue;
+      shownOffers.add(o.id);
+      offers.push({ o, game: G, respond: yes => Diplo.answerOffer(o.id, yes) });
+      while (offers.length > 3) offers.splice(1, 1);
+      showOffer();
+    }
+  }
   function showOffer() {
     const el = $('#offer');
     if (!offers.length) { el.hidden = true; return; }
@@ -1209,13 +1222,16 @@ const UI = (function () {
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
       <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on or by me')}${chk('pauseLoss', 'Loss of a city or my capital')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseCapitulation', 'A nation in my wars capitulates')}</div>
       ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
+      ${netSection()}
       <hr class="sep"><div class="label">Saved games</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-x="saves">Save or load</button></div>
       <hr class="sep"><div class="label">Controls</div>
       <p class="note">WASD, the arrow keys or a right-drag move the map; scroll or pinch to zoom. Click a counter to select an army, shift-click to add, or drag across several. Right-click to move or attack. Keys 1 to 9 open the side bar tabs, Space pauses, + and − change speed, Esc closes panels.</p>
       <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><span style="display:flex;gap:8px"><button class="btn danger" data-x="new">New game</button><button class="btn" data-x="quit">Save and quit to menu</button></span><button class="btn primary" data-x="ok">Close</button></div>`,
       x => {
-        if (x === 'new') newGamePrompt();
+        if (x === 'host') hostGame();
+        else if (x === 'leave') { Net.stop(); backToStart(); }
+        else if (x === 'new') newGamePrompt();
         else if (x === 'saves') openSaves(true);
         else if (x === 'quit') { const r = Save.write(Save.AUTO, 'Autosave'); if (!r.ok) toast(r.why, -1, 'info'); backToStart(); }
       });
@@ -1223,8 +1239,69 @@ const UI = (function () {
     if (s.pauseEvent === undefined) s.pauseEvent = true;
     $('#set-autosave').checked = s.autosave; $('#set-pauseEvent').checked = s.pauseEvent;
     ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
-    G.paused = true; refreshTop();
+    Net.setPaused(true); refreshTop();
+    const cp = $('#modal [data-copy]'); if (cp) cp.onclick = () => copyInvite();
   }
+  // ---------- multiplayer ----------
+  const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
+  const inArtifact = () => !!window.IM_ARTIFACT;
+  const inviteLink = () => (location.protocol.startsWith('http') && !inArtifact() ? location.origin + location.pathname : PAGES_URL) + '#join=' + Net.code;
+  function copyInvite() {
+    const t = inviteLink();
+    const done = () => toast('Invite link copied: ' + t, -1, 'info');
+    try { navigator.clipboard.writeText(t).then(done, () => toast('Share this link: ' + t, -1, 'info')); } catch (e) { toast('Share this link: ' + t, -1, 'info'); }
+  }
+  function netSection() {
+    const list = Net.playerList();
+    const who = list.map(p => `<div class="row">${flagSVG(p.tag)}<div class="grow">${esc(p.name)}${p.me ? ' (you)' : ''}<div class="sub">${esc(Sim.G.countries[p.tag] ? Sim.G.countries[p.tag].name : p.tag)}${p.host ? ' · host' : ''}</div></div></div>`).join('');
+    if (Net.role === 'host') return `<hr class="sep"><div class="label">Playing with others</div>
+      <p class="note">Your join code is <b class="netcode">${esc(Net.code)}</b>. Friends open the game, choose Join game and type it, or open the invite link. They pick any nation nobody leads. If you close this page, the game ends for everyone.</p>
+      <div class="list">${who}</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn" data-copy="1">Copy invite link</button></div>`;
+    if (Net.role === 'client') return `<hr class="sep"><div class="label">Playing with others</div>
+      <p class="note">You are in a game hosted by someone else (code ${esc(Net.code)}). Saving keeps a copy of the game in this browser.</p><div class="list">${who}</div>
+      <div style="display:flex;gap:8px;margin-top:6px"><button class="btn danger" data-x="leave">Leave the game</button></div>`;
+    if (inArtifact()) return `<hr class="sep"><div class="label">Playing with others</div><p class="note">Online play works in the web version: <a class="lnk" href="${PAGES_URL}" target="_blank" rel="noopener">${PAGES_URL}</a>. Save here, export the save, and import it there to host this game.</p>`;
+    return `<hr class="sep"><div class="label">Playing with others</div><p class="note">Let friends join this game from their own browsers. You get a code to share; nations nobody picks stay with the computer.</p>
+      <div style="display:flex;gap:8px"><button class="btn primary" data-x="host">Invite players</button></div>`;
+  }
+  async function hostGame() {
+    toast('Opening the game to other players…', -1, 'info');
+    const r = await Net.host(Menu.prefs().name || 'Host');
+    if (!r.ok) { modal(`<h2 class="display" style="font-size:24px">Could not open the game</h2><p class="note">${esc(r.why)}</p><div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="ok">Close</button></div>`); return; }
+    openMenu();
+    refreshTop();
+  }
+  function netHooks() {
+    $('#tb-net').onclick = () => openMenu();
+    Net.hooks.joined = p => { toast(p.name + ' joined and leads ' + Sim.G.countries[p.tag].name + '.', Sim.G.countries[p.tag].capital, 'info'); refreshTop(); };
+    Net.hooks.left = p => { toast(p.name + ' left. The computer leads ' + (Sim.G.countries[p.tag] ? Sim.G.countries[p.tag].name : p.tag) + ' again.', -1, 'info'); refreshTop(); };
+    Net.hooks.players = () => { refreshTop(); const m = $('#modal'); if (!m.hidden && m.querySelector('.netcode, [data-x="host"]')) openMenu(); };
+    Net.hooks.synced = ev => {
+      if (ev.first) {
+        loadGame({ era: ev.era, player: ev.tag, G: ev.G, net: true });
+        const L = Sim.G.log || [];
+        netSeen = { hour: L.length ? L[0].hour : -1, texts: new Set(L.filter(l => l.hour === (L.length ? L[0].hour : -1)).map(l => l.text)) };
+        toast('You joined ' + (ev.hostName || 'the host') + '\'s game and lead ' + Sim.G.countries[ev.tag].name + '.', -1, 'info');
+        Menu.hide();
+        return;
+      }
+      const G = Sim.G; if (!G) return;
+      if (G.ownVer !== Render.state.ownVer) { Render.state.ownVer = G.ownVer; Render.state.dirtyOwners = true; }
+      if (!netLost && (!G.countries[G.player] || !G.countries[G.player].alive)) { netLost = true; gameOver(false); }
+      if (G.log && G.log.length) {
+        const seen = netSeen;
+        for (let i = G.log.length - 1; i >= 0; i--) { const l = G.log[i]; if (l.hour > seen.hour || (l.hour === seen.hour && !seen.texts.has(l.text))) { if (!l.to || l.to === G.player) toast(l.text, l.prov, l.kind); } }
+        netSeen = { hour: G.log[0].hour, texts: new Set(G.log.filter(l => l.hour === G.log[0].hour).map(l => l.text)) };
+      }
+    };
+    Net.hooks.ended = (text, inGame) => {
+      if (inGame && Sim.G) { const r = Save.write(Save.AUTO, 'Autosave'); if (!r.ok) console.warn(r.why); }
+      backToStart();
+      Menu.open('join');
+      Menu.flash(text + (inGame ? ' A copy was saved as the autosave.' : ''));
+    };
+  }
+  let netSeen = { hour: -1, texts: new Set() }, netLost = false;
   // ---------- saved games ----------
   function openSaves(inGame) {
     const G = Sim.G;
@@ -1361,6 +1438,8 @@ const UI = (function () {
       x => { if (x === 'yes') { backToStart(); Menu.open('new'); } });
   }
   function backToStart() {
+    if (Net.active()) Net.stop();
+    netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
     Sim.G = null; $('#modal').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
@@ -1534,6 +1613,7 @@ const UI = (function () {
     if ($('#modal').hidden && !G.over) { if (G.peace) showPeace(); else if (G.ev && G.ev.open.length) showEvent(); }
     if (now - lastRefresh > 300) {
       lastRefresh = now;
+      if (G.humans) pollOffers();
       sel.armies = sel.armies.filter(id => Sim.army(id));
       Render.state.selArmies = new Set(sel.armies);
       if (sel.fleet && !Navy.fleet(sel.fleet)) { sel.fleet = 0; Render.state.selFleet = 0; }

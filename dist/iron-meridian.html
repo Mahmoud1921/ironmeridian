@@ -552,6 +552,20 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .prices span:nth-child(odd) { color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .prices svg.i { width: 14px; height: 14px; }
 
+/* ---------- online play ---------- */
+.field { width: 220px; max-width: 100%; padding: 8px 10px; background: var(--panel-3); border: 1px solid var(--line); color: var(--paper); font: inherit; font-size: 15px; }
+.field:focus { outline: none; border-color: var(--brass); }
+.field.code { text-transform: uppercase; letter-spacing: .2em; font-weight: 700; }
+.netcode { font-size: 1.25em; letter-spacing: .18em; color: #fff6dc; }
+.mp-nations { max-height: min(52vh, 460px); overflow-y: auto; }
+.mp-nation { width: 100%; text-align: left; background: var(--panel-3); border: 1px solid var(--line); color: var(--paper); cursor: pointer; font: inherit; display: flex; align-items: center; gap: 10px; }
+.mp-nation:not(:disabled):hover, .mp-nation:not(:disabled):focus-visible { outline: none; border-color: var(--brass); }
+.mp-nation:disabled { opacity: .55; cursor: not-allowed; }
+.mp-nation .grow { display: flex; flex-direction: column; }
+.swatch { width: 18px; height: 18px; flex: none; border: 1px solid rgba(0,0,0,.5); }
+#tb-net { display: none; align-items: center; gap: 6px; padding: 0 10px; font-size: 13px; color: #9fd48a; white-space: nowrap; cursor: pointer; background: none; border: 0; font: inherit; }
+#tb-net.on { display: inline-flex; }
+
 </style>
 </head>
 <body>
@@ -617,6 +631,7 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
         <div id="tb-date" class="num"></div>
         <div id="tb-speed" aria-label="Game speed"></div>
       </div>
+      <button id="tb-net" aria-label="Online players"></button>
       <button class="iconbtn" id="tb-menu" aria-label="Menu"><svg class="i"><use href="#i-menu"/></svg></button>
     </header>
 
@@ -676,7 +691,7 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
         <button id="mm-continue" class="first" hidden>Continue <small id="mm-cont-sub"></small></button>
         <button id="mm-new">New game</button>
         <button id="mm-load">Load game</button>
-        <button id="mm-join" disabled title="Online play is not available yet">Join game <small>Coming later</small></button>
+        <button id="mm-join">Join game <small>Play online with friends</small></button>
         <button id="mm-options">Options</button>
         <button id="mm-credits">Credits</button>
       </nav>
@@ -5094,7 +5109,7 @@ const Sim = (function () {
     if (!t || !t.units.length || !atWar(a.owner, t.owner)) {
       a.chase = 0;
       if (a.order === 'attack' && !a.battle) { walkBack(a); a.order = 'hold'; a.target = -1; }
-      if (a.owner === G.player) notify(a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
+      tell(a.owner, a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
       return;
     }
     if (a.battle || a.sea) return;
@@ -5161,9 +5176,8 @@ const Sim = (function () {
       b = { id: G.nextBattle++, prov, atkTag: a.owner, defTag: defs[0].owner, attackers: [], from: {}, start: G.hour,
         casA: 0, casD: 0, progress: 0.5, rateA: 0, rateD: 0, mods: [] };
       G.battles.push(b);
-      const pl = G.player;
-      if (allied(a.owner, pl) || defs.some(d => allied(d.owner, pl))) {
-        notify('Battle of ' + MAP.provs[prov].name + ' has begun.', prov, 'battle', G.settings.pauseBattle && (a.owner === pl || defs.some(d => d.owner === pl)));
+      for (const pl of humans()) if (allied(a.owner, pl) || defs.some(d => allied(d.owner, pl))) {
+        tell(pl, 'Battle of ' + MAP.provs[prov].name + ' has begun.', prov, 'battle', G.settings.pauseBattle && (a.owner === pl || defs.some(d => d.owner === pl)));
       }
     }
     if (!b.attackers.includes(a.id)) { b.attackers.push(a.id); b.from[a.id] = a.prov; }
@@ -5251,14 +5265,14 @@ const Sim = (function () {
       for (const d of defs) if (G.armies.includes(d)) retreatFrom(d, b);
       if (allied(b.atkTag, pl)) G.stats.battlesWon++;
       if (allied(b.defTag, pl)) G.stats.battlesLost++;
-      if (b.atkTag === pl || defs.some(d => d.owner === pl))
-        notify((b.atkTag === pl ? 'Victory' : 'Defeat') + ' at ' + prov.name + '.', b.prov, b.atkTag === pl ? 'win' : 'loss', false);
+      for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
+        tell(h, (b.atkTag === h ? 'Victory' : 'Defeat') + ' at ' + prov.name + '.', b.prov, b.atkTag === h ? 'win' : 'loss', false);
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
       endBattle(b);
     } else if (aOrg < 0.12) {
       for (const a of atts) { walkBack(a); if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
-      if (b.atkTag === pl || defs.some(d => d.owner === pl))
-        notify('The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === pl ? 'loss' : 'win', false);
+      for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
+        tell(h, 'The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
       endBattle(b);
     }
   }
@@ -5293,13 +5307,13 @@ const Sim = (function () {
     G.owner[prov] = newOwner;
     G.ownVer++;
     if (newOwner === G.player) G.stats.captured++;
-    if (prev === G.player) {
-      G.stats.lost++;
+    if (isHuman(prev)) {
+      if (prev === G.player) G.stats.lost++;
       if (p.capital || p.city) {
         // pause at most once a day for lost cities, so a collapsing front doesn't stop the clock every hour
         const pause = G.settings.pauseLoss && (p.capital || !(G.hour - (G.lossPauseAt ?? -99) < 24));
         if (pause) G.lossPauseAt = G.hour;
-        notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+        tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
       }
     }
     // capital relocation
@@ -5453,7 +5467,7 @@ const Sim = (function () {
     let reserve = G.armies.find(a => a.owner === c.tag && a.prov === cap && a.reserve && a.units.length < 12);
     if (!reserve) { reserve = newArmy(c.tag, cap, []); reserve.reserve = true; }
     reserve.units.push(u);
-    if (c.tag === G.player) notify('A new ' + UNIT_TYPES[item.type].name.toLowerCase() + ' division is ready in ' + MAP.provs[cap].name + '.', cap, 'info', false);
+    tell(c.tag, 'A new ' + UNIT_TYPES[item.type].name.toLowerCase() + ' division is ready in ' + MAP.provs[cap].name + '.', cap, 'info', false);
   }
 
   // ---------- AI ----------
@@ -5543,12 +5557,15 @@ const Sim = (function () {
   }
 
   function playerOrders() {
-    const mine = G.armies.filter(a => a.owner === G.player);
+    for (const h of humans()) humanOrders(h);
+  }
+  function humanOrders(me) {
+    const mine = G.armies.filter(a => a.owner === me);
     const defenders = mine.filter(a => a.order === 'defend');
     if (defenders.length) {
       const groups = {};
       defenders.forEach(a => { (groups[a.frontTag || '*'] = groups[a.frontTag || '*'] || []).push(a); });
-      for (const k in groups) frontlineAI(G.player, groups[k], false, k === '*' ? null : k);
+      for (const k in groups) frontlineAI(me, groups[k], false, k === '*' ? null : k);
     }
     for (const a of mine) {
       if (a.order === 'attack' && !a.battle && !a.path.length && a.target >= 0 && a.prov !== a.target) {
@@ -5666,7 +5683,7 @@ const Sim = (function () {
     checkCapitulations();
     const day = Math.floor(G.hour / 24);
     for (const c of Object.values(G.countries)) {
-      if (!c.alive || c.tag === G.player) continue;
+      if (!c.alive || isHuman(c.tag)) continue;
       const war = isAtWar(c.tag);
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
@@ -5678,8 +5695,18 @@ const Sim = (function () {
     playerOrders();
   }
 
-  function notify(text, prov, kind, pause) {
-    G.log.unshift({ hour: G.hour, text, prov, kind });
+  // humans: the local player plus, in a multiplayer game, every nation another person leads
+  function isHuman(tag) { return tag === G.player || !!(G.humans && G.humans[tag]); }
+  function humans() { const out = [G.player]; if (G.humans) for (const t in G.humans) if (t !== G.player && G.countries[t]) out.push(t); return out; }
+  // a message for one human's nation; the local player also gets the toast and pause
+  function tell(tag, text, prov, kind, pause) {
+    if (tag === G.player) return notify(text, prov, kind, pause, tag);
+    if (!isHuman(tag)) return;
+    G.log.unshift({ hour: G.hour, text, prov, kind, to: tag });
+    if (G.log.length > 80) G.log.pop();
+  }
+  function notify(text, prov, kind, pause, to) {
+    G.log.unshift(to ? { hour: G.hour, text, prov, kind, to } : { hour: G.hour, text, prov, kind });
     if (G.log.length > 80) G.log.pop();
     hooks.notify(text, prov, kind);
     if (pause && G.settings.autoPause && !G.paused) { G.paused = true; hooks.pause(text); }
@@ -5692,7 +5719,7 @@ const Sim = (function () {
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
-    army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
+    isHuman, humans, tell, army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
     orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
@@ -5979,7 +6006,7 @@ const Diplo = (function () {
         const r = Economy.embargo(from, to);
         const joined = [];
         const f = Sim.factionOf(from);
-        if (f && f.leader === from) for (const m of f.members) if (m !== from && m !== g.player && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
+        if (f && f.leader === from) for (const m of f.members) if (m !== from && !Sim.isHuman(m) && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
         log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', to === g.player);
         return res(true, 'Embargo on ' + name(to) + ' in force' + (joined.length ? '. Joined by ' + joined.join(', ') : '') + '.' + (r.strangled ? ' It strangles them: they now have a reason for war against you.' : ''));
       }
@@ -6010,11 +6037,56 @@ const Diplo = (function () {
     const ctx = Object.assign({ fac }, terms);
     const decide = ans => finish(action, from, to, ctx, ans);
     const decider = action === 'join' ? fac.leader : to;
+    // multiplayer: a proposal to a nation a person leads waits in g.dip.offers for that person's answer
+    if (g.humans && Sim.isHuman(decider) && decider !== from) {
+      const offers = g.dip.offers || (g.dip.offers = []);
+      g.dip.nextOffer = (g.dip.nextOffer || 0) + 1;
+      offers.push({ id: g.dip.nextOffer, action, from, to, decider, hour: g.hour, facId: fac ? fac.id : null, terms: Object.assign({}, terms), text: describe(action, from, to, ctx) });
+      return res(null, 'Proposal sent to ' + name(decider) + '.');
+    }
     if (decider === g.player && hooks.offer) {
       hooks.offer({ action, from, to, terms: ctx, text: describe(action, from, to, ctx) }, yes => decide({ yes, why: yes ? 'accepted' : 'declined' }));
       return res(null, 'Proposal sent to ' + name(decider) + '.');
     }
     return decide(answer(action, from, decider, ctx));
+  }
+  // does an offer still make sense when it is answered?
+  function offerValid(o, ctx) {
+    const g = G(), war = Sim.atWar(o.from, o.to);
+    if (!g.countries[o.from] || !g.countries[o.from].alive) return false;
+    if (o.action === 'peace') return war;
+    if (war) return false;
+    if (o.action === 'invite') return !Sim.factionOf(o.decider) && !!ctx.fac;
+    if (o.action === 'join') return !!ctx.fac && !Sim.factionOf(o.from);
+    if (o.action === 'trade') return Economy.canDeal(o.from, o.to, ctx).ok;
+    return true;
+  }
+  // the person leading o.decider answers a waiting offer
+  function answerOffer(id, yes) {
+    const g = G(), list = g.dip.offers || [];
+    const i = list.findIndex(o => o.id === id);
+    if (i < 0) return { ok: false, text: 'That offer has lapsed.' };
+    const o = list[i];
+    if (o.decider !== g.player) return { ok: false, text: 'Not your offer to answer.' };
+    list.splice(i, 1);
+    const ctx = Object.assign({ fac: o.facId != null ? g.dip.factions.find(f => f.id === o.facId) || null : null }, o.terms);
+    if (yes && !offerValid(o, ctx)) { Sim.tell(o.from, name(o.decider) + ' could not accept: the offer no longer holds.', -1, 'info', false); return { ok: true, text: 'That offer is no longer valid.' }; }
+    const r = finish(o.action, o.from, o.to, ctx, { yes, why: yes ? 'accepted' : 'declined' });
+    Sim.tell(o.from, name(o.decider) + (yes ? ' accepted' : ' declined') + ' your proposal' + (r && r.text ? ': ' + r.text : '.'), -1, yes ? 'win' : 'info', false);
+    return r;
+  }
+  // declaring war from the diplomacy screen: costs political power unless a refused demand justifies it
+  const DECLARE_COST = 25;
+  function warCost(from, to) { const g = G(); return g.dip.claims[from + '>' + to] > g.hour ? 0 : DECLARE_COST; }
+  function declare(from, to) {
+    const g = G(), c = g.countries[from];
+    const cost = warCost(from, to), pact = Sim.hasPact(from, to);
+    if (c.pp < cost) return { ok: false, text: 'Not enough political power.' };
+    if (!Sim.declareWar(from, to, false, { breakPact: true })) return { ok: false, text: 'War could not be declared.' };
+    c.pp -= cost;
+    if (pact) c.stab = Math.max(0, c.stab - 0.15);
+    if (c.ws < 0.3) c.stab = Math.max(0, c.stab - 0.08);
+    return { ok: true, text: 'War declared on ' + name(to) + '.' };
   }
   function describe(action, from, to, t) {
     const f = name(from);
@@ -6167,13 +6239,16 @@ const Diplo = (function () {
 
   // ---------- daily upkeep and AI diplomacy ----------
   function dayTick() {
+    // unanswered offers to people lapse after a month
+    const g0 = G();
+    if (g0.dip.offers && g0.dip.offers.length) g0.dip.offers = g0.dip.offers.filter(o => g0.hour - o.hour < 24 * 30 && g0.countries[o.decider] && g0.countries[o.decider].alive);
     const g = G(), day = Math.floor(g.hour / DAY);
     for (const k of Object.keys(g.dip.pacts)) if (g.dip.pacts[k] <= g.hour) delete g.dip.pacts[k];
     // relation changes fade slowly
     if (day % 30 === 0) for (const k of Object.keys(g.dip.rel)) { g.dip.rel[k] *= 0.97; if (Math.abs(g.dip.rel[k]) < 0.5) delete g.dip.rel[k]; }
     // each nation thinks about diplomacy about once a month, spread over the days
     for (const c of Object.values(g.countries)) {
-      if (!c.alive || c.tag === g.player) continue;
+      if (!c.alive || Sim.isHuman(c.tag)) continue;
       if ((day + c.tag.charCodeAt(0) * 3 + c.tag.charCodeAt(1)) % 30 !== 0) continue;
       aiThink(c);
     }
@@ -6194,7 +6269,7 @@ const Diplo = (function () {
       if (!fac && g.hour > 90 * DAY && R() < 0.35 && c.gov !== 'Neutral') aiDo('create', tag);
       const f = Sim.factionOf(tag);
       if (f && f.leader === tag) {
-        const cand = others.filter(o => !Sim.factionOf(o.tag) && Sim.root(o.tag) === o.tag && o.tag !== g.player && rel(tag, o.tag) >= (threatOf(o.tag) ? 25 : 45)).sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0];
+        const cand = others.filter(o => !Sim.factionOf(o.tag) && Sim.root(o.tag) === o.tag && !Sim.isHuman(o.tag) && rel(tag, o.tag) >= (threatOf(o.tag) ? 25 : 45)).sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0];
         if (cand) aiDo('invite', tag, cand.tag);
         // occasionally invite the player too, if friendly
         if (!Sim.factionOf(g.player) && rel(tag, g.player) >= 45 && R() < 0.3) aiDo('invite', tag, g.player);
@@ -6250,7 +6325,7 @@ const Diplo = (function () {
     if (Sim.factionOf(tag)) leaveFaction(tag);
     f.members.push(tag); g.dip.facOf[tag] = f.id;
   }
-  return { hooks, COST, AID_EQ, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
+  return { hooks, COST, AID_EQ, DECLARE_COST, warCost, declare, answerOffer, offerValid, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
     joinFaction, leaveFaction, transferProvince, evacuate, warsBetweenSides };
 })();
 
@@ -6692,7 +6767,7 @@ const Economy = (function () {
       // a buyer that can't pay loses the deal after a month in debt
       for (const d of g.dip.trade.slice()) {
         const b = cs[d.to];
-        if (b && b.eco && b.eco.debtDays > 30 && d.from !== g.player) cancel(d.id, d.from, 'unpaid');
+        if (b && b.eco && b.eco.debtDays > 30 && !Sim.isHuman(d.from)) cancel(d.id, d.from, 'unpaid');
       }
     }
   }
@@ -6813,7 +6888,7 @@ const Economy = (function () {
         if (INFRA[q.kind]) setInfra(q.prov, q.kind, infra(q.prov, q.kind) + 1);
         else ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
         q.done = true;
-        if (c.tag === g.player) Sim.notify(kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
+        Sim.tell(c.tag, kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
       }
     }
     e.queue = e.queue.filter(q => !q.done && !q.lost);
@@ -6966,7 +7041,7 @@ const Economy = (function () {
         .sort((a, b) => (Diplo.rel(t, b.tag) + balance(b.tag, s.k)) - (Diplo.rel(t, a.tag) + balance(a.tag, s.k)));
       for (const o of cands.slice(0, 3)) {
         const amt = +Math.max(1, Math.min(-s.b * 1.05, balance(o.tag, s.k) * 0.9)).toFixed(1);
-        const terms = { good: s.k, amount: amt, price: fairPrice(s.k, amt) * (o.tag === g.player ? 1.05 : 1), sell: false };
+        const terms = { good: s.k, amount: amt, price: fairPrice(s.k, amt) * (Sim.isHuman(o.tag) ? 1.05 : 1), sell: false };
         const r = Diplo.act('trade', t, o.tag, terms);
         if (r.ok && r.accepted !== false) break;
       }
@@ -6977,7 +7052,7 @@ const Economy = (function () {
       if (b < 2 || e.stock[k] < e.need[k] * 30 || dealsOf(t).length >= tradeSlots(t)) continue;
       const buyer = others.filter(o => balance(o.tag, k) < -1 && canDeal(t, o.tag, null).ok && Diplo.rel(t, o.tag) >= 0)
         .sort((a, b2) => balance(a.tag, k) - balance(b2.tag, k))[0];
-      if (!buyer || (buyer.tag === g.player && Sim.rng() > 0.35)) continue;
+      if (!buyer || (Sim.isHuman(buyer.tag) && Sim.rng() > 0.35)) continue;
       const amt = +Math.max(1, Math.min(b * 0.9, -balance(buyer.tag, k))).toFixed(1);
       Diplo.act('trade', t, buyer.tag, { good: k, amount: amt, price: fairPrice(k, amt), sell: true });
       break;
@@ -7261,7 +7336,7 @@ const Tech = (function () {
     c.techs.push(id);
     invalidate(c.tag);
     if (x.alt) delete c.rs.saved[x.alt];
-    if (c.tag === g.player) Sim.notify('Research complete: ' + x.t.name + '.', -1, 'win', false);
+    if (Sim.isHuman(c.tag)) Sim.tell(c.tag, 'Research complete: ' + x.t.name + '.', -1, 'win', false);
     else if (x.tier >= 3 && (x.kind === 'nat' || (x.t.fx || []).some(e => e.mod === 'unlock')) && (c.civ + c.mil >= 15)) Sim.notify(c.name + ' has developed ' + x.t.name + '.', -1, 'info', false);
   }
   function daily() {
@@ -7280,7 +7355,7 @@ const Tech = (function () {
         s.pts = Math.min(x.cost, s.pts + r);
         if (s.pts >= x.cost && dateReady(x)) { c.rs.slots[i] = null; complete(c, s.id); }
       }
-      if (c.tag !== g.player && (day + c.tag.charCodeAt(1)) % 5 === 0) aiPick(c);
+      if (!Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(1)) % 5 === 0) aiPick(c);
     }
   }
   function openTechs(tag) {
@@ -8511,7 +8586,7 @@ const Air = (function () {
       const base = freeBase(c.tag, -1);
       if (base < 0) { c.airQueue.push({ type: q.type, left: 1, total: q.total }); continue; }   // waits for room at an airbase
       const w = newWing(c.tag, q.type, base); w.org = 0.6;
-      if (c.tag === G().player) Sim.notify('The ' + w.name + ' (' + typeName(q.type).toLowerCase() + ') is ready at ' + MAP().provs[base].name + '.', base, 'info', false);
+      Sim.tell(c.tag, 'The ' + w.name + ' (' + typeName(q.type).toLowerCase() + ') is ready at ' + MAP().provs[base].name + '.', base, 'info', false);
     }
   }
   function upkeep(tag) { let u = 0; for (const w of G().wings) if (w.owner === tag) u += TYPES[w.type].eq / 2400; return u; }
@@ -8599,7 +8674,7 @@ const Air = (function () {
       // a base lost to the enemy: fly to the nearest free one or lose the wing
       if (!friendlyTo(w.owner, g.owner[w.base]) || !infra(w.base, 'air')) {
         const nb = freeBase(w.owner, w.base);
-        if (nb < 0) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' lost its airbase and was disbanded.', -1, 'loss', false); removeWing(w); continue; }
+        if (nb < 0) { Sim.tell(w.owner, 'The ' + w.name + ' lost its airbase and was disbanded.', -1, 'loss', false); removeWing(w); continue; }
         w.base = nb; w.mission = 'idle'; w.target = -1;
       }
       if (w.mission !== 'idle' && !inRange(w, point(w))) { w.mission = 'idle'; w.target = -1; }
@@ -8643,12 +8718,12 @@ const Air = (function () {
         const hit = (TYPES[w.type].strat || TYPES[w.type].ground * 0.3) * w.str * (0.4 + 0.6 * w.org) * (0.3 + 0.7 * sup) / 1000;
         g.bomb[w.target] = Math.min(0.75, (g.bomb[w.target] || 0) + hit);
       }
-      if (w.str < 0.05) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' was shot out of the sky.', -1, 'loss', false); removeWing(w); continue; }
+      if (w.str < 0.05) { Sim.tell(w.owner, 'The ' + w.name + ' was shot out of the sky.', -1, 'loss', false); removeWing(w); continue; }
       if (w.str < 0.35) { w.mission = 'idle'; w.target = -1; }
     }
     for (const c of Object.values(g.countries)) if (c.alive) stepQueue(c);
     const day = Math.floor(g.hour / 24);
-    for (const c of Object.values(g.countries)) if (c.alive && c.tag !== g.player && (day + c.tag.charCodeAt(2)) % 3 === 0) ai(c);
+    for (const c of Object.values(g.countries)) if (c.alive && !Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(2)) % 3 === 0) ai(c);
   }
   function repair(w) {
     if (w.str >= 1) return;
@@ -8768,7 +8843,7 @@ const Politics = (function () {
     }
     // AI governments look at their options about once a month
     const day = Math.floor(g.hour / DAY);
-    for (const c of Object.values(g.countries)) if (c.alive && c.tag !== g.player && (day + c.tag.charCodeAt(1) * 5) % 30 === 0) aiThink(c);
+    for (const c of Object.values(g.countries)) if (c.alive && !Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(1) * 5) % 30 === 0) aiThink(c);
   }
 
   // ---------- decisions ----------
@@ -9837,7 +9912,7 @@ const Events = (function () {
         case 'relBelow': if (!alive(v.tag) || Diplo.rel(t, v.tag) >= v.v) return false; break;
         case 'flag': if (!(c.flags && c.flags[v] !== undefined)) return false; break;
         case 'notFlag': if (c.flags && c.flags[v] !== undefined) return false; break;
-        case 'player': if ((t === g.player) !== v) return false; break;
+        case 'player': if (Sim.isHuman(t) !== v) return false; break;
         case 'losing': { const bad = g.wars.some(w => { const s = Sim.sideOf(w, t); if (!s) return false; const e = s === 'att' ? w.leaderD : w.leaderA; return alive(e) && Diplo.warScore(t, e) < -25; }); if (bad !== v) return false; break; }
       }
     }
@@ -9967,7 +10042,7 @@ const Events = (function () {
     const key = d.id + '|' + tag;
     ev.fired[key] = g.hour;
     if (!d.tag) ev.cd[key] = g.hour + (d.repeat || 1500) * DAY;
-    if (tag === g.player) {
+    if (Sim.isHuman(tag)) {
       ev.open.push({ n: ev.next++, id: d.id, tag, hour: g.hour });
       if (g.settings.pauseEvent !== false && !g.paused) { g.paused = true; Sim.hooks.pause(); }
       if (hooks.show) hooks.show();
@@ -9987,7 +10062,7 @@ const Events = (function () {
     if (o) apply(o.fx, tag);
     g.ev.hist.unshift({ id: d.id, tag, hour: g.hour, pick });
     if (g.ev.hist.length > 60) g.ev.hist.pop();
-    if (d.news && tag !== g.player && g.countries[tag]) {
+    if (d.news && !Sim.isHuman(tag) && g.countries[tag]) {
       const c = g.countries[tag];
       Sim.notify(fill(d.title, tag) + (o && d.options.length > 1 ? ': ' + fill(o.text, tag) : '') + ' (' + c.name + ')', c.capital, 'info', false);
     }
@@ -9996,7 +10071,9 @@ const Events = (function () {
   function choose(n, pick) {
     const g = G(), i = g.ev.open.findIndex(e => e.n === n);
     if (i < 0) return false;
-    const e = g.ev.open[i]; g.ev.open.splice(i, 1);
+    const e = g.ev.open[i];
+    if (e.tag !== g.player) return false;   // each nation's leader answers its own events
+    g.ev.open.splice(i, 1);
     const d = def(e.id);
     if (d) resolve(d, e.tag, Math.max(0, Math.min((d.options || []).length - 1, pick)));
     return true;
@@ -10041,9 +10118,10 @@ const Events = (function () {
     return { n: e.n, title: fill(d.title, e.tag), text: fill(d.text, e.tag), date: Sim.dateStr(e.hour),
       options: (d.options || []).map((o, i) => ({ i, text: fill(o.text, e.tag), fx: describe(o.fx, e.tag) })) };
   }
-  function open() { const g = G(); return g && g.ev ? g.ev.open : []; }
+  function open() { const g = G(); return g && g.ev ? g.ev.open.filter(e => e.tag === g.player) : []; }
+  function openAll() { const g = G(); return g && g.ev ? g.ev.open : []; }
   function recent(n) { const g = G(); if (!g || !g.ev) return []; return g.ev.hist.slice(0, n || 12).map(h => { const d = def(h.id); return d ? { title: fill(d.title, h.tag), news: !!d.news, tag: h.tag, hour: h.hour, choice: d.options && d.options[h.pick] ? fill(d.options[h.pick].text, h.tag) : '' } : null; }).filter(Boolean); }
-  return { hooks, setup, daily, choose, view, open, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
+  return { hooks, setup, daily, choose, view, open, openAll, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
 })();
 
 // Peace conferences: when a nation capitulates, the victors share out the spoils with points.
@@ -10103,7 +10181,7 @@ const Peace = (function () {
     c.queue = [];
     Sim.dropNation(loser);
     for (const o of Object.values(g.countries)) if (o.overlord === loser) o.overlord = null;
-    if (winner(conf, g.player)) {
+    if (conf.winners.some(w => Sim.isHuman(w.tag))) {
       g.peace = conf;
       aiTurns(conf);
       g.paused = true;
@@ -10119,7 +10197,7 @@ const Peace = (function () {
     const g = G();
     while (conf.turn < conf.winners.length) {
       const w = conf.winners[conf.turn];
-      if (w.tag === g.player && !w.done) return;
+      if (Sim.isHuman(w.tag) && !w.done) return;
       if (!w.done) aiPick(conf, w);
       w.done = true; conf.turn++;
     }
@@ -10144,6 +10222,8 @@ const Peace = (function () {
   function canDemand(conf, tag, d) {
     const w = winner(conf, tag);
     if (!w) return { ok: false, why: 'Not at the table' };
+    const now = conf.winners[conf.turn];
+    if (now && now.tag !== tag) return { ok: false, why: 'Waiting for ' + nm(now.tag) };
     const need = d.kind === 'prov' ? cost(conf, d.id, tag) : d.kind === 'puppet' ? PUPPET : d.kind === 'repar' ? REPAR : d.kind === 'restore' ? (restorable(conf).find(r => r.tag === d.tag) || {}).cost : 0;
     if (d.kind === 'prov') {
       if (!conf.provs.includes(d.id)) return { ok: false, why: 'Not on the table' };
@@ -10185,9 +10265,10 @@ const Peace = (function () {
   // the player is done: the rest pick, then the treaty is signed
   function done(conf) {
     const w = winner(conf, G().player);
-    if (w) { w.done = true; conf.turn = conf.winners.indexOf(w) + 1; }
+    if (w) { w.done = true; conf.turn = Math.max(conf.turn, conf.winners.indexOf(w) + 1); }
     aiTurns(conf);
-    return finish(conf);
+    // in a multiplayer game another leader may still be choosing
+    return conf.turn >= conf.winners.length ? finish(conf) : null;
   }
 
   // ---------- the treaty ----------
@@ -10339,6 +10420,453 @@ const Save = (function () {
   function resetClock() { lastAuto = -1; }
   function fileName() { const G = Sim.G; return 'iron-meridian-' + (G ? G.player.toLowerCase() + '-' + Sim.dateStr(G.hour).replace(/\s+/g, '-') : 'save') + '.json'; }
   return { VERSION, SLOTS, AUTO, serialise, write, read, parse, info, list, latest, remove, tick, autosaveNow, resetClock, fileName, available: () => !!store() };
+})();
+
+// Multiplayer over the internet with a join code: one player hosts, the others join from their own browser.
+// The host's browser runs the whole game. Every other player's orders travel to the host as commands, the
+// host checks they belong to that player's nation and applies them, and sends the changed parts of the game
+// back a few times a second. Connections are direct between browsers (WebRTC through PeerJS); the free PeerJS
+// service only introduces the browsers to each other. Nations nobody picked stay with the computer.
+'use strict';
+const Net = (function () {
+  const PEER_SRC = ['https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js', 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js'];
+  const ID_PREFIX = 'ironmeridian-';
+  const SEND_MS = 250, FRAME = 48000;
+  const MODS = { Sim, Economy, Tech, Navy, Air, Diplo, Events, Politics, Peace };
+  let role = null;             // null (playing alone), 'host' or 'client'
+  let peer = null, code = '', status = '', myName = '';
+  const players = new Map();   // host: connection id -> { conn, name, tag, ack, last }
+  let hostConn = null;         // client: the connection to the host
+  const hooks = { lobby: null, joined: null, left: null, ended: null, status: null, synced: null, players: null };
+
+  // ---------- commands: the player's actions, wrapped so a joined player's go to the host ----------
+  // what each command acts for: t = index of the acting nation's tag, o = index of an army/fleet/wing it
+  // must own, l = index of a list of them; none = checked inside the function against the acting player
+  const SPEC = {
+    'Sim.orderMove': { o: 0 }, 'Sim.orderHold': { o: 0 }, 'Sim.orderDefend': { o: 0 }, 'Sim.orderRetreat': { o: 0 }, 'Sim.orderChase': { o: 0 },
+    'Sim.splitArmy': { o: 0 }, 'Sim.mergeArmies': { l: 0 }, 'Sim.recruit': { t: 0 },
+    'Economy.build': { t: 0 }, 'Economy.cancelBuild': { t: 0 },
+    'Tech.start': { t: 0 }, 'Tech.stop': { t: 0 },
+    'Navy.orderMove': { o: 0 }, 'Navy.setMission': { o: 0 }, 'Navy.splitFleet': { o: 0 }, 'Navy.mergeFleets': { l: 0 }, 'Navy.invade': { o: 0 }, 'Navy.cancelInvasion': { o: 0 },
+    'Navy.build': { t: 0 }, 'Navy.cancelBuild': { t: 0 },
+    'Air.setMission': { o: 0 }, 'Air.rebase': { o: 0 }, 'Air.build': { t: 0 }, 'Air.cancelBuild': { t: 0 },
+    'Diplo.act': { t: 1 }, 'Diplo.declare': { t: 0 }, 'Diplo.answerOffer': {},
+    'Events.choose': {}, 'Politics.take': { t: 0 },
+    'Peace.demand': { t: 1 }, 'Peace.undo': { t: 1 }, 'Peace.aiPick': { t: 1 }, 'Peace.done': {},
+    'Net.setPaused': {}, 'Net.setSpeed': {}
+  };
+  const REG = {};
+  let depth = 0, seq = 0;
+  // game-wide controls: anyone may pause or change the speed
+  const game = {
+    setPaused(v) { const G = Sim.G; if (G && !G.over) G.paused = !!v; },
+    setSpeed(s) { const G = Sim.G; if (G) G.speed = Math.max(1, Math.min(5, +s || 1)); }
+  };
+  MODS.Net = game;
+  for (const path in SPEC) {
+    const [m, k] = path.split('.'), M = MODS[m], orig = M[k];
+    if (typeof orig !== 'function') continue;
+    REG[path] = orig;
+    M[k] = function (...args) {
+      if (role === 'client' && depth === 0) { send(hostConn, { t: 'cmd', s: ++seq, f: path, a: encode(args) }); localDirty = true; }
+      depth++;
+      try { return orig.apply(M, args); } finally { depth--; }
+    };
+  }
+  // objects in the game travel as references: {$a: army id}, {$f: fleet id}, {$w: wing id}, {$p: 1} for the peace table
+  function encode(v) {
+    const G = Sim.G;
+    if (!v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(encode);
+    if (G) {
+      if (G.armies && G.armies.includes(v)) return { $a: v.id };
+      if (G.fleets && G.fleets.includes(v)) return { $f: v.id };
+      if (G.wings && G.wings.includes(v)) return { $w: v.id };
+      if (v === G.peace) return { $p: 1 };
+    }
+    const o = {}; for (const k in v) o[k] = encode(v[k]); return o;
+  }
+  const MISSING = {};
+  function decode(v) {
+    const G = Sim.G;
+    if (!v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(decode);
+    if ('$a' in v) return G.armies.find(a => a.id === v.$a) || MISSING;
+    if ('$f' in v) return (G.fleets || []).find(f => f.id === v.$f) || MISSING;
+    if ('$w' in v) return (G.wings || []).find(w => w.id === v.$w) || MISSING;
+    if ('$p' in v) return G.peace || MISSING;
+    const o = {}; for (const k in v) o[k] = decode(v[k]); return o;
+  }
+  const hasMissing = v => v === MISSING || (Array.isArray(v) ? v.some(hasMissing) : false);
+  function allowed(tag, spec, args) {
+    if (args.some(hasMissing)) return false;
+    if (spec.t !== undefined && args[spec.t] !== tag) return false;
+    if (spec.o !== undefined && (!args[spec.o] || args[spec.o].owner !== tag)) return false;
+    if (spec.l !== undefined && (!Array.isArray(args[spec.l]) || args[spec.l].some(x => !x || x.owner !== tag))) return false;
+    return true;
+  }
+  // the host applies a joined player's command as if that player were at the keyboard
+  function exec(p, m) {
+    p.ack = Math.max(p.ack, m.s | 0);
+    const G = Sim.G, spec = SPEC[m.f], fn = REG[m.f];
+    if (!G || !spec || !fn || !p.tag || !G.countries[p.tag] || !G.countries[p.tag].alive) return;
+    const args = decode(Array.isArray(m.a) ? m.a : []);
+    if (!allowed(p.tag, spec, args)) return;
+    const mod = MODS[m.f.split('.')[0]], saved = G.player;
+    G.player = p.tag; depth++;
+    try { fn.apply(mod, args); } catch (e) { console.error(e); } finally { depth--; G.player = saved; }
+    if (m.f.startsWith('Diplo.') || m.f.startsWith('Peace.')) Render.state.dirtyOwners = true;
+  }
+
+  // ---------- the game state in pieces, so only what changed is sent ----------
+  const round = (k, v) => typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 1e4) / 1e4 : v;
+  // troops change a little every hour (organisation recovers, supply drifts): to the nearest 1% is plenty to show them
+  const round2 = (k, v) => typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v;
+  const LISTS = { armies: 'a', fleets: 'f', wings: 'w' };
+  function pieces(G) {
+    const out = {};
+    for (const k in G) {
+      if (k === 'player' || G[k] === undefined) continue;
+      if (k === 'countries') {
+        // field by field (and the economy key by key): a day changes a few numbers in every nation
+        for (const t in G.countries) {
+          const c = G.countries[t];
+          out['c.' + t] = '1';
+          for (const f in c) {
+            const v = c[f];
+            if (v === undefined) continue;
+            if (f === 'eco' && v && typeof v === 'object' && !Array.isArray(v)) { for (const e in v) if (v[e] !== undefined) out['c.' + t + '.eco.' + e] = JSON.stringify(v[e], round); out['c.' + t + '.eco'] = '{}'; }
+            else out['c.' + t + '.' + f] = JSON.stringify(v, round);
+          }
+        }
+        continue;
+      }
+      if (LISTS[k] && Array.isArray(G[k])) {
+        const p = LISTS[k];
+        out[p.toUpperCase()] = JSON.stringify(G[k].map(x => x.id));
+        for (const x of G[k]) out[p + '.' + x.id] = JSON.stringify(x, round2);
+        continue;
+      }
+      const v = G[k];
+      // big tables go in blocks (arrays) or key by key (objects), so a change sends only its part
+      if (Array.isArray(v) && v.length > 64) {
+        const n = Math.ceil(v.length / 64);
+        out['g.' + k] = JSON.stringify({ $blocks: n });
+        for (let i = 0; i < n; i++) out['B.' + k + '.' + i] = JSON.stringify(v.slice(i * 64, i * 64 + 64), round);
+        continue;
+      }
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const txt = JSON.stringify(v, round);
+        if (txt.length > 2000) {
+          out['g.' + k] = JSON.stringify({ $keys: 1 });
+          for (const e in v) if (v[e] !== undefined) out['K.' + k + '.' + e] = JSON.stringify(v[e], round);
+          continue;
+        }
+        out['g.' + k] = txt;
+        continue;
+      }
+      out['g.' + k] = JSON.stringify(v, round);
+    }
+    return out;
+  }
+  let lastPieces = null, stats = null;
+  function diff(cur) {
+    const set = {}, del = [];
+    for (const k in cur) if (!lastPieces || lastPieces[k] !== cur[k]) set[k] = cur[k];
+    if (lastPieces) for (const k in lastPieces) if (!(k in cur)) del.push(k);
+    return { set, del };
+  }
+
+  // client side: the host's pieces, and the objects parsed from them
+  let strings = {}, parsed = {}, localDirty = false, held = false, lastAck = 0, myTag = null;
+  let hourAt = 0, lastHour = -1;
+  function applyPieces(m) {
+    if (m.full) { strings = {}; parsed = {}; }
+    for (const k in m.set) { strings[k] = m.set[k]; delete parsed[k]; }
+    for (const k of m.del || []) { delete strings[k]; delete parsed[k]; }
+    lastAck = Math.max(lastAck, m.ack | 0);
+    // while the host has not yet applied our latest order, keep showing our own version of it
+    if (lastAck < seq && !m.full) { held = true; return false; }
+    held = false;
+    rebuild();
+    return true;
+  }
+  const get = k => k in parsed ? parsed[k] : (parsed[k] = JSON.parse(strings[k]));
+  function rebuild() {
+    if (localDirty) { parsed = {}; localDirty = false; }
+    const G = Sim.G && role === 'client' && Sim.G.__net ? Sim.G : { __net: true };
+    const keep = new Set(['__net']);
+    const countries = {};
+    const blocks = {}, keyed = {};
+    for (const k in strings) {
+      if (k.startsWith('B.')) { const i = k.lastIndexOf('.'); const name = k.slice(2, i); (blocks[name] || (blocks[name] = []))[+k.slice(i + 1)] = k; }
+      else if (k.startsWith('K.')) { const i = k.indexOf('.', 2); const name = k.slice(2, i); (keyed[name] || (keyed[name] = {}))[k.slice(i + 1)] = k; }
+    }
+    for (const k in strings) {
+      if (k.startsWith('g.')) {
+        const name = k.slice(2), v = get(k);
+        if (v && v.$blocks) { let arr = []; for (let i = 0; i < v.$blocks; i++) { const bk = blocks[name] && blocks[name][i]; if (bk) arr = arr.concat(get(bk)); } G[name] = arr; }
+        else if (v && v.$keys) { const o = {}; for (const e in keyed[name] || {}) o[e] = get(keyed[name][e]); G[name] = o; }
+        else G[name] = v;
+        keep.add(name);
+      }
+      else if (k.startsWith('c.')) {
+        const parts = k.split('.'), t = parts[1];
+        const c = countries[t] || (countries[t] = {});
+        if (parts.length === 3) { if (parts[2] === 'eco') c.eco = c.eco || {}; else c[parts[2]] = get(k); }
+        else if (parts.length === 4) (c.eco || (c.eco = {}))[parts[3]] = get(k);
+      }
+    }
+    G.countries = countries; keep.add('countries');
+    for (const name in LISTS) {
+      const p = LISTS[name], K = p.toUpperCase();
+      if (!(K in strings)) continue;
+      G[name] = get(K).map(id => strings[p + '.' + id] !== undefined ? get(p + '.' + id) : null).filter(Boolean);
+      keep.add(name);
+    }
+    for (const k of Object.keys(G)) if (!keep.has(k) && k !== 'player') delete G[k];
+    G.player = myTag;
+    if (G.hour !== lastHour) { lastHour = G.hour; hourAt = performance.now(); }
+    return G;
+  }
+
+  // ---------- transport: PeerJS, with long messages sent in frames ----------
+  let peerLib = null;
+  function loadPeer() {
+    if (window.Peer) return Promise.resolve(window.Peer);
+    if (peerLib) return peerLib;
+    peerLib = new Promise((res, rej) => {
+      let i = 0;
+      const next = () => {
+        if (i >= PEER_SRC.length) { peerLib = null; rej(new Error('The connection library could not be loaded. Check the internet connection.')); return; }
+        const s = document.createElement('script'); s.src = PEER_SRC[i++]; s.async = true;
+        s.onload = () => window.Peer ? res(window.Peer) : next();
+        s.onerror = () => { s.remove(); next(); };
+        document.head.appendChild(s);
+      };
+      next();
+    });
+    return peerLib;
+  }
+  let frameId = 0, bytesSent = 0;
+  function send(conn, msg) {
+    if (!conn || !conn.open) return;
+    const txt = JSON.stringify(msg);
+    bytesSent += txt.length;
+    try {
+      if (txt.length <= FRAME) { conn.send(txt); return; }
+      const id = ++frameId, n = Math.ceil(txt.length / FRAME);
+      for (let i = 0; i < n; i++) conn.send('\u0001' + id + '|' + i + '|' + n + '|' + txt.slice(i * FRAME, (i + 1) * FRAME));
+    } catch (e) { console.error(e); }
+  }
+  function receiver(onMsg) {
+    const parts = {};
+    return data => {
+      if (typeof data !== 'string') return;
+      if (data.charCodeAt(0) === 1) {
+        const a = data.indexOf('|'), b = data.indexOf('|', a + 1), c = data.indexOf('|', b + 1);
+        const id = data.slice(1, a), i = +data.slice(a + 1, b), n = +data.slice(b + 1, c);
+        const P = parts[id] || (parts[id] = { n, got: 0, s: [] });
+        if (P.s[i] === undefined) { P.s[i] = data.slice(c + 1); P.got++; }
+        if (P.got < P.n) return;
+        delete parts[id];
+        data = P.s.join('');
+      }
+      let m; try { m = JSON.parse(data); } catch (e) { return; }
+      onMsg(m);
+    };
+  }
+  const say = s => { status = s; if (hooks.status) hooks.status(s); };
+  const WHY = { 'unavailable-id': 'That code is in use. Try again for a new one.', 'peer-unavailable': 'No game with that code. Check the code, and that the host still has the game open.',
+    'network': 'Lost the connection to the matchmaking service.', 'browser-incompatible': 'This browser cannot make direct connections.', 'server-error': 'The matchmaking service is not answering. Try again in a minute.',
+    'socket-error': 'The matchmaking service is not answering. Try again in a minute.', 'webrtc': 'The direct connection failed. Some school or office networks block it; try another network.' };
+  const why = e => WHY[e && e.type] || (e && e.message) || 'Something went wrong with the connection.';
+  const newCode = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++) s += A[Math.floor(Math.random() * A.length)]; return s; };
+  const clean = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  // ---------- hosting ----------
+  let sendTimer = 0;
+  async function host(name) {
+    if (role) return { ok: true, code };
+    const G = Sim.G;
+    if (!G) return { ok: false, why: 'Start or load a game first.' };
+    myName = name || 'Host';
+    say('Opening the game to other players…');
+    let PeerC;
+    try { PeerC = await loadPeer(); } catch (e) { say(''); return { ok: false, why: e.message }; }
+    for (let tries = 0; tries < 3; tries++) {
+      const c = newCode();
+      const r = await new Promise(res => {
+        const p = new PeerC(ID_PREFIX + c, { debug: 0 });
+        const t = setTimeout(() => { p.destroy(); res({ ok: false, why: 'The matchmaking service did not answer in time.' }); }, 15000);
+        p.on('open', () => { clearTimeout(t); res({ ok: true, p, c }); });
+        p.on('error', e => { clearTimeout(t); p.destroy(); res({ ok: false, why: why(e), again: e && e.type === 'unavailable-id' }); });
+      });
+      if (!r.ok) { if (r.again) continue; say(''); return r; }
+      peer = r.p; code = r.c; role = 'host';
+      G.humans = G.humans || {};
+      G.humans[G.player] = { name: myName, host: true };
+      peer.on('connection', conn => accept(conn));
+      peer.on('error', e => { if (e && e.type === 'peer-unavailable') return; say(why(e)); });
+      peer.on('disconnected', () => { if (role === 'host' && peer && !peer.destroyed) try { peer.reconnect(); } catch (e) { } });
+      lastPieces = null;
+      clearInterval(sendTimer); sendTimer = setInterval(broadcast, SEND_MS);
+      say('');
+      if (hooks.players) hooks.players();
+      return { ok: true, code };
+    }
+    say(''); return { ok: false, why: 'Could not get a free code. Try again.' };
+  }
+  function lobbyInfo() {
+    const G = Sim.G, taken = {};
+    for (const t in G.humans || {}) taken[t] = G.humans[t].name;
+    const nations = Object.values(G.countries).filter(c => c.alive).map(c => ({ tag: c.tag, name: c.name, color: c.color, prov: G.owner.filter(o => o === c.tag).length }))
+      .sort((a, b) => b.prov - a.prov);
+    return { t: 'lobby', era: typeof Eras === 'undefined' || Eras.isBase() ? Eras.BASE_ID : Eras.info().id, date: Sim.dateStr(G.hour), host: myName, hostTag: G.player, taken, nations };
+  }
+  function accept(conn) {
+    const p = { conn, name: 'Player', tag: null, ack: 0, last: performance.now() };
+    players.set(conn.connectionId || conn.peer, p);
+    conn.on('open', () => send(conn, lobbyInfo()));
+    conn.on('data', receiver(m => onHostMsg(p, m)));
+    conn.on('close', () => drop(p));
+    conn.on('error', () => drop(p));
+  }
+  function drop(p) {
+    const key = [...players].find(([, x]) => x === p);
+    if (!key) return;
+    players.delete(key[0]);
+    const G = Sim.G;
+    if (p.tag && G && G.humans && G.humans[p.tag] && !G.humans[p.tag].host) {
+      delete G.humans[p.tag];
+      if (hooks.left) hooks.left(p);
+    }
+    if (hooks.players) hooks.players();
+  }
+  function onHostMsg(p, m) {
+    const G = Sim.G;
+    if (!G) return;
+    p.last = performance.now();
+    if (m.t === 'hello') { p.name = String(m.name || 'Player').slice(0, 24); send(p.conn, lobbyInfo()); }
+    else if (m.t === 'pick') {
+      const tag = String(m.tag || ''), c = G.countries[tag];
+      if (p.tag) return;
+      if (!c || !c.alive) { send(p.conn, { t: 'deny', why: 'That nation is no longer in the game.' }); return; }
+      if (G.humans[tag]) { send(p.conn, Object.assign(lobbyInfo(), { deny: (G.humans[tag].name || 'Someone') + ' already leads ' + c.name + '.' })); return; }
+      p.name = String(m.name || p.name).slice(0, 24);
+      p.tag = tag; G.humans[tag] = { name: p.name };
+      const cur = pieces(G);
+      send(p.conn, { t: 'welcome', tag, era: lobbyInfo().era, full: true, set: cur, del: [], ack: 0, hostName: myName });
+      if (hooks.joined) hooks.joined(p);
+      if (hooks.players) hooks.players();
+    }
+    else if (m.t === 'cmd') exec(p, m);
+    else if (m.t === 'ping') send(p.conn, { t: 'pong' });
+  }
+  // at most about BUDGET bytes a second go to each player: a busy update waits a little longer, and the
+  // players' maps glide the troops between updates anyway
+  const BUDGET = 110 * 1024;
+  let nextSend = 0;
+  function broadcast() {
+    if (role !== 'host') return;
+    if (performance.now() < nextSend) return;
+    const G = Sim.G;
+    const live = [...players.values()].filter(p => p.tag && p.conn.open);
+    if (!G || !live.length) { lastPieces = null; return; }
+    const cur = pieces(G), d = diff(cur);
+    lastPieces = cur;
+    if (stats) for (const k in d.set) { const g = k.replace(/\.[^.]*$/, '').replace(/^([ac]\.)[^.]*/, '$1*').replace(/^([fw])\.\d+/, '$1'); stats[g] = (stats[g] || 0) + d.set[k].length + k.length; }
+    let size = 0; for (const k in d.set) size += d.set[k].length + k.length;
+    nextSend = performance.now() + Math.max(0, size / BUDGET * 1000 - SEND_MS);
+    for (const p of live) send(p.conn, { t: 'd', h: G.hour, set: d.set, del: d.del, ack: p.ack });
+  }
+
+  // ---------- joining ----------
+  let lobby = null;
+  async function join(rawCode, name) {
+    if (role) stop();
+    const c = clean(rawCode);
+    if (c.length < 4) return { ok: false, why: 'Enter the code the host gave you.' };
+    myName = name || 'Player';
+    say('Connecting…');
+    let PeerC;
+    try { PeerC = await loadPeer(); } catch (e) { say(''); return { ok: false, why: e.message }; }
+    return new Promise(res => {
+      const p = new PeerC(undefined, { debug: 0 });
+      let done = false;
+      const fail = w => { if (done) return; done = true; clearTimeout(t); try { p.destroy(); } catch (e) { } say(''); res({ ok: false, why: w }); };
+      const t = setTimeout(() => fail('The host did not answer. Check the code, and that the host still has the game open.'), 20000);
+      p.on('error', e => fail(why(e)));
+      p.on('open', () => {
+        const conn = p.connect(ID_PREFIX + c, { reliable: true });
+        conn.on('open', () => {
+          if (done) return;
+          done = true; clearTimeout(t);
+          peer = p; hostConn = conn; code = c; role = 'client'; seq = 0; lastAck = 0; strings = {}; parsed = {}; myTag = null;
+          conn.on('data', receiver(onClientMsg));
+          conn.on('close', () => ended('The host closed the game.'));
+          send(conn, { t: 'hello', name: myName });
+          say('Connected. Waiting for the host…');
+          res({ ok: true });
+        });
+        conn.on('error', () => fail('The connection to the host failed.'));
+      });
+    });
+  }
+  function pick(tag) { if (role === 'client' && hostConn) send(hostConn, { t: 'pick', tag, name: myName }); }
+  function onClientMsg(m) {
+    if (m.t === 'lobby') { lobby = m; say(''); if (hooks.lobby) hooks.lobby(m); }
+    else if (m.t === 'deny') { if (hooks.lobby) hooks.lobby(Object.assign({}, lobby || {}, { deny: m.why })); }
+    else if (m.t === 'welcome') {
+      myTag = m.tag; strings = {}; parsed = {}; localDirty = false; lastAck = 0; seq = 0;
+      for (const k in m.set) strings[k] = m.set[k];
+      const G = rebuild();
+      if (hooks.synced) hooks.synced({ first: true, era: m.era, G, tag: m.tag, hostName: m.hostName });
+    }
+    else if (m.t === 'd') {
+      if (!myTag) return;
+      if (applyPieces(m) && hooks.synced) hooks.synced({ first: false });
+    }
+  }
+  function ended(text) {
+    if (role !== 'client') return;
+    const had = !!myTag;
+    stop();
+    if (hooks.ended) hooks.ended(text, had);
+  }
+
+  function stop() {
+    clearInterval(sendTimer); sendTimer = 0;
+    for (const p of players.values()) try { p.conn.close(); } catch (e) { }
+    players.clear();
+    if (hostConn) try { hostConn.close(); } catch (e) { }
+    hostConn = null;
+    if (peer) try { peer.destroy(); } catch (e) { }
+    peer = null;
+    const G = Sim.G;
+    if (role === 'host' && G && G.humans) { for (const t in G.humans) if (!G.humans[t].host) delete G.humans[t]; }
+    if (role === 'client') { myTag = null; if (Sim.G && Sim.G.__net) delete Sim.G.__net; }
+    role = null; code = ''; lastPieces = null; lobby = null;
+    if (hooks.players) hooks.players();
+  }
+  // how far into the next game hour we are, estimated from when the host's hour last changed
+  function hourFrac() {
+    const G = Sim.G; if (!G || G.paused) return 0;
+    return Math.min(1, (performance.now() - hourAt) / 1000 * (typeof UI !== 'undefined' ? UI.HPS[G.speed] : 1));
+  }
+  function playerList() {
+    const G = Sim.G, out = [];
+    if (!G || !G.humans) return out;
+    for (const t in G.humans) out.push({ tag: t, name: G.humans[t].name, host: !!G.humans[t].host, me: t === G.player });
+    return out;
+  }
+  return {
+    hooks, host, join, pick, stop, hourFrac, playerList,
+    setPaused: v => game.setPaused(v), setSpeed: s => game.setSpeed(s),
+    get role() { return role; }, get code() { return code; }, get status() { return status; }, get lobby() { return lobby; },
+    ticks: () => role !== 'client', isClient: () => role === 'client', active: () => !!role,
+    clean, _pieces: pieces, _held: () => held, _players: players, _bytes: () => bytesSent, _stats: on => { if (on) stats = {}; return stats; }
+  };
 })();
 
 // Troop figures: small low-poly 3D models (soldiers, trucks, tanks, guns, planes), rendered once per nation
@@ -11754,7 +12282,8 @@ const UI = (function () {
     $('#mc-in').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1.5);
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
-    Sim.hooks.notify = toast;
+    Sim.hooks.notify = (text, prov, kind) => toast(text, prov, kind);
+    netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
     Events.hooks.show = () => { if ($('#modal').hidden) showEvent(); };
@@ -11870,8 +12399,9 @@ const UI = (function () {
   function loadGame(d) {
     const cur = Eras.isBase() ? Eras.BASE_ID : Eras.info().id;
     if (d.era !== cur) applyEra(d.era);
+    if (!d.net) { delete d.G.humans; delete d.G.__net; if (d.G.dip) d.G.dip.offers = []; }
     Sim.restore(d.G);
-    Sim.G.paused = true;
+    if (!d.net) Sim.G.paused = true;
     $('#modal').hidden = true;
     enterGame(d.player, true);
   }
@@ -11894,14 +12424,17 @@ const UI = (function () {
     { const G = Sim.G, near = new Set([tag]); MAP.provs.forEach(p => { if (G.owner[p.id] === tag) p.nb.forEach(n => near.add(G.owner[n])); }); Figures.warm([...near].filter(t => G.countries[t] && G.countries[t].alive)); }
     sel.collapsed = true; // the side bar starts closed: the map is clear until a tab is opened
     renderTrays(); renderRight(); refreshTop(); renderLeft();
-    toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
+    if (!Net.isClient()) toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
     if (Sim.G.peace) showPeace(); else if (Events.open().length) showEvent();
+    if (!loaded && Menu.takeHost()) hostGame();
   }
 
   // ---------- top bar ----------
   function refreshTop() {
     const G = Sim.G; if (!G) return;
     const c = G.countries[G.player];
+    const nb = $('#tb-net');
+    if (nb) { const on = Net.active(); nb.classList.toggle('on', on); if (on) { const n = Net.playerList().length; const t = (Net.role === 'host' ? 'Code ' + Net.code : 'Online') + ' · ' + n + ' player' + (n === 1 ? '' : 's'); if (nb.textContent !== t) nb.textContent = t; } }
     setHTML($('#tb-nation'), flagSVG(c.tag) + `<span><div class="nm">${esc(c.name)}</div><div class="gov">${c.gov}</div></span>`);
     const divs = G.armies.filter(a => a.owner === c.tag).reduce((s, a) => s + a.units.length, 0);
     const nArmies = G.armies.filter(a => a.owner === c.tag).length;
@@ -11959,8 +12492,8 @@ const UI = (function () {
     // a tap on a phone toggles the tooltip
     bar.addEventListener('click', e => { const i = at(e); showTip(i === tipAt && e.pointerType !== 'mouse' ? -1 : i); });
   }
-  function togglePause() { const G = Sim.G; if (!G || G.over) return; G.paused = !G.paused; refreshTop(); }
-  function setSpeed(s) { const G = Sim.G; if (!G) return; G.speed = Math.max(1, Math.min(5, s)); refreshTop(); }
+  function togglePause() { const G = Sim.G; if (!G || G.over) return; Net.setPaused(!G.paused); refreshTop(); }
+  function setSpeed(s) { const G = Sim.G; if (!G) return; Net.setSpeed(s); refreshTop(); }
 
   // ---------- toasts ----------
   function toast(text, prov, kind) {
@@ -12189,7 +12722,7 @@ const UI = (function () {
     return html;
   }
 
-  function warCost(tag) { const G = Sim.G; return G.dip.claims[G.player + '>' + tag] > G.hour ? 0 : DECLARE_COST; }
+  function warCost(tag) { return Diplo.warCost(Sim.G.player, tag); }
   function confirmWar(tag) {
     const G = Sim.G;
     const cost = warCost(tag), pact = Sim.hasPact(G.player, tag);
@@ -12202,12 +12735,8 @@ const UI = (function () {
       <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-x="no">Cancel</button><button class="btn danger" data-x="yes">${pact ? 'Break pact and declare war' : 'Declare war'}</button></div>`,
       x => {
         if (x !== 'yes') return;
-        const c = G.countries[G.player];
-        if (c.pp < cost) return;
-        if (!Sim.declareWar(G.player, tag, false, { breakPact: true })) { toast('War could not be declared.', -1, 'info'); return; }
-        c.pp -= cost;
-        if (pact) c.stab = Math.max(0, c.stab - 0.15);
-        if (c.ws < 0.3) c.stab = Math.max(0, c.stab - 0.08);
+        const r = Diplo.declare(G.player, tag);
+        if (!r.ok) { toast(r.text, -1, 'info'); return; }
         Render.state.dirtyOwners = true;
         renderLeft(); renderRight(); refreshTop();
       });
@@ -12432,6 +12961,18 @@ const UI = (function () {
   // proposals from AI nations wait their turn, one dialog at a time
   const offers = [];
   // shown as a card above the army tray, not a dialog: it never blocks the map or the panels
+  // multiplayer: proposals waiting for this player's answer come from the shared game state
+  const shownOffers = new Set();
+  function pollOffers() {
+    const G = Sim.G; if (!G || !G.humans || !G.dip || !G.dip.offers) return;
+    for (const o of G.dip.offers) {
+      if (o.decider !== G.player || shownOffers.has(o.id)) continue;
+      shownOffers.add(o.id);
+      offers.push({ o, game: G, respond: yes => Diplo.answerOffer(o.id, yes) });
+      while (offers.length > 3) offers.splice(1, 1);
+      showOffer();
+    }
+  }
   function showOffer() {
     const el = $('#offer');
     if (!offers.length) { el.hidden = true; return; }
@@ -12861,13 +13402,16 @@ const UI = (function () {
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
       <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on or by me')}${chk('pauseLoss', 'Loss of a city or my capital')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseCapitulation', 'A nation in my wars capitulates')}</div>
       ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
+      ${netSection()}
       <hr class="sep"><div class="label">Saved games</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-x="saves">Save or load</button></div>
       <hr class="sep"><div class="label">Controls</div>
       <p class="note">WASD, the arrow keys or a right-drag move the map; scroll or pinch to zoom. Click a counter to select an army, shift-click to add, or drag across several. Right-click to move or attack. Keys 1 to 9 open the side bar tabs, Space pauses, + and − change speed, Esc closes panels.</p>
       <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><span style="display:flex;gap:8px"><button class="btn danger" data-x="new">New game</button><button class="btn" data-x="quit">Save and quit to menu</button></span><button class="btn primary" data-x="ok">Close</button></div>`,
       x => {
-        if (x === 'new') newGamePrompt();
+        if (x === 'host') hostGame();
+        else if (x === 'leave') { Net.stop(); backToStart(); }
+        else if (x === 'new') newGamePrompt();
         else if (x === 'saves') openSaves(true);
         else if (x === 'quit') { const r = Save.write(Save.AUTO, 'Autosave'); if (!r.ok) toast(r.why, -1, 'info'); backToStart(); }
       });
@@ -12875,8 +13419,69 @@ const UI = (function () {
     if (s.pauseEvent === undefined) s.pauseEvent = true;
     $('#set-autosave').checked = s.autosave; $('#set-pauseEvent').checked = s.pauseEvent;
     ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
-    G.paused = true; refreshTop();
+    Net.setPaused(true); refreshTop();
+    const cp = $('#modal [data-copy]'); if (cp) cp.onclick = () => copyInvite();
   }
+  // ---------- multiplayer ----------
+  const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
+  const inArtifact = () => !!window.IM_ARTIFACT;
+  const inviteLink = () => (location.protocol.startsWith('http') && !inArtifact() ? location.origin + location.pathname : PAGES_URL) + '#join=' + Net.code;
+  function copyInvite() {
+    const t = inviteLink();
+    const done = () => toast('Invite link copied: ' + t, -1, 'info');
+    try { navigator.clipboard.writeText(t).then(done, () => toast('Share this link: ' + t, -1, 'info')); } catch (e) { toast('Share this link: ' + t, -1, 'info'); }
+  }
+  function netSection() {
+    const list = Net.playerList();
+    const who = list.map(p => `<div class="row">${flagSVG(p.tag)}<div class="grow">${esc(p.name)}${p.me ? ' (you)' : ''}<div class="sub">${esc(Sim.G.countries[p.tag] ? Sim.G.countries[p.tag].name : p.tag)}${p.host ? ' · host' : ''}</div></div></div>`).join('');
+    if (Net.role === 'host') return `<hr class="sep"><div class="label">Playing with others</div>
+      <p class="note">Your join code is <b class="netcode">${esc(Net.code)}</b>. Friends open the game, choose Join game and type it, or open the invite link. They pick any nation nobody leads. If you close this page, the game ends for everyone.</p>
+      <div class="list">${who}</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn" data-copy="1">Copy invite link</button></div>`;
+    if (Net.role === 'client') return `<hr class="sep"><div class="label">Playing with others</div>
+      <p class="note">You are in a game hosted by someone else (code ${esc(Net.code)}). Saving keeps a copy of the game in this browser.</p><div class="list">${who}</div>
+      <div style="display:flex;gap:8px;margin-top:6px"><button class="btn danger" data-x="leave">Leave the game</button></div>`;
+    if (inArtifact()) return `<hr class="sep"><div class="label">Playing with others</div><p class="note">Online play works in the web version: <a class="lnk" href="${PAGES_URL}" target="_blank" rel="noopener">${PAGES_URL}</a>. Save here, export the save, and import it there to host this game.</p>`;
+    return `<hr class="sep"><div class="label">Playing with others</div><p class="note">Let friends join this game from their own browsers. You get a code to share; nations nobody picks stay with the computer.</p>
+      <div style="display:flex;gap:8px"><button class="btn primary" data-x="host">Invite players</button></div>`;
+  }
+  async function hostGame() {
+    toast('Opening the game to other players…', -1, 'info');
+    const r = await Net.host(Menu.prefs().name || 'Host');
+    if (!r.ok) { modal(`<h2 class="display" style="font-size:24px">Could not open the game</h2><p class="note">${esc(r.why)}</p><div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="ok">Close</button></div>`); return; }
+    openMenu();
+    refreshTop();
+  }
+  function netHooks() {
+    $('#tb-net').onclick = () => openMenu();
+    Net.hooks.joined = p => { toast(p.name + ' joined and leads ' + Sim.G.countries[p.tag].name + '.', Sim.G.countries[p.tag].capital, 'info'); refreshTop(); };
+    Net.hooks.left = p => { toast(p.name + ' left. The computer leads ' + (Sim.G.countries[p.tag] ? Sim.G.countries[p.tag].name : p.tag) + ' again.', -1, 'info'); refreshTop(); };
+    Net.hooks.players = () => { refreshTop(); const m = $('#modal'); if (!m.hidden && m.querySelector('.netcode, [data-x="host"]')) openMenu(); };
+    Net.hooks.synced = ev => {
+      if (ev.first) {
+        loadGame({ era: ev.era, player: ev.tag, G: ev.G, net: true });
+        const L = Sim.G.log || [];
+        netSeen = { hour: L.length ? L[0].hour : -1, texts: new Set(L.filter(l => l.hour === (L.length ? L[0].hour : -1)).map(l => l.text)) };
+        toast('You joined ' + (ev.hostName || 'the host') + '\'s game and lead ' + Sim.G.countries[ev.tag].name + '.', -1, 'info');
+        Menu.hide();
+        return;
+      }
+      const G = Sim.G; if (!G) return;
+      if (G.ownVer !== Render.state.ownVer) { Render.state.ownVer = G.ownVer; Render.state.dirtyOwners = true; }
+      if (!netLost && (!G.countries[G.player] || !G.countries[G.player].alive)) { netLost = true; gameOver(false); }
+      if (G.log && G.log.length) {
+        const seen = netSeen;
+        for (let i = G.log.length - 1; i >= 0; i--) { const l = G.log[i]; if (l.hour > seen.hour || (l.hour === seen.hour && !seen.texts.has(l.text))) { if (!l.to || l.to === G.player) toast(l.text, l.prov, l.kind); } }
+        netSeen = { hour: G.log[0].hour, texts: new Set(G.log.filter(l => l.hour === G.log[0].hour).map(l => l.text)) };
+      }
+    };
+    Net.hooks.ended = (text, inGame) => {
+      if (inGame && Sim.G) { const r = Save.write(Save.AUTO, 'Autosave'); if (!r.ok) console.warn(r.why); }
+      backToStart();
+      Menu.open('join');
+      Menu.flash(text + (inGame ? ' A copy was saved as the autosave.' : ''));
+    };
+  }
+  let netSeen = { hour: -1, texts: new Set() }, netLost = false;
   // ---------- saved games ----------
   function openSaves(inGame) {
     const G = Sim.G;
@@ -13013,6 +13618,8 @@ const UI = (function () {
       x => { if (x === 'yes') { backToStart(); Menu.open('new'); } });
   }
   function backToStart() {
+    if (Net.active()) Net.stop();
+    netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
     Sim.G = null; $('#modal').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
@@ -13186,6 +13793,7 @@ const UI = (function () {
     if ($('#modal').hidden && !G.over) { if (G.peace) showPeace(); else if (G.ev && G.ev.open.length) showEvent(); }
     if (now - lastRefresh > 300) {
       lastRefresh = now;
+      if (G.humans) pollOffers();
       sel.armies = sel.armies.filter(id => Sim.army(id));
       Render.state.selArmies = new Set(sel.armies);
       if (sel.fleet && !Navy.fleet(sel.fleet)) { sel.fleet = 0; Render.state.selFleet = 0; }
@@ -13460,7 +14068,7 @@ const MenuArt = (function () {
   return { paint, embers };
 })();
 
-// Main menu: Continue, New game (era, then nation), Load game, Join game (not yet), Options and Credits.
+// Main menu: Continue, New game (era, then nation), Load game, Join game (online play), Options and Credits.
 // Also keeps the player's preferences, which outlive any one game.
 'use strict';
 const Menu = (function () {
@@ -13540,6 +14148,7 @@ const Menu = (function () {
     else if (id === 'load') renderLoad();
     else if (id === 'options') renderOptions();
     else if (id === 'credits') renderCredits();
+    else if (id === 'join') renderJoin();
     sh.scrollTop = 0;
     const f = sh.querySelector('.era.on, [data-ld], [data-otab].on'); if (f) f.focus({ preventScroll: true });
   }
@@ -13617,6 +14226,61 @@ const Menu = (function () {
     const bg = $('#opt-bg'); if (bg) bg.onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useImage(f); };
     const pt = $('#opt-paint'); if (pt) pt.onclick = usePainting;
   }
+  // ---------- online play: join a friend's game with a code, or host one ----------
+  const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
+  let joinCode = '', hostNext = false, joining = false;
+  function renderJoin() {
+    const p = getPrefs();
+    if (window.IM_ARTIFACT) {
+      $('#sheet').innerHTML = `${X}<h2>Play with others</h2><p>Online play runs in the web version of the game, which anyone can open without an account:</p>
+        <p><a class="lnk" href="${PAGES_URL}" target="_blank" rel="noopener">${PAGES_URL}</a></p>
+        <p class="note">To host a game you started here, save it, export the save from Load game, and import it there.</p>`;
+      return;
+    }
+    const lob = Net.role === 'client' && Net.lobby;
+    if (lob) { renderLobby(lob); return; }
+    $('#sheet').innerHTML = `${X}<h2>Play with others</h2>
+      <p>Join a friend's game with the code they give you, or host your own. Nations nobody picks stay with the computer.</p>
+      <div class="opts">
+        <div class="k">Your name<small>Shown to the other players</small></div><input class="field" id="mp-name" maxlength="24" value="${esc(p.name || '')}" placeholder="Player" autocomplete="nickname">
+        <div class="k">Join code</div><input class="field code" id="mp-code" maxlength="12" value="${esc(joinCode)}" placeholder="ABCDE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      </div>
+      <p class="note" id="mp-status">${esc(Net.status || '')}</p>
+      <div class="foot"><button class="btn ghost" id="mp-host">Host a new game</button><button class="btn primary" id="mp-join" ${joining ? 'disabled' : ''}>Join game</button></div>
+      <p class="note">To host a saved game, load it, then open the menu with Esc and choose Invite players.</p>`;
+    const name = $('#mp-name'), code = $('#mp-code');
+    name.onchange = () => setPref('name', name.value.trim().slice(0, 24));
+    code.oninput = () => { joinCode = Net.clean(code.value); };
+    code.onkeydown = e => { if (e.key === 'Enter') go(); };
+    const go = async () => {
+      if (joining) return;
+      setPref('name', name.value.trim().slice(0, 24));
+      joinCode = Net.clean(code.value);
+      joining = true; $('#mp-join').disabled = true;
+      const r = await Net.join(joinCode, getPrefs().name || 'Player');
+      joining = false;
+      if (current !== 'join') return;
+      if (!r.ok) { renderJoin(); flash(r.why); }
+    };
+    $('#mp-join').onclick = go;
+    $('#mp-host').onclick = () => { setPref('name', name.value.trim().slice(0, 24)); hostNext = true; open('new'); };
+    if (!code.value) code.focus({ preventScroll: true });
+  }
+  function renderLobby(m) {
+    if (current !== 'join') open('join');
+    const eraName = (Eras.list().find(e => e.id === m.era) || {}).name || m.era;
+    $('#sheet').innerHTML = `${X}<h2>Pick your nation</h2>
+      <p>${esc(m.host || 'The host')}'s game · ${esc(eraName)} · ${esc(m.date || '')}. Pick any nation nobody leads yet.</p>
+      <div class="list mp-nations">${m.nations.map(n => {
+        const by = m.taken[n.tag];
+        return `<button class="row mp-nation" data-mpick="${esc(n.tag)}" ${by ? 'disabled' : ''}><span class="swatch" style="background:${esc(n.color)}"></span><span class="grow"><b>${esc(n.name)}</b><span class="sub">${n.prov} province${n.prov === 1 ? '' : 's'}${by ? ' · led by ' + esc(by) : ''}</span></span></button>`;
+      }).join('')}</div>
+      <div class="foot"><button class="btn ghost" id="mp-leave">Leave</button></div>`;
+    if (m.deny) flash(m.deny);
+    $('#sheet').querySelectorAll('[data-mpick]').forEach(b => b.onclick = () => { $('#sheet').querySelectorAll('[data-mpick]').forEach(x => x.disabled = true); b.querySelector('.sub').textContent = 'Joining…'; Net.pick(b.dataset.mpick); });
+    $('#mp-leave').onclick = () => { Net.stop(); renderJoin(); };
+  }
+  function takeHost() { const h = hostNext; hostNext = false; return h; }
   function renderCredits() {
     $('#sheet').innerHTML = `${X}<h2>Credits</h2>
       <p>Designed by mahmoud. Built with Claude.</p>
@@ -13630,11 +14294,17 @@ const Menu = (function () {
     $('#mm-load').onclick = () => open(current === 'load' ? null : 'load');
     $('#mm-options').onclick = () => open(current === 'options' ? null : 'options');
     $('#mm-credits').onclick = () => open(current === 'credits' ? null : 'credits');
+    $('#mm-join').onclick = () => open(current === 'join' ? null : 'join');
+    Net.hooks.lobby = m => { if (!$('#menu').hidden) renderLobby(m); };
+    Net.hooks.status = t => { const n = $('#mp-status'); if (n) n.textContent = t; };
+    // an invite link opens straight onto the join sheet with the code filled in
+    const h = /[#&]join=([A-Za-z0-9-]+)/.exec(location.hash || '');
+    if (h) { joinCode = Net.clean(h[1]); setTimeout(() => { if (!$('#menu').hidden) open('join'); }, 0); }
     $('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) open(null); });
     window.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#menu').hidden && current) { e.preventDefault(); open(null); } });
     apply();
   }
-  return { init, show, hide, open, prefs: getPrefs, setPref, apply, isOpen: () => !$('#menu').hidden };
+  return { init, show, hide, open, flash, takeHost, prefs: getPrefs, setPref, apply, isOpen: () => !$('#menu').hidden };
 })();
 
 // Boot: generate the map, then run the render/simulation loop.
@@ -13657,7 +14327,10 @@ const Menu = (function () {
     function tick(now) {
       const dt = Math.min(0.25, (now - last) / 1000); last = now;
       const G = Sim.G;
-      if (G && !G.paused && !G.over && !G.peace && !(G.ev && G.ev.open.length && G.settings.pauseEvent !== false)) {
+      if (G && !Net.ticks()) {
+        // a joined player's browser only shows the game; the host's browser runs it
+        Render.state.hourFrac = Net.hourFrac();
+      } else if (G && !G.paused && !G.over && !G.peace && !(G.ev && G.ev.open.length && G.settings.pauseEvent !== false)) {
         acc += dt * UI.HPS[G.speed];
         let n = 0;
         while (acc >= 1 && n < 80) { Sim.hourTick(); acc -= 1; n++; }

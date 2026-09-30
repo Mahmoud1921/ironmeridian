@@ -1165,7 +1165,9 @@ async function menuRun(browser) {
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await page.evaluate(() => { try { localStorage.clear(); } catch (e) { } });
   check('menu: the painting is drawn behind the menu', await page.evaluate(() => { const c = document.getElementById('bg-paint'), d = c.getContext('2d').getImageData(960, 700, 1, 1).data; return !c.hidden && d[3] > 0; }));
-  check('menu: Join game is greyed out', await page.evaluate(() => document.getElementById('mm-join').disabled));
+  await clickEl(page, '#mm-join');
+  check('menu: Join game opens the online play sheet', await waitFor(page, () => !!document.getElementById('mp-code') || /web version/.test(document.getElementById('sheet').textContent), null, 1500));
+  await page.keyboard.press('Escape');
   check('menu: no Continue without a save', await page.evaluate(() => document.getElementById('mm-continue').hidden));
   await clickEl(page, '#mm-load');
   check('menu: Load game opens its sheet', await waitFor(page, () => !document.getElementById('sheet').hidden && /Load game/.test(document.getElementById('sheet').textContent)));

@@ -214,7 +214,7 @@ const Tech = (function () {
     c.techs.push(id);
     invalidate(c.tag);
     if (x.alt) delete c.rs.saved[x.alt];
-    if (c.tag === g.player) Sim.notify('Research complete: ' + x.t.name + '.', -1, 'win', false);
+    if (Sim.isHuman(c.tag)) Sim.tell(c.tag, 'Research complete: ' + x.t.name + '.', -1, 'win', false);
     else if (x.tier >= 3 && (x.kind === 'nat' || (x.t.fx || []).some(e => e.mod === 'unlock')) && (c.civ + c.mil >= 15)) Sim.notify(c.name + ' has developed ' + x.t.name + '.', -1, 'info', false);
   }
   function daily() {
@@ -233,7 +233,7 @@ const Tech = (function () {
         s.pts = Math.min(x.cost, s.pts + r);
         if (s.pts >= x.cost && dateReady(x)) { c.rs.slots[i] = null; complete(c, s.id); }
       }
-      if (c.tag !== g.player && (day + c.tag.charCodeAt(1)) % 5 === 0) aiPick(c);
+      if (!Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(1)) % 5 === 0) aiPick(c);
     }
   }
   function openTechs(tag) {

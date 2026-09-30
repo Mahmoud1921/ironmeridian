@@ -436,7 +436,7 @@ const Economy = (function () {
       // a buyer that can't pay loses the deal after a month in debt
       for (const d of g.dip.trade.slice()) {
         const b = cs[d.to];
-        if (b && b.eco && b.eco.debtDays > 30 && d.from !== g.player) cancel(d.id, d.from, 'unpaid');
+        if (b && b.eco && b.eco.debtDays > 30 && !Sim.isHuman(d.from)) cancel(d.id, d.from, 'unpaid');
       }
     }
   }
@@ -557,7 +557,7 @@ const Economy = (function () {
         if (INFRA[q.kind]) setInfra(q.prov, q.kind, infra(q.prov, q.kind) + 1);
         else ind(q.prov)[q.kind] = (ind(q.prov)[q.kind] || 0) + 1;
         q.done = true;
-        if (c.tag === g.player) Sim.notify(kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
+        Sim.tell(c.tag, kindName(q.kind) + ' completed in ' + MAP().provs[q.prov].name + '.', q.prov, 'info', false);
       }
     }
     e.queue = e.queue.filter(q => !q.done && !q.lost);
@@ -710,7 +710,7 @@ const Economy = (function () {
         .sort((a, b) => (Diplo.rel(t, b.tag) + balance(b.tag, s.k)) - (Diplo.rel(t, a.tag) + balance(a.tag, s.k)));
       for (const o of cands.slice(0, 3)) {
         const amt = +Math.max(1, Math.min(-s.b * 1.05, balance(o.tag, s.k) * 0.9)).toFixed(1);
-        const terms = { good: s.k, amount: amt, price: fairPrice(s.k, amt) * (o.tag === g.player ? 1.05 : 1), sell: false };
+        const terms = { good: s.k, amount: amt, price: fairPrice(s.k, amt) * (Sim.isHuman(o.tag) ? 1.05 : 1), sell: false };
         const r = Diplo.act('trade', t, o.tag, terms);
         if (r.ok && r.accepted !== false) break;
       }
@@ -721,7 +721,7 @@ const Economy = (function () {
       if (b < 2 || e.stock[k] < e.need[k] * 30 || dealsOf(t).length >= tradeSlots(t)) continue;
       const buyer = others.filter(o => balance(o.tag, k) < -1 && canDeal(t, o.tag, null).ok && Diplo.rel(t, o.tag) >= 0)
         .sort((a, b2) => balance(a.tag, k) - balance(b2.tag, k))[0];
-      if (!buyer || (buyer.tag === g.player && Sim.rng() > 0.35)) continue;
+      if (!buyer || (Sim.isHuman(buyer.tag) && Sim.rng() > 0.35)) continue;
       const amt = +Math.max(1, Math.min(b * 0.9, -balance(buyer.tag, k))).toFixed(1);
       Diplo.act('trade', t, buyer.tag, { good: k, amount: amt, price: fairPrice(k, amt), sell: true });
       break;

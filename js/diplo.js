@@ -279,7 +279,7 @@ const Diplo = (function () {
         const r = Economy.embargo(from, to);
         const joined = [];
         const f = Sim.factionOf(from);
-        if (f && f.leader === from) for (const m of f.members) if (m !== from && m !== g.player && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
+        if (f && f.leader === from) for (const m of f.members) if (m !== from && !Sim.isHuman(m) && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
         log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', to === g.player);
         return res(true, 'Embargo on ' + name(to) + ' in force' + (joined.length ? '. Joined by ' + joined.join(', ') : '') + '.' + (r.strangled ? ' It strangles them: they now have a reason for war against you.' : ''));
       }
@@ -310,11 +310,56 @@ const Diplo = (function () {
     const ctx = Object.assign({ fac }, terms);
     const decide = ans => finish(action, from, to, ctx, ans);
     const decider = action === 'join' ? fac.leader : to;
+    // multiplayer: a proposal to a nation a person leads waits in g.dip.offers for that person's answer
+    if (g.humans && Sim.isHuman(decider) && decider !== from) {
+      const offers = g.dip.offers || (g.dip.offers = []);
+      g.dip.nextOffer = (g.dip.nextOffer || 0) + 1;
+      offers.push({ id: g.dip.nextOffer, action, from, to, decider, hour: g.hour, facId: fac ? fac.id : null, terms: Object.assign({}, terms), text: describe(action, from, to, ctx) });
+      return res(null, 'Proposal sent to ' + name(decider) + '.');
+    }
     if (decider === g.player && hooks.offer) {
       hooks.offer({ action, from, to, terms: ctx, text: describe(action, from, to, ctx) }, yes => decide({ yes, why: yes ? 'accepted' : 'declined' }));
       return res(null, 'Proposal sent to ' + name(decider) + '.');
     }
     return decide(answer(action, from, decider, ctx));
+  }
+  // does an offer still make sense when it is answered?
+  function offerValid(o, ctx) {
+    const g = G(), war = Sim.atWar(o.from, o.to);
+    if (!g.countries[o.from] || !g.countries[o.from].alive) return false;
+    if (o.action === 'peace') return war;
+    if (war) return false;
+    if (o.action === 'invite') return !Sim.factionOf(o.decider) && !!ctx.fac;
+    if (o.action === 'join') return !!ctx.fac && !Sim.factionOf(o.from);
+    if (o.action === 'trade') return Economy.canDeal(o.from, o.to, ctx).ok;
+    return true;
+  }
+  // the person leading o.decider answers a waiting offer
+  function answerOffer(id, yes) {
+    const g = G(), list = g.dip.offers || [];
+    const i = list.findIndex(o => o.id === id);
+    if (i < 0) return { ok: false, text: 'That offer has lapsed.' };
+    const o = list[i];
+    if (o.decider !== g.player) return { ok: false, text: 'Not your offer to answer.' };
+    list.splice(i, 1);
+    const ctx = Object.assign({ fac: o.facId != null ? g.dip.factions.find(f => f.id === o.facId) || null : null }, o.terms);
+    if (yes && !offerValid(o, ctx)) { Sim.tell(o.from, name(o.decider) + ' could not accept: the offer no longer holds.', -1, 'info', false); return { ok: true, text: 'That offer is no longer valid.' }; }
+    const r = finish(o.action, o.from, o.to, ctx, { yes, why: yes ? 'accepted' : 'declined' });
+    Sim.tell(o.from, name(o.decider) + (yes ? ' accepted' : ' declined') + ' your proposal' + (r && r.text ? ': ' + r.text : '.'), -1, yes ? 'win' : 'info', false);
+    return r;
+  }
+  // declaring war from the diplomacy screen: costs political power unless a refused demand justifies it
+  const DECLARE_COST = 25;
+  function warCost(from, to) { const g = G(); return g.dip.claims[from + '>' + to] > g.hour ? 0 : DECLARE_COST; }
+  function declare(from, to) {
+    const g = G(), c = g.countries[from];
+    const cost = warCost(from, to), pact = Sim.hasPact(from, to);
+    if (c.pp < cost) return { ok: false, text: 'Not enough political power.' };
+    if (!Sim.declareWar(from, to, false, { breakPact: true })) return { ok: false, text: 'War could not be declared.' };
+    c.pp -= cost;
+    if (pact) c.stab = Math.max(0, c.stab - 0.15);
+    if (c.ws < 0.3) c.stab = Math.max(0, c.stab - 0.08);
+    return { ok: true, text: 'War declared on ' + name(to) + '.' };
   }
   function describe(action, from, to, t) {
     const f = name(from);
@@ -467,13 +512,16 @@ const Diplo = (function () {
 
   // ---------- daily upkeep and AI diplomacy ----------
   function dayTick() {
+    // unanswered offers to people lapse after a month
+    const g0 = G();
+    if (g0.dip.offers && g0.dip.offers.length) g0.dip.offers = g0.dip.offers.filter(o => g0.hour - o.hour < 24 * 30 && g0.countries[o.decider] && g0.countries[o.decider].alive);
     const g = G(), day = Math.floor(g.hour / DAY);
     for (const k of Object.keys(g.dip.pacts)) if (g.dip.pacts[k] <= g.hour) delete g.dip.pacts[k];
     // relation changes fade slowly
     if (day % 30 === 0) for (const k of Object.keys(g.dip.rel)) { g.dip.rel[k] *= 0.97; if (Math.abs(g.dip.rel[k]) < 0.5) delete g.dip.rel[k]; }
     // each nation thinks about diplomacy about once a month, spread over the days
     for (const c of Object.values(g.countries)) {
-      if (!c.alive || c.tag === g.player) continue;
+      if (!c.alive || Sim.isHuman(c.tag)) continue;
       if ((day + c.tag.charCodeAt(0) * 3 + c.tag.charCodeAt(1)) % 30 !== 0) continue;
       aiThink(c);
     }
@@ -494,7 +542,7 @@ const Diplo = (function () {
       if (!fac && g.hour > 90 * DAY && R() < 0.35 && c.gov !== 'Neutral') aiDo('create', tag);
       const f = Sim.factionOf(tag);
       if (f && f.leader === tag) {
-        const cand = others.filter(o => !Sim.factionOf(o.tag) && Sim.root(o.tag) === o.tag && o.tag !== g.player && rel(tag, o.tag) >= (threatOf(o.tag) ? 25 : 45)).sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0];
+        const cand = others.filter(o => !Sim.factionOf(o.tag) && Sim.root(o.tag) === o.tag && !Sim.isHuman(o.tag) && rel(tag, o.tag) >= (threatOf(o.tag) ? 25 : 45)).sort((a, b) => rel(tag, b.tag) - rel(tag, a.tag))[0];
         if (cand) aiDo('invite', tag, cand.tag);
         // occasionally invite the player too, if friendly
         if (!Sim.factionOf(g.player) && rel(tag, g.player) >= 45 && R() < 0.3) aiDo('invite', tag, g.player);
@@ -550,6 +598,6 @@ const Diplo = (function () {
     if (Sim.factionOf(tag)) leaveFaction(tag);
     f.members.push(tag); g.dip.facOf[tag] = f.id;
   }
-  return { hooks, COST, AID_EQ, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
+  return { hooks, COST, AID_EQ, DECLARE_COST, warCost, declare, answerOffer, offerValid, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
     joinFaction, leaveFaction, transferProvince, evacuate, warsBetweenSides };
 })();

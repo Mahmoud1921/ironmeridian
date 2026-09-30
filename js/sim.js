@@ -339,7 +339,7 @@ const Sim = (function () {
     if (!t || !t.units.length || !atWar(a.owner, t.owner)) {
       a.chase = 0;
       if (a.order === 'attack' && !a.battle) { walkBack(a); a.order = 'hold'; a.target = -1; }
-      if (a.owner === G.player) notify(a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
+      tell(a.owner, a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
       return;
     }
     if (a.battle || a.sea) return;
@@ -406,9 +406,8 @@ const Sim = (function () {
       b = { id: G.nextBattle++, prov, atkTag: a.owner, defTag: defs[0].owner, attackers: [], from: {}, start: G.hour,
         casA: 0, casD: 0, progress: 0.5, rateA: 0, rateD: 0, mods: [] };
       G.battles.push(b);
-      const pl = G.player;
-      if (allied(a.owner, pl) || defs.some(d => allied(d.owner, pl))) {
-        notify('Battle of ' + MAP.provs[prov].name + ' has begun.', prov, 'battle', G.settings.pauseBattle && (a.owner === pl || defs.some(d => d.owner === pl)));
+      for (const pl of humans()) if (allied(a.owner, pl) || defs.some(d => allied(d.owner, pl))) {
+        tell(pl, 'Battle of ' + MAP.provs[prov].name + ' has begun.', prov, 'battle', G.settings.pauseBattle && (a.owner === pl || defs.some(d => d.owner === pl)));
       }
     }
     if (!b.attackers.includes(a.id)) { b.attackers.push(a.id); b.from[a.id] = a.prov; }
@@ -496,14 +495,14 @@ const Sim = (function () {
       for (const d of defs) if (G.armies.includes(d)) retreatFrom(d, b);
       if (allied(b.atkTag, pl)) G.stats.battlesWon++;
       if (allied(b.defTag, pl)) G.stats.battlesLost++;
-      if (b.atkTag === pl || defs.some(d => d.owner === pl))
-        notify((b.atkTag === pl ? 'Victory' : 'Defeat') + ' at ' + prov.name + '.', b.prov, b.atkTag === pl ? 'win' : 'loss', false);
+      for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
+        tell(h, (b.atkTag === h ? 'Victory' : 'Defeat') + ' at ' + prov.name + '.', b.prov, b.atkTag === h ? 'win' : 'loss', false);
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
       endBattle(b);
     } else if (aOrg < 0.12) {
       for (const a of atts) { walkBack(a); if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
-      if (b.atkTag === pl || defs.some(d => d.owner === pl))
-        notify('The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === pl ? 'loss' : 'win', false);
+      for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
+        tell(h, 'The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
       endBattle(b);
     }
   }
@@ -538,13 +537,13 @@ const Sim = (function () {
     G.owner[prov] = newOwner;
     G.ownVer++;
     if (newOwner === G.player) G.stats.captured++;
-    if (prev === G.player) {
-      G.stats.lost++;
+    if (isHuman(prev)) {
+      if (prev === G.player) G.stats.lost++;
       if (p.capital || p.city) {
         // pause at most once a day for lost cities, so a collapsing front doesn't stop the clock every hour
         const pause = G.settings.pauseLoss && (p.capital || !(G.hour - (G.lossPauseAt ?? -99) < 24));
         if (pause) G.lossPauseAt = G.hour;
-        notify(p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+        tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
       }
     }
     // capital relocation
@@ -698,7 +697,7 @@ const Sim = (function () {
     let reserve = G.armies.find(a => a.owner === c.tag && a.prov === cap && a.reserve && a.units.length < 12);
     if (!reserve) { reserve = newArmy(c.tag, cap, []); reserve.reserve = true; }
     reserve.units.push(u);
-    if (c.tag === G.player) notify('A new ' + UNIT_TYPES[item.type].name.toLowerCase() + ' division is ready in ' + MAP.provs[cap].name + '.', cap, 'info', false);
+    tell(c.tag, 'A new ' + UNIT_TYPES[item.type].name.toLowerCase() + ' division is ready in ' + MAP.provs[cap].name + '.', cap, 'info', false);
   }
 
   // ---------- AI ----------
@@ -788,12 +787,15 @@ const Sim = (function () {
   }
 
   function playerOrders() {
-    const mine = G.armies.filter(a => a.owner === G.player);
+    for (const h of humans()) humanOrders(h);
+  }
+  function humanOrders(me) {
+    const mine = G.armies.filter(a => a.owner === me);
     const defenders = mine.filter(a => a.order === 'defend');
     if (defenders.length) {
       const groups = {};
       defenders.forEach(a => { (groups[a.frontTag || '*'] = groups[a.frontTag || '*'] || []).push(a); });
-      for (const k in groups) frontlineAI(G.player, groups[k], false, k === '*' ? null : k);
+      for (const k in groups) frontlineAI(me, groups[k], false, k === '*' ? null : k);
     }
     for (const a of mine) {
       if (a.order === 'attack' && !a.battle && !a.path.length && a.target >= 0 && a.prov !== a.target) {
@@ -911,7 +913,7 @@ const Sim = (function () {
     checkCapitulations();
     const day = Math.floor(G.hour / 24);
     for (const c of Object.values(G.countries)) {
-      if (!c.alive || c.tag === G.player) continue;
+      if (!c.alive || isHuman(c.tag)) continue;
       const war = isAtWar(c.tag);
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
@@ -923,8 +925,18 @@ const Sim = (function () {
     playerOrders();
   }
 
-  function notify(text, prov, kind, pause) {
-    G.log.unshift({ hour: G.hour, text, prov, kind });
+  // humans: the local player plus, in a multiplayer game, every nation another person leads
+  function isHuman(tag) { return tag === G.player || !!(G.humans && G.humans[tag]); }
+  function humans() { const out = [G.player]; if (G.humans) for (const t in G.humans) if (t !== G.player && G.countries[t]) out.push(t); return out; }
+  // a message for one human's nation; the local player also gets the toast and pause
+  function tell(tag, text, prov, kind, pause) {
+    if (tag === G.player) return notify(text, prov, kind, pause, tag);
+    if (!isHuman(tag)) return;
+    G.log.unshift({ hour: G.hour, text, prov, kind, to: tag });
+    if (G.log.length > 80) G.log.pop();
+  }
+  function notify(text, prov, kind, pause, to) {
+    G.log.unshift(to ? { hour: G.hour, text, prov, kind, to } : { hour: G.hour, text, prov, kind });
     if (G.log.length > 80) G.log.pop();
     hooks.notify(text, prov, kind);
     if (pause && G.settings.autoPause && !G.paused) { G.paused = true; hooks.pause(text); }
@@ -937,7 +949,7 @@ const Sim = (function () {
     atWar, allied, isAtWar, enemiesOf, family, root, canEnter, declareWar, findPath,
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
-    army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
+    isHuman, humans, tell, army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
     orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };

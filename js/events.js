@@ -80,7 +80,7 @@ const Events = (function () {
         case 'relBelow': if (!alive(v.tag) || Diplo.rel(t, v.tag) >= v.v) return false; break;
         case 'flag': if (!(c.flags && c.flags[v] !== undefined)) return false; break;
         case 'notFlag': if (c.flags && c.flags[v] !== undefined) return false; break;
-        case 'player': if ((t === g.player) !== v) return false; break;
+        case 'player': if (Sim.isHuman(t) !== v) return false; break;
         case 'losing': { const bad = g.wars.some(w => { const s = Sim.sideOf(w, t); if (!s) return false; const e = s === 'att' ? w.leaderD : w.leaderA; return alive(e) && Diplo.warScore(t, e) < -25; }); if (bad !== v) return false; break; }
       }
     }
@@ -210,7 +210,7 @@ const Events = (function () {
     const key = d.id + '|' + tag;
     ev.fired[key] = g.hour;
     if (!d.tag) ev.cd[key] = g.hour + (d.repeat || 1500) * DAY;
-    if (tag === g.player) {
+    if (Sim.isHuman(tag)) {
       ev.open.push({ n: ev.next++, id: d.id, tag, hour: g.hour });
       if (g.settings.pauseEvent !== false && !g.paused) { g.paused = true; Sim.hooks.pause(); }
       if (hooks.show) hooks.show();
@@ -230,7 +230,7 @@ const Events = (function () {
     if (o) apply(o.fx, tag);
     g.ev.hist.unshift({ id: d.id, tag, hour: g.hour, pick });
     if (g.ev.hist.length > 60) g.ev.hist.pop();
-    if (d.news && tag !== g.player && g.countries[tag]) {
+    if (d.news && !Sim.isHuman(tag) && g.countries[tag]) {
       const c = g.countries[tag];
       Sim.notify(fill(d.title, tag) + (o && d.options.length > 1 ? ': ' + fill(o.text, tag) : '') + ' (' + c.name + ')', c.capital, 'info', false);
     }
@@ -239,7 +239,9 @@ const Events = (function () {
   function choose(n, pick) {
     const g = G(), i = g.ev.open.findIndex(e => e.n === n);
     if (i < 0) return false;
-    const e = g.ev.open[i]; g.ev.open.splice(i, 1);
+    const e = g.ev.open[i];
+    if (e.tag !== g.player) return false;   // each nation's leader answers its own events
+    g.ev.open.splice(i, 1);
     const d = def(e.id);
     if (d) resolve(d, e.tag, Math.max(0, Math.min((d.options || []).length - 1, pick)));
     return true;
@@ -284,7 +286,8 @@ const Events = (function () {
     return { n: e.n, title: fill(d.title, e.tag), text: fill(d.text, e.tag), date: Sim.dateStr(e.hour),
       options: (d.options || []).map((o, i) => ({ i, text: fill(o.text, e.tag), fx: describe(o.fx, e.tag) })) };
   }
-  function open() { const g = G(); return g && g.ev ? g.ev.open : []; }
+  function open() { const g = G(); return g && g.ev ? g.ev.open.filter(e => e.tag === g.player) : []; }
+  function openAll() { const g = G(); return g && g.ev ? g.ev.open : []; }
   function recent(n) { const g = G(); if (!g || !g.ev) return []; return g.ev.hist.slice(0, n || 12).map(h => { const d = def(h.id); return d ? { title: fill(d.title, h.tag), news: !!d.news, tag: h.tag, hour: h.hour, choice: d.options && d.options[h.pick] ? fill(d.options[h.pick].text, h.tag) : '' } : null; }).filter(Boolean); }
-  return { hooks, setup, daily, choose, view, open, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
+  return { hooks, setup, daily, choose, view, open, openAll, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
 })();

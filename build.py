@@ -11,7 +11,7 @@ js = '\n'.join((root / s).read_text() for s in scripts if (root / s).exists())
 head = re.search(r'<!--BUILD:HEAD-->(.*)<!--/BUILD:HEAD-->', html, re.S).group(1)
 head = head.replace('<link rel="stylesheet" href="css/style.css">', '<style>\n' + css + '\n</style>')
 body = re.search(r'<!--BUILD:BODY-->(.*)<!--/BUILD:BODY-->', html, re.S).group(1)
-bundle = head.strip() + '\n' + body.strip() + '\n<script>\n' + js.replace('</script', '<\\/script') + '\n</script>\n'
+bundle = head.strip() + '\n' + body.strip() + '\n<script>window.IM_ARTIFACT = true;</script>\n<script>\n' + js.replace('</script', '<\\/script') + '\n</script>\n'
 (root / 'dist').mkdir(exist_ok=True)
 (root / 'dist/artifact.html').write_text(bundle)
 (root / 'dist/iron-meridian.html').write_text('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'

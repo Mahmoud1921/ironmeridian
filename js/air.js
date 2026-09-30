@@ -164,7 +164,7 @@ const Air = (function () {
       const base = freeBase(c.tag, -1);
       if (base < 0) { c.airQueue.push({ type: q.type, left: 1, total: q.total }); continue; }   // waits for room at an airbase
       const w = newWing(c.tag, q.type, base); w.org = 0.6;
-      if (c.tag === G().player) Sim.notify('The ' + w.name + ' (' + typeName(q.type).toLowerCase() + ') is ready at ' + MAP().provs[base].name + '.', base, 'info', false);
+      Sim.tell(c.tag, 'The ' + w.name + ' (' + typeName(q.type).toLowerCase() + ') is ready at ' + MAP().provs[base].name + '.', base, 'info', false);
     }
   }
   function upkeep(tag) { let u = 0; for (const w of G().wings) if (w.owner === tag) u += TYPES[w.type].eq / 2400; return u; }
@@ -252,7 +252,7 @@ const Air = (function () {
       // a base lost to the enemy: fly to the nearest free one or lose the wing
       if (!friendlyTo(w.owner, g.owner[w.base]) || !infra(w.base, 'air')) {
         const nb = freeBase(w.owner, w.base);
-        if (nb < 0) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' lost its airbase and was disbanded.', -1, 'loss', false); removeWing(w); continue; }
+        if (nb < 0) { Sim.tell(w.owner, 'The ' + w.name + ' lost its airbase and was disbanded.', -1, 'loss', false); removeWing(w); continue; }
         w.base = nb; w.mission = 'idle'; w.target = -1;
       }
       if (w.mission !== 'idle' && !inRange(w, point(w))) { w.mission = 'idle'; w.target = -1; }
@@ -296,12 +296,12 @@ const Air = (function () {
         const hit = (TYPES[w.type].strat || TYPES[w.type].ground * 0.3) * w.str * (0.4 + 0.6 * w.org) * (0.3 + 0.7 * sup) / 1000;
         g.bomb[w.target] = Math.min(0.75, (g.bomb[w.target] || 0) + hit);
       }
-      if (w.str < 0.05) { if (w.owner === g.player) Sim.notify('The ' + w.name + ' was shot out of the sky.', -1, 'loss', false); removeWing(w); continue; }
+      if (w.str < 0.05) { Sim.tell(w.owner, 'The ' + w.name + ' was shot out of the sky.', -1, 'loss', false); removeWing(w); continue; }
       if (w.str < 0.35) { w.mission = 'idle'; w.target = -1; }
     }
     for (const c of Object.values(g.countries)) if (c.alive) stepQueue(c);
     const day = Math.floor(g.hour / 24);
-    for (const c of Object.values(g.countries)) if (c.alive && c.tag !== g.player && (day + c.tag.charCodeAt(2)) % 3 === 0) ai(c);
+    for (const c of Object.values(g.countries)) if (c.alive && !Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(2)) % 3 === 0) ai(c);
   }
   function repair(w) {
     if (w.str >= 1) return;

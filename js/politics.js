@@ -41,7 +41,7 @@ const Politics = (function () {
     }
     // AI governments look at their options about once a month
     const day = Math.floor(g.hour / DAY);
-    for (const c of Object.values(g.countries)) if (c.alive && c.tag !== g.player && (day + c.tag.charCodeAt(1) * 5) % 30 === 0) aiThink(c);
+    for (const c of Object.values(g.countries)) if (c.alive && !Sim.isHuman(c.tag) && (day + c.tag.charCodeAt(1) * 5) % 30 === 0) aiThink(c);
   }
 
   // ---------- decisions ----------

@@ -55,7 +55,7 @@ const Peace = (function () {
     c.queue = [];
     Sim.dropNation(loser);
     for (const o of Object.values(g.countries)) if (o.overlord === loser) o.overlord = null;
-    if (winner(conf, g.player)) {
+    if (conf.winners.some(w => Sim.isHuman(w.tag))) {
       g.peace = conf;
       aiTurns(conf);
       g.paused = true;
@@ -71,7 +71,7 @@ const Peace = (function () {
     const g = G();
     while (conf.turn < conf.winners.length) {
       const w = conf.winners[conf.turn];
-      if (w.tag === g.player && !w.done) return;
+      if (Sim.isHuman(w.tag) && !w.done) return;
       if (!w.done) aiPick(conf, w);
       w.done = true; conf.turn++;
     }
@@ -96,6 +96,8 @@ const Peace = (function () {
   function canDemand(conf, tag, d) {
     const w = winner(conf, tag);
     if (!w) return { ok: false, why: 'Not at the table' };
+    const now = conf.winners[conf.turn];
+    if (now && now.tag !== tag) return { ok: false, why: 'Waiting for ' + nm(now.tag) };
     const need = d.kind === 'prov' ? cost(conf, d.id, tag) : d.kind === 'puppet' ? PUPPET : d.kind === 'repar' ? REPAR : d.kind === 'restore' ? (restorable(conf).find(r => r.tag === d.tag) || {}).cost : 0;
     if (d.kind === 'prov') {
       if (!conf.provs.includes(d.id)) return { ok: false, why: 'Not on the table' };
@@ -137,9 +139,10 @@ const Peace = (function () {
   // the player is done: the rest pick, then the treaty is signed
   function done(conf) {
     const w = winner(conf, G().player);
-    if (w) { w.done = true; conf.turn = conf.winners.indexOf(w) + 1; }
+    if (w) { w.done = true; conf.turn = Math.max(conf.turn, conf.winners.indexOf(w) + 1); }
     aiTurns(conf);
-    return finish(conf);
+    // in a multiplayer game another leader may still be choosing
+    return conf.turn >= conf.winners.length ? finish(conf) : null;
   }
 
   // ---------- the treaty ----------
