@@ -201,7 +201,7 @@ const UI = (function () {
     $('#st-name').textContent = d.name;
     $('#st-gov').textContent = d.gov + (d.overlord ? ' · subject of ' + COUNTRY_BY_TAG[d.overlord].name : '');
     $('#st-diff').innerHTML = '<div class="diff">' + [0, 1, 2, 3, 4].map(i => `<i class="${i <= dl ? 'on' : ''}"></i>`).join('') + '</div><span class="label">' + d.diff + '</span>';
-    $('#st-nums').innerHTML = `<div><b>${fmtN(d.pop * 1e6)}</b><span>Population</span></div><div><b>${d.civ + d.mil}</b><span>Factories (${d.civ} civ · ${d.mil} mil)</span></div>
+    $('#st-nums').innerHTML = `<div><b>${fmtN(d.pop * 1e6)}</b><span>Population</span></div><div><b>${d.civ + d.mil}</b><span>Factories</span><small>${d.civ} civilian · ${d.mil} military</small></div>
       <div><b>${d.divs}</b><span>Divisions</span></div><div><b>${f.provs}</b><span>Provinces</span></div>`;
     const rn = { steel: 'Steel', oil: 'Oil', coal: 'Coal', aluminium: 'Aluminium', rubber: 'Rubber', rare: 'Rare materials' };
     $('#st-res').innerHTML = Object.keys(rn).map(k => `<span>${rn[k]} ${f.res[k] || 0}</span>`).join('');
@@ -614,7 +614,9 @@ const UI = (function () {
     if (a.retreating) return 'Retreating to ' + MAP.provs[a.path[a.path.length - 1]]?.name;
     let t = ORDER_TEXT[a.order] || a.order;
     if (a.order === 'defend') t += a.frontTag ? ' vs ' + G.countries[a.frontTag].name : ' (all enemies)';
-    if ((a.order === 'move' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
+    const prey = a.chase && Sim.army(a.chase);
+    if (prey) t = 'Hunting ' + prey.name + (prey.prov >= 0 ? ' at ' + MAP.provs[prey.prov].name : '');
+    else if ((a.order === 'move' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
     if (a.path.length) { const km = a.path.reduce((s, id, i) => s + Sim.distKm(i ? a.path[i - 1] : a.prov, id), 0) - a.progress; t += ' · ~' + Math.max(1, Math.round(km / Math.max(0.5, Sim.armySpeed(a)) / 24)) + ' days'; }
     return t;
   }
@@ -628,8 +630,8 @@ const UI = (function () {
   }
   // ---------- compact army card ----------
   const ORDERS = [['move', 'Move', 'move'], ['attack', 'Attack', 'attack', 'atk'], ['front', 'Defend', 'shield'], ['hold', 'Hold', 'hold'], ['retreat', 'Retreat', 'retreat'],
-    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Reinforce', 'plus'], ['invade', 'By sea', 'anchor']];
-  const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy objective; the army keeps attacking toward it', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
+    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Recruit', 'plus'], ['invade', 'By sea', 'anchor']];
+  const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy province, or an enemy army to hunt until it is destroyed', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
     hold: 'Stop and hold here', retreat: 'Fall back to friendly land', redeploy: 'Fast move through friendly land; organisation drops', split: 'Split the army in two', merge: 'Armies must share a province',
     recruit: 'Train new divisions for this army', invade: 'Ship this army across the sea: pick a coastal province' };
   function renderCard() {
@@ -1090,7 +1092,7 @@ const UI = (function () {
   }
   function showHint() {
     const h = $('#hint');
-    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
+    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy province, or an enemy army to hunt down', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
       invade: 'Choose a coastal province to land in', fleet: 'Choose a sea zone to sail to', rebase: 'Choose a province with a friendly airbase',
       wing: pending && pending.mission === 'naval' ? 'Choose a sea zone to strike' : pending && pending.mission === 'bomb' ? 'Choose an enemy province to bomb' : 'Choose where the wing should fly' };
     if (!pending) { h.hidden = true; $('#map').classList.remove('targeting'); return; }
@@ -1122,6 +1124,12 @@ const UI = (function () {
       list.forEach(a => Sim.orderDefend(a, tag));
       toast(list.length + ' ' + (list.length > 1 ? 'armies' : 'army') + ' now defending the front against ' + G.countries[tag].name + '.', -1, 'info');
     } else issueMove(list, prov, kind);
+    renderRight();
+  }
+  function chase(list, foe) {
+    if (!list.length) return;
+    const ok = list.filter(a => Sim.orderChase(a, foe)).length;
+    toast(ok ? (ok > 1 ? ok + ' armies are' : list[0].name + ' is') + ' hunting ' + Sim.G.countries[foe.owner].name + ' ' + foe.name + ' until it is destroyed.' : 'No land route to ' + foe.name + '.', foe.prov, 'info');
     renderRight();
   }
   function issueMove(list, prov, kind) {
@@ -1434,11 +1442,15 @@ const UI = (function () {
     const prov = Render.provinceAt(wx, wy);
     const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
-    if (pending && button === 0) { resolvePending(prov, zone); return; }
+    // an enemy army clicked while ordering an attack (or right-clicked) is hunted down wherever it goes
+    const foeAt = () => { const g = Render.stackAt(sx, sy); return g && g.find(a => Sim.atWar(a.owner, G.player)) || null; };
+    if (pending && button === 0) { const foe = pending.kind === 'attack' || pending.kind === 'move' ? foeAt() : null; if (foe) { pending = null; showHint(); chase(myArmiesSel(), foe); return; } resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
       const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
       if (f && f.owner === G.player) { const z = zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1; if (z >= 0) sendFleet(z); return; }
+      const foe = foeAt();
+      if (foe && myArmiesSel().length) { chase(myArmiesSel(), foe); return; }
       const list = myArmiesSel();
       if (list.length && prov >= 0) issueMove(list, prov, 'auto');
       return;

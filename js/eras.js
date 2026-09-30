@@ -307,7 +307,8 @@ const Eras = (function () {
   // Which 3D figure (a kind in figures.js) an era unit uses. Foot soldiers depend on the era:
   // spear and shield before gunpowder, shako and musket in 1805, the game's own soldiers in 1914.
   const LOOK_KIND = {
-    horseman: 'rider', horsearcher: 'rider', cataphract: 'rider', knight: 'rider', mamluk: 'rider', samurai: 'rider',
+    archer: 'archer', crossbow: 'archer', legionary: 'swords', manatarms: 'swords', varangian: 'swords',
+    horseman: 'rider', horsearcher: 'riderbow', cataphract: 'rider', knight: 'rider', mamluk: 'rider', samurai: 'rider',
     templar: 'rider', cuirassier: 'rider', hussar: 'rider', cossack: 'rider', horsewarrior: 'rider', chariot: 'rider', cavalry: 'rider',
     elephant: 'elephant',
     ballista: 'engine', trebuchet: 'engine', siege: 'engine',

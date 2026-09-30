@@ -185,6 +185,13 @@ const Render = (function () {
       const t = s.phase === 'sail' ? Math.min(0.85, (s.t + (state.hourFrac || 0)) / Math.max(1, s.sail) * 0.85) : s.phase === 'wait' ? 0.85 : Math.max(0, 0.85 - s.t / Math.max(12, s.sail / 2) * 0.85);
       return [p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t];
     }
+    if (a.lead) {
+      // turned round mid-leg: walking back toward its own province centre
+      const n = MAP.provs[a.lead.to];
+      const km = Math.max(0, a.lead.km + Math.min(0, a.rate || 0) * (state.hourFrac || 0));
+      const t = Math.min(1, km / Sim.distKm(a.prov, a.lead.to));
+      return [p.x + (n.x - p.x) * t, p.y + (n.y - p.y) * t];
+    }
     if (a.path.length) {
       const n = MAP.provs[a.path[0]];
       const prog = a.progress + (a.battle ? 0 : (a.rate || 0) * (state.hourFrac || 0));
@@ -337,7 +344,7 @@ const Render = (function () {
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
-    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
   }
 
   // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
@@ -484,6 +491,133 @@ const Render = (function () {
   // smoothed on-screen positions and headings, so figures glide between hourly simulation steps
   const disp = new Map();
   let lastDisp = 0, figCount = 0;
+  // who each fighting army is fighting: attackers face the province they attack, defenders face the
+  // province the attack comes from (so both sides of a battle show it, not only the attacker)
+  let fights = new Map();
+  function buildFights(G) {
+    fights = new Map();
+    for (const b of G.battles) {
+      const atts = b.attackers.filter(id => b.from[id] !== undefined);
+      if (!atts.length) continue;
+      for (const id of atts) fights.set(id, { prov: b.prov, b });
+      for (const d of Sim.hostilesAt(b.atkTag, b.prov)) if (!fights.has(d.id)) fights.set(d.id, { prov: b.from[atts[0]], b });
+    }
+  }
+  const fightTarget = a => fights.get(a.id) || null;
+
+  // ---------- battle effects, matched to the weapons of the era ----------
+  // rifles fire tracers, muskets and cannon give flashes and white smoke, bows and slings send arrows in
+  // volleys, siege engines lob stones, and spears, swords, horsemen and elephants clash in melee
+  const fx = [];
+  let fxLast = 0;
+  function fightStyle(type) {
+    const kind = Figures.kindOf(type), look = UNIT_TYPES[type] && UNIT_TYPES[type].look;
+    if (look === 'horsearcher' || look === 'chariot') return 'arrow';
+    return { soldiers: 'rifle', truck: 'rifle', halftrack: 'rifle', car: 'rifle', tank: 'shell', gun: 'shell', musket: 'musket', cannon: 'cannon',
+      archer: 'arrow', riderbow: 'arrow', engine: 'stone' }[kind] || 'melee';
+  }
+  // rates per figure per second
+  const FX_RATE = { rifle: 5, shell: 0.7, musket: 0.45, cannon: 0.4, arrow: 0.6, stone: 0.3, melee: 7 };
+  function spawnFightFx(wx, wy, figs, foe, dt, fig) {
+    if (!foe) return;
+    const tp = MAP.provs[foe.prov];
+    const [ox, oy] = worldToScreen(wx, wy), [tx, ty] = worldToScreen(tp.x, tp.y);
+    const now = performance.now();
+    const dist = Math.hypot(tx - ox, ty - oy) || 1;
+    // where the enemy line stands: toward the foe, but not further than the battle marker
+    const reach = Math.min(dist * 0.6, fig * 3.2);
+    const ex = (tx - ox) / dist, ey = (ty - oy) / dist;
+    const S = Math.max(0.8, fig / 26);                          // effects grow with the figures
+    for (const [fx0, fy0, ty0] of figs) {
+      const st = fightStyle(ty0);
+      if (Math.random() > FX_RATE[st] * dt) continue;
+      const x0 = fx0 - ox, y0 = fy0 - oy - fig * 0.35;          // from the figure's hands, relative to the army
+      const aimX = ex * reach + (Math.random() - 0.5) * fig * 0.9, aimY = ey * reach + (Math.random() - 0.5) * fig * 0.5 - fig * 0.1;
+      const base = { wx, wy, t0: now };
+      if (st === 'rifle') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.25, y: y0 + ey * fig * 0.1, r: (1.8 + Math.random() * 1.4) * S, dur: 70 });
+        fx.push({ ...base, k: 'tracer', w: S, x: x0 + ex * fig * 0.25, y: y0, x1: aimX, y1: aimY, dur: 180 + Math.random() * 80 });
+      } else if (st === 'shell') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.35, y: y0, r: (3.5) * S, dur: 110 });
+        fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.35, y: y0, r: (3) * S, dur: 1400, grey: 120 });
+        fx.push({ ...base, k: 'burst', x: aimX * 1.3, y: aimY * 1.3, r: (5) * S, dur: 600, t0: now + 250 });
+      } else if (st === 'musket') {
+        // a volley: every man in the line fires at once
+        for (let i = 0; i < 3; i++) {
+          const sx = x0 + ex * fig * 0.3 + (Math.random() - 0.5) * fig * 0.5, sy = y0 + (Math.random() - 0.5) * fig * 0.25;
+          fx.push({ ...base, k: 'flash', x: sx, y: sy, r: (1.6 + Math.random()) * S, dur: 90 });
+          fx.push({ ...base, k: 'smoke', x: sx, y: sy, r: (2.5) * S, dur: 1800 + Math.random() * 600, grey: 225 });
+        }
+      } else if (st === 'cannon') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.4, y: y0, r: (4) * S, dur: 120 });
+        fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.4, y: y0, r: (4) * S, dur: 2400, grey: 230 });
+        fx.push({ ...base, k: 'ball', s: S, x: x0 + ex * fig * 0.4, y: y0, x1: aimX * 1.3, y1: aimY * 1.3, dur: 450, arc: fig * 0.3 });
+        fx.push({ ...base, k: 'dust', x: aimX * 1.3, y: aimY * 1.3, r: (3) * S, dur: 700, t0: now + 450 });
+      } else if (st === 'arrow') {
+        // a volley of arrows (or slingstones) on a high arc
+        const n = 4 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < n; i++) {
+          const d = 650 + Math.random() * 250;
+          fx.push({ ...base, k: 'arrow', len: 5 * S, x: x0 + (Math.random() - 0.5) * fig * 0.4, y: y0, x1: aimX + (Math.random() - 0.5) * fig * 0.6, y1: aimY + (Math.random() - 0.5) * fig * 0.3, dur: d, arc: fig * (0.7 + Math.random() * 0.4), t0: now + i * 40 });
+        }
+      } else if (st === 'stone') {
+        fx.push({ ...base, k: 'ball', s: S, x: x0, y: y0 - fig * 0.3, x1: aimX * 1.4, y1: aimY * 1.4, dur: 1100, arc: fig * 1.6, big: true });
+        fx.push({ ...base, k: 'dust', x: aimX * 1.4, y: aimY * 1.4, r: (4) * S, dur: 900, t0: now + 1100 });
+      } else {
+        // melee: blades catching the light where the lines meet, and dust kicked up
+        const mx = x0 + ex * fig * 0.55 + (Math.random() - 0.5) * fig * 0.4, my = y0 + ey * fig * 0.2 + (Math.random() - 0.5) * fig * 0.3;
+        fx.push({ ...base, k: 'spark', x: mx, y: my, r: (2.5 + Math.random() * 2) * S, dur: 220, rot: Math.random() * 3 });
+        if (Math.random() < 0.25) fx.push({ ...base, k: 'dust', x: mx, y: my + fig * 0.3, r: (2.5) * S, dur: 900 });
+      }
+    }
+    if (fx.length > 600) fx.splice(0, fx.length - 600);
+  }
+  function drawFx() {
+    const now = performance.now();
+    let w = 0;
+    for (let i = 0; i < fx.length; i++) {
+      const e = fx[i], age = now - e.t0;
+      if (age > e.dur) continue;
+      fx[w++] = e;
+      if (age < 0) continue;
+      const u = age / e.dur;
+      const [bx, by] = worldToScreen(e.wx, e.wy);
+      const x = bx + e.x, y = by + e.y;
+      if (e.k === 'flash') {
+        ctx.globalAlpha = 1 - u; ctx.fillStyle = '#ffe07a';
+        ctx.beginPath(); ctx.arc(x, y, e.r * (1 + u), 0, 7); ctx.fill();
+      } else if (e.k === 'tracer') {
+        const a = Math.max(0, u - 0.25), b = u;
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#ffd36a'; ctx.lineWidth = 1.1 * e.w;
+        ctx.beginPath(); ctx.moveTo(x + (bx + e.x1 - x) * a, y + (by + e.y1 - y) * a); ctx.lineTo(x + (bx + e.x1 - x) * b, y + (by + e.y1 - y) * b); ctx.stroke();
+      } else if (e.k === 'smoke' || e.k === 'dust' || e.k === 'burst') {
+        const g = e.k === 'dust' ? '150,128,96' : e.k === 'burst' ? '90,80,70' : `${e.grey},${e.grey},${e.grey - 8}`;
+        if (e.k === 'burst' && u < 0.15) { ctx.globalAlpha = 1 - u / 0.15; ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(x, y, e.r, 0, 7); ctx.fill(); }
+        ctx.globalAlpha = (e.k === 'smoke' ? 0.55 : 0.5) * (1 - u);
+        ctx.fillStyle = 'rgb(' + g + ')';
+        ctx.beginPath(); ctx.arc(x + u * 4, y - u * (e.k === 'smoke' ? 10 : 4), e.r * (1 + u * 2.2), 0, 7); ctx.fill();
+      } else if (e.k === 'arrow' || e.k === 'ball') {
+        const px = x + (bx + e.x1 - x) * u, py = y + (by + e.y1 - y) * u - Math.sin(u * Math.PI) * e.arc;
+        if (e.k === 'arrow') {
+          const u2 = Math.min(1, u + 0.04);
+          const qx = x + (bx + e.x1 - x) * u2, qy = y + (by + e.y1 - y) * u2 - Math.sin(u2 * Math.PI) * e.arc;
+          const l = Math.hypot(qx - px, qy - py) || 1;
+          ctx.globalAlpha = 0.95; ctx.strokeStyle = '#2a2218'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(px - (qx - px) / l * e.len, py - (qy - py) / l * e.len); ctx.lineTo(px, py); ctx.stroke();
+        } else {
+          ctx.globalAlpha = 1; ctx.fillStyle = e.big ? '#5a5248' : '#222';
+          ctx.beginPath(); ctx.arc(px, py, (e.big ? 2.6 : 1.6) * e.s, 0, 7); ctx.fill();
+        }
+      } else if (e.k === 'spark') {
+        ctx.globalAlpha = 1 - u; ctx.strokeStyle = '#fff4c8'; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let j = 0; j < 4; j++) { const a = e.rot + j * Math.PI / 2; ctx.moveTo(x + Math.cos(a) * 1, y + Math.sin(a) * 1); ctx.lineTo(x + Math.cos(a) * e.r * (1 + u), y + Math.sin(a) * e.r * (1 + u)); }
+        ctx.stroke();
+      }
+    }
+    fx.length = w;
+    ctx.globalAlpha = 1;
+  }
   function dispPos(a, k) {
     const [tx, ty] = armyPos(a);
     let d = disp.get(a.id);
@@ -493,8 +627,11 @@ const Render = (function () {
     if (jump > 6 || jump < 0.35) { d.x = tx; d.y = ty; } else { d.x += (tx - d.x) * Math.max(k, 0.3); d.y += (ty - d.y) * Math.max(k, 0.3); }
     d.seen = lastDisp;
     let want = null;
-    if (a.path.length) { const p = MAP.provs[a.prov], n = MAP.provs[a.path[0]]; want = Math.atan2(-(n.y - p.y), n.x - p.x); }
-    else if (a.battle) { const b = Sim.G.battles.find(x => x.id === a.battle); if (b && b.prov !== a.prov) { const p = MAP.provs[a.prov], n = MAP.provs[b.prov]; want = Math.atan2(-(n.y - p.y), n.x - p.x); } }
+    const face = (from, to) => { const p = MAP.provs[from], n = MAP.provs[to]; return Math.atan2(-(n.y - p.y), n.x - p.x); };
+    const foe = fightTarget(a);
+    if (a.lead) want = face(a.lead.to, a.prov);
+    else if (a.path.length && !a.battle) want = face(a.prov, a.path[0]);
+    else if (foe && foe.prov !== a.prov) want = face(a.prov, foe.prov);
     if (want !== null) { let dh = want - d.h; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI; d.h += dh * Math.min(1, k * 1.5); }
     return d;
   }
@@ -510,6 +647,8 @@ const Render = (function () {
     const now = performance.now();
     const k = lastDisp ? 1 - Math.exp(-(now - lastDisp) / 1000 * 9) : 1;
     lastDisp = now;
+    buildFights(G);
+    const fxDt = fxLast ? Math.min(0.1, (now - fxLast) / 1000) : 0; fxLast = now;
     counterHits = [];
     figCount = 0;
     const rel = z / minZoom();
@@ -546,7 +685,8 @@ const Render = (function () {
         const compact = small || (!mine && !hostile && !Sim.allied(a.owner, G.player) && z < 16);
         let divs = 0; for (const g of grp) divs += g.units.length;
         const moving = grp.some(g => g.path.length) && !G.paused;
-        const fighting = grp.some(g => g.battle);
+        const foe = grp.map(fightTarget).find(Boolean) || null;
+        const fighting = !!foe;
         // --- 3D figures: 1 to 3 depending on size, in a small column behind the leader ---
         const types = figureTypes(grp);
         const nFig = compact ? 1 : divs >= 10 ? 3 : divs >= 4 ? 2 : 1;
@@ -563,10 +703,7 @@ const Render = (function () {
         ctx.fillStyle = c.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
         ctx.lineWidth = 1.2; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : 'rgba(0,0,0,0.6)'; ctx.stroke();
         if (state.figures !== false) for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
-        if (fighting && !G.paused && Math.random() < 0.35) {     // muzzle flashes
-          ctx.fillStyle = '#ffd36a';
-          ctx.beginPath(); ctx.arc(sx + hx * fig * 0.45 + (Math.random() - 0.5) * 6, sy + hy * fig * 0.3 - fig * 0.15, 1.6 + Math.random() * 1.6, 0, 7); ctx.fill();
-        }
+        if (fighting && !G.paused && state.figures !== false) spawnFightFx(d.x, d.y, figs, foe, fxDt, fig);
         const figTop = sy + 4 - fig * 0.62;
         if (compact) {
           if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
@@ -834,5 +971,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

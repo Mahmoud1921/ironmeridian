@@ -293,18 +293,64 @@ const Sim = (function () {
   function manpowerOf(a) { return a.units.reduce((s, u) => s + UNIT_TYPES[u.type].mp * u.str, 0); }
 
   // ---------- orders ----------
+  // an army caught between two province centres walks back to its own centre (a.lead) instead of
+  // jumping there when an order turns it round or stops it
+  function walkBack(a) {
+    if (a.path.length && a.progress > 0) a.lead = { to: a.path[0], km: Math.min(a.progress, distKm(a.prov, a.path[0])) };
+    a.path = []; a.progress = 0;
+  }
+  function pathKm(from, path) { let s = 0, p = from; for (const n of path) { s += distKm(p, n); p = n; } return s; }
   function orderMove(a, dest, kind) {
     if (a.sea && a.sea.phase !== 'prep') return false;
     if (a.sea) a.sea = null;   // a new order calls off the planned landing
     if (a.battle) leaveBattle(a);
     const mode = kind === 'redeploy' ? 'redeploy' : 'move';
+    // mid-leg, the army is really between a.prov and the next province: keep going forward when that is
+    // the shorter way to the new destination, otherwise turn round where it stands
+    const next = a.lead ? a.lead.to : a.path.length && a.progress > 0 ? a.path[0] : -1;
+    const done = a.lead ? a.lead.km : a.progress;
     const path = findPath(a.owner, a.prov, dest, mode);
-    if (!path) return false;
-    a.path = path; a.progress = 0; a.order = kind || 'move'; a.target = dest; a.retreating = false;
+    let fwd = null;
+    if (next >= 0 && canEnter(a.owner, next) && !hostilesAt(a.owner, next).length) {
+      const rest = next === dest ? [] : findPath(a.owner, next, dest, mode);
+      if (rest) fwd = [next].concat(rest);
+    }
+    if (fwd && (!path || pathKm(a.prov, fwd) - done <= pathKm(a.prov, path) + done)) {
+      a.path = fwd; a.progress = done; a.lead = null;      // carry on along the current leg
+    } else {
+      if (!path) return false;
+      if (!a.lead) walkBack(a);
+      a.path = path; a.progress = 0;
+    }
+    a.order = kind || 'move'; a.target = dest; a.retreating = false; a.chase = 0;
     return true;
   }
-  function orderHold(a) { if (a.sea && a.sea.phase === 'prep') a.sea = null; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1; a.frontTag = null; }
-  function orderDefend(a, frontTag) { if (a.sea) return; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; }
+  function orderHold(a) { if (a.sea && a.sea.phase === 'prep') a.sea = null; if (a.battle) leaveBattle(a); walkBack(a); a.order = 'hold'; a.target = -1; a.frontTag = null; a.chase = 0; }
+  function orderDefend(a, frontTag) { if (a.sea) return; if (a.battle) leaveBattle(a); walkBack(a); a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; a.chase = 0; }
+  // attack an enemy army and keep following it until it is destroyed or the order is changed
+  function orderChase(a, target) {
+    if (!target || !atWar(a.owner, target.owner)) return false;
+    if (!orderMove(a, target.prov, 'move')) return false;
+    a.order = 'attack'; a.chase = target.id;
+    return true;
+  }
+  function chaseStep(a) {
+    const t = army(a.chase);
+    if (!t || !t.units.length || !atWar(a.owner, t.owner)) {
+      a.chase = 0;
+      if (a.order === 'attack' && !a.battle) { walkBack(a); a.order = 'hold'; a.target = -1; }
+      if (a.owner === G.player) notify(a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
+      return;
+    }
+    if (a.battle || a.sea) return;
+    if (a.order !== 'attack') { if (armyStats(a).org < 0.3) return; a.order = 'attack'; }
+    const dest = t.sea ? -1 : t.prov;
+    if (dest < 0 || dest === a.prov) return;
+    if (a.target === dest && a.path.length && a.path[a.path.length - 1] === dest) return;
+    const id = t.id;
+    if (orderMove(a, dest, 'move')) { a.order = 'attack'; }
+    a.chase = id;
+  }
   function orderRetreat(a) {
     const c = G.countries[a.owner];
     if (a.sea) { if (typeof Navy !== 'undefined') Navy.cancelInvasion(a); return true; }
@@ -455,7 +501,7 @@ const Sim = (function () {
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
       endBattle(b);
     } else if (aOrg < 0.12) {
-      for (const a of atts) { a.path = []; a.progress = 0; if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
+      for (const a of atts) { walkBack(a); if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
       if (b.atkTag === pl || defs.some(d => d.owner === pl))
         notify('The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === pl ? 'loss' : 'win', false);
       endBattle(b);
@@ -756,7 +802,7 @@ const Sim = (function () {
         const path = findPath(a.owner, a.prov, a.target, 'move');
         if (path) a.path = path; else a.order = 'hold';
       }
-      if ((a.order === 'attack' || a.order === 'move' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length) { a.order = 'hold'; a.target = -1; }
+      if ((a.order === 'attack' || a.order === 'move' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length && !a.chase) { a.order = 'hold'; a.target = -1; }
     }
   }
 
@@ -768,7 +814,14 @@ const Sim = (function () {
       if (!G.armies.includes(a)) continue;
       a.rate = 0;   // km per hour this hour; the renderer uses it to glide between ticks
       if (a.sea && typeof Navy !== 'undefined' && Navy.stepArmy(a)) continue;
+      if (a.chase) { chaseStep(a); if (!G.armies.includes(a)) continue; }
       if (a.battle) continue;
+      if (a.lead) {                       // walking back to its own province centre first
+        const sp = armySpeed(a);
+        a.lead.km -= sp; a.rate = -sp;
+        if (a.lead.km <= 0) a.lead = null;
+        continue;
+      }
       if (!a.path.length) {
         a.entrench = Math.min(0.25, a.entrench + 0.25 / (24 * 10));
         recoverOrg(a, 1);
@@ -778,10 +831,10 @@ const Sim = (function () {
       const next = a.path[0];
       if (!canEnter(a.owner, next)) {
         const re = a.target >= 0 && a.target !== next ? findPath(a.owner, a.prov, a.target, a.order === 'redeploy' ? 'redeploy' : 'move') : null;
-        a.path = re || []; a.progress = 0; continue;
+        walkBack(a); a.path = re || []; continue;
       }
       if (!a.retreating && hostilesAt(a.owner, next).length) {
-        if (a.order === 'redeploy') { a.path = []; a.progress = 0; a.order = 'hold'; continue; }
+        if (a.order === 'redeploy') { walkBack(a); a.order = 'hold'; continue; }
         startBattle(a, next); continue;
       }
       a.entrench = 0;
@@ -885,7 +938,7 @@ const Sim = (function () {
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
-    orderMove, orderHold, orderDefend, orderRetreat, mergeArmies, splitArmy, recruit, canRecruit,
+    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();

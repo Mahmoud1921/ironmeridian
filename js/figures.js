@@ -8,9 +8,9 @@ const Figures = (function () {
   const SE = Math.sin(ELEV), CE = Math.cos(ELEV);
   const LIGHT = norm([-0.45, 0.35, 0.82]);         // sun from the north-west, high
   const PX = 2.05;                                 // atlas pixels per model unit
-  // the last six are for the historical eras: foot with spear and shield, musketeers, riders, elephants,
-  // siege engines and horse-drawn cannon
-  const KINDS = ['soldiers', 'truck', 'halftrack', 'tank', 'gun', 'plane', 'car', 'warband', 'musket', 'rider', 'elephant', 'engine', 'cannon'];
+  // the rest are for the historical eras: foot with spear and shield, musketeers, riders, elephants,
+  // siege engines, horse-drawn cannon, archers and swordsmen
+  const KINDS = ['soldiers', 'truck', 'halftrack', 'tank', 'gun', 'plane', 'car', 'warband', 'musket', 'rider', 'elephant', 'engine', 'cannon', 'archer', 'swords', 'riderbow'];
 
   function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
   function mix(a, b, t) { return [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t)); }
@@ -50,28 +50,56 @@ const Figures = (function () {
     };
   }
 
-  // opt.hat: 'helmet' (default), 'shako' or 'crest'; opt.spear and opt.shield for pre-gunpowder foot
+  // opt.hat: 'helmet' (default), 'shako' or 'crest'; opt.spear, opt.sword, opt.bow and opt.shield for
+  // pre-gunpowder foot. Fighting poses animate over the 4 frames: spears thrust, swords swing, bows draw
+  // and loose, firearms kick back on each shot.
   function soldier(parts, P, x, y, f, fighting, opt) {
     opt = opt || {};
     const s = fighting ? 0 : Math.sin(f / FRAMES * Math.PI * 2) * 0.55;
-    const kneel = fighting ? -1.2 : 0;
-    box(parts, 0, x, y - 0.55, 0, 0.8, 0.6, 3.0, P.dark, s, x, 3.0);                   // legs swing at the hip
-    box(parts, 0, x, y + 0.55, 0, 0.8, 0.6, 3.0, P.dark, -s, x, 3.0);
-    box(parts, 0, x, y, 2.8 + kneel, 1.3, 1.9, 2.8, P.cloth);                           // torso
-    box(parts, 0, x, y - 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, -s * 0.8, x, 5.4 + kneel); // arms
-    box(parts, 0, x, y + 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, s * 0.8, x, 5.4 + kneel);
-    box(parts, 0, x + 0.1, y, 5.6 + kneel, 0.9, 0.9, 0.9, P.skin);                      // head
-    if (opt.hat === 'shako') { box(parts, 0, x, y, 6.2 + kneel, 1.1, 1.1, 1.4, P.dark); box(parts, 0, x + 0.3, y, 6.2 + kneel, 0.8, 1.2, 0.2, P.dark); }
-    else if (opt.hat === 'crest') { box(parts, 0, x, y, 6.2 + kneel, 1.2, 1.2, 0.6, P.metal); box(parts, 0, x - 0.1, y, 6.8 + kneel, 1.3, 0.3, 0.6, P.mark); }
-    else box(parts, 0, x, y, 6.3 + kneel, 1.5, 1.5, 0.55, P.cloth);                     // helmet
+    const melee = opt.spear || opt.sword;
+    const kneel = fighting && !melee && !opt.bow ? -1.2 : 0;
+    const lunge = fighting && melee ? [0, 0.5, 0.9, 0.3][f] : 0;        // body leans into the blow
+    const stride = fighting && melee ? [0.25, -0.35, -0.5, 0][f] : 0;
+    box(parts, 0, x, y - 0.55, 0, 0.8, 0.6, 3.0, P.dark, s + stride, x, 3.0);           // legs swing at the hip
+    box(parts, 0, x, y + 0.55, 0, 0.8, 0.6, 3.0, P.dark, -s - stride, x, 3.0);
+    box(parts, 0, x + lunge * 0.3, y, 2.8 + kneel, 1.3, 1.9, 2.8, P.cloth, lunge * 0.25, x, 2.8 + kneel); // torso
+    const armL = fighting ? (opt.bow ? -1.5 : opt.shield ? -0.6 : -1.3) : -s * 0.8;
+    const armR = fighting ? (opt.sword ? [-2.4, -1.2, 0.4, -0.6][f] : opt.spear ? -1.4 : opt.bow ? -1.5 : -1.3) : s * 0.8;
+    box(parts, 0, x + lunge * 0.3, y - 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, armL, x + lunge * 0.3, 5.4 + kneel); // arms
+    box(parts, 0, x + lunge * 0.3, y + 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, armR, x + lunge * 0.3, 5.4 + kneel);
+    const hx = x + 0.1 + lunge * 0.55;
+    box(parts, 0, hx, y, 5.6 + kneel, 0.9, 0.9, 0.9, P.skin);                          // head
+    if (opt.hat === 'shako') { box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.1, 1.1, 1.4, P.dark); box(parts, 0, hx + 0.2, y, 6.2 + kneel, 0.8, 1.2, 0.2, P.dark); }
+    else if (opt.hat === 'crest') { box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.2, 1.2, 0.6, P.metal); box(parts, 0, hx - 0.2, y, 6.8 + kneel, 1.3, 0.3, 0.6, P.mark); }
+    else if (opt.hat === 'hood') box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.2, 1.2, 0.5, P.cloth);
+    else box(parts, 0, hx - 0.1, y, 6.3 + kneel, 1.5, 1.5, 0.55, P.cloth);             // helmet
     if (opt.hat === 'shako') box(parts, 0, x + 0.66, y, 3.2 + kneel, 0.05, 1.5, 2.2, P.white); // crossbelts
-    if (opt.shield) box(parts, 0, x + 0.9, y - 1.3, 2.6 + kneel, 0.3, 1.6, 2.8, P.mark);  // shield on the left arm
+    if (opt.shield) box(parts, 0, x + 0.9 + lunge * 0.6, y - 1.3, 2.6 + kneel, 0.3, 1.6, 2.8, P.mark); // shield on the left arm
     if (opt.spear) {
-      if (fighting) box(parts, 0, x + 1.5, y + 1.0, 4.4 + kneel, 6.5, 0.28, 0.28, P.wood); // spear levelled
-      else box(parts, 0, x + 0.2, y + 1.3, 0.4, 0.28, 0.28, 9.0, P.wood, 0.12, x + 0.2, 0.4);   // spear upright
-      box(parts, 0, fighting ? x + 4.8 : x + 0.2 + 1.05, y + (fighting ? 1.0 : 1.3), fighting ? 4.4 + kneel : 9.2, fighting ? 0.9 : 0.3, 0.3, fighting ? 0.3 : 0.9, P.metal);
-    } else if (fighting) box(parts, 0, x + 1.3, y - 0.5, 4.6 + kneel, 2.6, 0.3, 0.3, P.metal); // rifle levelled
-    else box(parts, 0, x - 0.6, y - 0.9, 3.8, 0.3, 0.3, 3.2, P.metal, 0.35, x - 0.6, 3.8); // rifle slung
+      if (fighting) {
+        const th = [0, 1.4, 2.4, 0.8][f];                                                 // thrust and draw back
+        box(parts, 0, x + 1.5 + th, y + 1.0, 4.4, 6.5, 0.28, 0.28, P.wood);
+        box(parts, 0, x + 4.8 + th, y + 1.0, 4.4, 0.9, 0.3, 0.3, P.metal);
+      } else {
+        box(parts, 0, x + 0.2, y + 1.3, 0.4, 0.28, 0.28, 9.0, P.wood, 0.12, x + 0.2, 0.4);   // spear upright
+        box(parts, 0, x + 1.25, y + 1.3, 9.2, 0.3, 0.3, 0.9, P.metal);
+      }
+    } else if (opt.sword) {
+      // the blade follows the right arm: raised, cutting down, then recovering
+      const sw = fighting ? [-2.6, -1.4, 0.5, -0.8][f] : 0.4;
+      box(parts, 0, x + 0.2 + lunge * 0.3, y + 1.3, 5.2 + kneel, 0.25, 0.22, 2.6, P.metal, sw, x + 0.2 + lunge * 0.3, 5.2 + kneel);
+    } else if (opt.bow) {
+      if (fighting) {
+        const pull = [1.3, 1.6, 0.2, 0.6][f];                                             // draw, hold, loose, nock
+        box(parts, 0, x + 1.8, y - 0.6, 3.0, 0.22, 0.22, 3.6, P.wood, -0.25, x + 1.8, 4.8); // bow held out front
+        box(parts, 0, x + 1.8 - pull, y - 0.3, 4.75, pull + 0.05, 0.08, 0.08, P.white);     // string pulled back
+        if (f < 2) box(parts, 0, x + 1.9 - pull, y - 0.4, 4.7, 2.2, 0.12, 0.12, P.wood);    // arrow on the string
+      } else box(parts, 0, x - 0.7, y - 0.9, 2.4, 0.22, 0.22, 3.8, P.wood, 0.3, x - 0.7, 4.2); // bow on the back
+      box(parts, 0, x - 0.8, y + 0.6, 3.4, 0.6, 0.6, 1.8, P.wood);                          // quiver
+    } else if (fighting) {
+      const kick = f === 1 ? -0.35 : 0;                                                    // recoil on the shot
+      box(parts, 0, x + 1.3 + kick, y - 0.5, 4.6 + kneel + (f === 1 ? 0.1 : 0), 2.6, 0.3, 0.3, P.metal); // rifle levelled
+    } else box(parts, 0, x - 0.6, y - 0.9, 3.8, 0.3, 0.3, 3.2, P.metal, 0.35, x - 0.6, 3.8); // rifle slung
   }
   function horse(parts, P, x, y, f, moving) {
     const s = moving ? Math.sin(f / FRAMES * Math.PI * 2) * 0.5 : 0, lift = moving ? (f % 2) * 0.3 : 0;
@@ -90,8 +118,12 @@ const Figures = (function () {
     box(parts, 0, x - 0.3, y, z, 1.2, 1.7, 2.5, P.cloth);                                // torso
     box(parts, 0, x - 0.2, y, z + 2.5, 0.9, 0.9, 0.9, P.skin);                           // head
     box(parts, 0, x - 0.3, y, z + 3.3, 1.3, 1.3, 0.5, P.cloth);                          // cap or helm
-    if (weapon === 'lance') box(parts, 0, x + (fighting ? 2.5 : 0.2), y + 1.0, z + (fighting ? 1.4 : 0.2), fighting ? 7.5 : 0.25, 0.25, fighting ? 0.25 : 6.5, P.wood);
-    else box(parts, 0, x + 0.4, y + 1.0, z + 1.4, 0.25, 0.25, 2.2, P.metal, fighting ? -1.2 : 0.3, x + 0.4, z + 1.4); // sword or sabre
+    if (weapon === 'lance') { const th = fighting ? [0, 1.2, 2.0, 0.6][f] : 0; box(parts, 0, x + (fighting ? 2.5 + th : 0.2), y + 1.0, z + (fighting ? 1.4 : 0.2), fighting ? 7.5 : 0.25, 0.25, fighting ? 0.25 : 6.5, P.wood); }
+    else if (weapon === 'bow') {
+      if (fighting) { box(parts, 0, x + 1.2, y - 0.8, z + 0.4, 0.2, 0.2, 3.0, P.wood, -0.2, x + 1.2, z + 1.9); if (f < 2) box(parts, 0, x + 0.2, y - 0.6, z + 1.9, 1.8, 0.12, 0.12, P.wood); }
+      else box(parts, 0, x - 0.9, y - 0.8, z, 0.2, 0.2, 3.0, P.wood, 0.3, x - 0.9, z + 1.5);
+    }
+    else box(parts, 0, x + 0.4, y + 1.0, z + 1.4, 0.25, 0.25, 2.2, P.metal, fighting ? [-2.4, -1.2, 0.3, -0.8][f] : 0.3, x + 0.4, z + 1.4); // sword or sabre, swung when fighting
   }
   function build(kind, P, f, fighting) {
     const parts = [];
@@ -105,8 +137,16 @@ const Figures = (function () {
     } else if (kind === 'musket') {
       const o = { hat: 'shako' };
       soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
+    } else if (kind === 'archer') {
+      const o = { hat: 'hood', bow: true };
+      soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
+    } else if (kind === 'swords') {
+      const o = { hat: 'crest', sword: true, shield: true };
+      soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
     } else if (kind === 'rider') {
       rider(parts, P, 1.6, -1.8, f, fighting, 'lance'); rider(parts, P, -2.0, 2.0, (f + 1) % FRAMES, fighting, 'sword');
+    } else if (kind === 'riderbow') {
+      rider(parts, P, 1.6, -1.8, f, fighting, 'bow'); rider(parts, P, -2.0, 2.0, (f + 2) % FRAMES, fighting, 'bow');
     } else if (kind === 'elephant') {
       const s = Math.sin(f / FRAMES * Math.PI * 2) * 0.3;
       for (const [lx, ly, ph] of [[2.2, -1.1, 1], [2.2, 1.1, -1], [-2.2, -1.1, -1], [-2.2, 1.1, 1]])
@@ -114,7 +154,7 @@ const Figures = (function () {
       box(parts, 0, 0, 0, 3.3, 7.2, 3.6, 3.4, P.hide);                                   // body
       box(parts, 0, 4.2, 0, 4.4, 2.2, 2.8, 2.8, P.hide);                                 // head
       box(parts, 0, 3.9, -1.9, 4.6, 0.3, 1.4, 2.2, P.hide); box(parts, 0, 3.9, 1.9, 4.6, 0.3, 1.4, 2.2, P.hide); // ears
-      box(parts, 0, 5.5, 0, 1.2, 0.8, 0.8, 3.4, P.hide, fighting ? -0.9 : 0.15 + s * 0.3, 5.5, 4.6); // trunk
+      box(parts, 0, 5.5, 0, 1.2, 0.8, 0.8, 3.4, P.hide, fighting ? [-0.4, -1.1, -1.6, -0.9][f] : 0.15 + s * 0.3, 5.5, 4.6); // trunk, swinging when fighting
       box(parts, 0, 5.6, -0.8, 3.9, 1.8, 0.3, 0.3, P.white); box(parts, 0, 5.6, 0.8, 3.9, 1.8, 0.3, 0.3, P.white); // tusks
       box(parts, 0, -0.6, 0, 6.7, 3.4, 3.2, 1.8, P.cloth);                               // howdah
       box(parts, 0, 1.6, 0, 7.4, 0.8, 0.8, 0.8, P.skin);                                 // mahout
@@ -129,7 +169,7 @@ const Figures = (function () {
       horse(parts, P, 5.0, -1.2, f, !fighting); horse(parts, P, 5.0, 1.2, (f + 1) % FRAMES, !fighting);
       box(parts, 0, 0.8, 0, 1.0, 3.0, 0.3, 0.3, P.wood);                                 // pole
       box(parts, 0, -2.0, 0, 1.3, 2.6, 2.4, 1.0, P.wood);                                // carriage
-      box(parts, 0, -1.6, 0, 2.3, 5.2, 0.8, 0.8, P.bronze, fighting ? 0 : -0.15, -2.4, 2.3); // barrel
+      box(parts, 0, -1.6 - (fighting && f === 1 ? 0.8 : fighting && f === 2 ? 0.4 : 0), 0, 2.3, 5.2, 0.8, 0.8, P.bronze, fighting ? 0 : -0.15, -2.4, 2.3); // barrel, kicking back on the shot
       wheel(parts, -2.2, -1.8, 0, 1.4, 0.4, P.wood, spin); wheel(parts, -2.2, 1.8, 0, 1.4, 0.4, P.wood, spin);
     } else if (kind === 'truck' || kind === 'halftrack') {
       box(parts, 0, 0, 0, 1.0 + bob, 11, 4.2, 0.6, P.dark);                              // chassis
@@ -159,7 +199,7 @@ const Figures = (function () {
       wheel(parts, 3.0, -1.9, 0, 0.9, 0.7, P.dark, spin); wheel(parts, 3.0, 1.9, 0, 0.9, 0.7, P.dark, spin);
       box(parts, 0, 0.5, 0, 0.1, 3.4, 0.4, 0.4, P.dark);                                 // tow bar
       box(parts, 0, -2.0, 0, 1.2, 2.0, 3.2, 2.2, P.vehicle);                             // gun shield and carriage
-      box(parts, 0, -1.2, 0, 2.4, 5.6, 0.6, 0.6, P.metal, fighting ? 0 : -0.35, -2.0, 2.4); // barrel
+      box(parts, 0, -1.2 - (fighting && f === 1 ? 0.7 : fighting && f === 2 ? 0.3 : 0), 0, 2.4, 5.6, 0.6, 0.6, P.metal, fighting ? -0.12 : -0.35, -2.0, 2.4); // barrel, recoiling when firing
       wheel(parts, -2.0, -2.0, 0, 1.1, 0.6, P.dark, spin); wheel(parts, -2.0, 2.0, 0, 1.1, 0.6, P.dark, spin);
     } else if (kind === 'car') {
       box(parts, 0, 0, 0, 1.1 + bob, 7.5, 3.6, 2.2, P.vehicle);
@@ -215,35 +255,34 @@ const Figures = (function () {
   // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
   const atlases = new Map(); // key -> { cv, g, P, row }
   // one row per model, plus 'fighting' poses for soldiers and guns (vehicles fight in their moving pose)
-  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon'];
-  const FIGHT_ROW = Object.fromEntries(FIGHTERS.map((k, i) => [k, KINDS.length + i]));
-  const ROWS = KINDS.length + FIGHTERS.length;
-  const rowKind = r => r < KINDS.length ? [KINDS[r], false] : [FIGHTERS[r - KINDS.length], true];
+  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'];
+  // only the models the current era's units use get rows, so an atlas stays small (about 12 rows)
+  let layout = null;
+  function getLayout() {
+    if (!layout) {
+      const used = new Set(['soldiers', 'plane']);
+      for (const t in UNIT_TYPES) used.add(kindOf(t));
+      const rows = KINDS.filter(k => used.has(k)).map(k => [k, false]).concat(FIGHTERS.filter(k => used.has(k)).map(k => [k, true]));
+      layout = { rows, index: new Map(rows.map(([k, fi], i) => [k + (fi ? '!' : ''), i])) };
+    }
+    return layout;
+  }
+  const rowsN = () => getLayout().rows.length;
   const MAX_ATLASES = 28;   // about 2 MB each; nations off screen for a while are dropped and repainted on return
   function newAtlas(color) {
     const cv = document.createElement('canvas');
-    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * ROWS;
+    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * rowsN();
     return { cv, g: cv.getContext('2d'), P: palette(color), row: 0, used: 0 };
   }
-  // only the models the current era's units use are painted; the other rows stay blank
-  let usedKinds = null;
-  function kindUsed(kind) {
-    if (!usedKinds) {
-      usedKinds = new Set(['soldiers', 'plane']);
-      for (const t in UNIT_TYPES) usedKinds.add(KIND_OF[t] || (typeof Eras !== 'undefined' && Eras.figureKind(t, KINDS)) || 'soldiers');
-    }
-    return usedKinds.has(kind);
-  }
   function paintRow(A) {
-    const [kind, fight] = rowKind(A.row), g = A.g;
-    if (!kindUsed(kind)) { A.row++; return; }
+    const [kind, fight] = getLayout().rows[A.row], g = A.g;
     for (let f = 0; f < FRAMES; f++) {
       const parts = build(kind, A.P, f, !!fight);
       for (let d = 0; d < DIRS; d++) {
         // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
         const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
         g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' ? 1.55 : kind === 'rider' || kind === 'elephant' ? 1.3 : 1.05);
+        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05);
         g.restore();
       }
     }
@@ -255,36 +294,39 @@ const Figures = (function () {
     let A = atlases.get(tag);
     if (!A) {
       if (atlases.size >= MAX_ATLASES) {
-        let old = null; for (const [t, x] of atlases) if (x.row >= ROWS && (!old || x.used < atlases.get(old).used)) old = t;
+        let old = null; for (const [t, x] of atlases) if (x.row >= rowsN() && (!old || x.used < atlases.get(old).used)) old = t;
         if (old) atlases.delete(old);
       }
-      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < ROWS) paintRow(A); else queue.push(A);
+      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < rowsN()) paintRow(A); else queue.push(A);
     }
     return A;
   }
   function pump(budgetMs) {
     const t0 = performance.now();
-    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= ROWS) queue.shift(); }
+    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= rowsN()) queue.shift(); }
   }
-  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < ROWS) paintRow(neutral); } }
+  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < rowsN()) paintRow(neutral); } }
 
   const KIND_OF = { infantry: 'soldiers', marines: 'soldiers', paratroopers: 'soldiers', motorized: 'truck', mechanized: 'halftrack', tanks: 'tank', artillery: 'gun', recon: 'car' };
   // draw one figure with its feet at (x, y) screen px; size is the on-screen cell size in px
+  const kindOf = unitType => KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
   function draw(ctx, tag, unitType, moving, heading, fighting, x, y, size, t) {
-    let kind = KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
+    let kind = kindOf(unitType);
     if (unitType === 'paratroopers' && moving) kind = 'plane';
-    const ki = KINDS.indexOf(kind);
+    const L = getLayout();
     const d = ((Math.round(heading / (Math.PI * 2 / DIRS)) % DIRS) + DIRS) % DIRS;
-    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' ? 150 : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
-    const row = fighting && FIGHT_ROW[kind] !== undefined ? FIGHT_ROW[kind] : ki;
+    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? (fighting ? 170 : 150) : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
+    let row = fighting ? L.index.get(kind + '!') : undefined;
+    if (row === undefined) row = L.index.get(kind);
+    if (row === undefined) row = L.index.get('soldiers');
     const ay = kind === 'plane' ? 0.78 : 0.66;
     ready();
     const A = atlasFor(tag); A.used = t || performance.now();
-    ctx.drawImage(A.row >= ROWS ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
+    ctx.drawImage(A.row >= L.rows.length ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
   }
   // queue nations to paint ahead of need, most important first
   function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; usedKinds = null; neutral = null; }
-  return { draw, warm, pump, reset, KINDS, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; }
+  return { draw, warm, pump, reset, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
 })();

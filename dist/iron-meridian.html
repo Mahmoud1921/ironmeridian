@@ -258,8 +258,8 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 /* ---------- start screen ---------- */
 #start { position: absolute; inset: 0; z-index: 40; display: grid; grid-template-columns: 340px 1fr 380px; pointer-events: none; }
 #start > * { pointer-events: auto; }
-#st-left { background: linear-gradient(90deg, rgba(14,18,16,.97), rgba(14,18,16,.9)); border-right: 1px solid var(--line); padding: 22px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
-#st-right { grid-column: 3; background: linear-gradient(270deg, rgba(14,18,16,.97), rgba(14,18,16,.9)); border-left: 1px solid var(--line); padding: 22px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+#st-left { background: linear-gradient(90deg, rgb(14,18,16), rgb(16,20,18)); border-right: 1px solid var(--line); padding: 22px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+#st-right { grid-column: 3; background: linear-gradient(270deg, rgb(14,18,16), rgb(16,20,18)); border-left: 1px solid var(--line); padding: 22px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 #st-title { font-family: var(--display); font-size: 42px; line-height: .95; letter-spacing: .03em; color: var(--paper); }
 #st-title small { display: block; font-family: var(--ui); font-size: 13px; letter-spacing: .3em; color: var(--brass); margin-top: 8px; }
 .eras { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -282,6 +282,7 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 .bignums div { background: var(--panel); padding: 8px 10px; }
 .bignums b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .bignums span { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.bignums small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 .res { display: flex; flex-wrap: wrap; gap: 5px; }
 .res span { padding: 2px 7px; border: 1px solid var(--line); font-size: 12px; font-variant-numeric: tabular-nums; }
 #st-play { min-height: 48px; font-size: 18px; letter-spacing: .2em; }
@@ -325,6 +326,7 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
   #hud.drawer-open #bottombar, #hud.drawer-open.wide #bottombar { left: calc(var(--rail) + 10px); }
   #armytray { max-width: 100%; }
   #mapctl { bottom: auto; top: calc(var(--top) + 8px); right: 8px; }
+  #hint { top: calc(var(--top) + 52px); left: calc(var(--rail) + 8px); right: 8px; transform: none; }
   #mapctl .iconbtn { width: 34px; height: 34px; }
   #keyhint { display: none; }
   #toasts { top: calc(var(--top) + 52px); }
@@ -485,7 +487,7 @@ a.lnk:hover { color: var(--brass); }
 input[type=range] { width: 180px; accent-color: var(--brass); }
 .upload { position: relative; overflow: hidden; }
 .upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-#st-back { align-self: flex-start; }
+#st-back { align-self: flex-start; min-height: 30px; padding: 6px 12px; line-height: 1; }
 @media (prefers-reduced-motion: reduce) { #bg-paint { animation: none; } #drawer, #drawer.open { transition: none; } }
 @media (max-width: 1000px) {
   .sheet { left: 16px; right: 16px; width: auto; top: calc(16px + env(safe-area-inset-top, 0px)); bottom: 16px; max-height: none; padding: 18px 16px 20px; }
@@ -3576,7 +3578,8 @@ const Eras = (function () {
   // Which 3D figure (a kind in figures.js) an era unit uses. Foot soldiers depend on the era:
   // spear and shield before gunpowder, shako and musket in 1805, the game's own soldiers in 1914.
   const LOOK_KIND = {
-    horseman: 'rider', horsearcher: 'rider', cataphract: 'rider', knight: 'rider', mamluk: 'rider', samurai: 'rider',
+    archer: 'archer', crossbow: 'archer', legionary: 'swords', manatarms: 'swords', varangian: 'swords',
+    horseman: 'rider', horsearcher: 'riderbow', cataphract: 'rider', knight: 'rider', mamluk: 'rider', samurai: 'rider',
     templar: 'rider', cuirassier: 'rider', hussar: 'rider', cossack: 'rider', horsewarrior: 'rider', chariot: 'rider', cavalry: 'rider',
     elephant: 'elephant',
     ballista: 'engine', trebuchet: 'engine', siege: 'engine',
@@ -5045,18 +5048,64 @@ const Sim = (function () {
   function manpowerOf(a) { return a.units.reduce((s, u) => s + UNIT_TYPES[u.type].mp * u.str, 0); }
 
   // ---------- orders ----------
+  // an army caught between two province centres walks back to its own centre (a.lead) instead of
+  // jumping there when an order turns it round or stops it
+  function walkBack(a) {
+    if (a.path.length && a.progress > 0) a.lead = { to: a.path[0], km: Math.min(a.progress, distKm(a.prov, a.path[0])) };
+    a.path = []; a.progress = 0;
+  }
+  function pathKm(from, path) { let s = 0, p = from; for (const n of path) { s += distKm(p, n); p = n; } return s; }
   function orderMove(a, dest, kind) {
     if (a.sea && a.sea.phase !== 'prep') return false;
     if (a.sea) a.sea = null;   // a new order calls off the planned landing
     if (a.battle) leaveBattle(a);
     const mode = kind === 'redeploy' ? 'redeploy' : 'move';
+    // mid-leg, the army is really between a.prov and the next province: keep going forward when that is
+    // the shorter way to the new destination, otherwise turn round where it stands
+    const next = a.lead ? a.lead.to : a.path.length && a.progress > 0 ? a.path[0] : -1;
+    const done = a.lead ? a.lead.km : a.progress;
     const path = findPath(a.owner, a.prov, dest, mode);
-    if (!path) return false;
-    a.path = path; a.progress = 0; a.order = kind || 'move'; a.target = dest; a.retreating = false;
+    let fwd = null;
+    if (next >= 0 && canEnter(a.owner, next) && !hostilesAt(a.owner, next).length) {
+      const rest = next === dest ? [] : findPath(a.owner, next, dest, mode);
+      if (rest) fwd = [next].concat(rest);
+    }
+    if (fwd && (!path || pathKm(a.prov, fwd) - done <= pathKm(a.prov, path) + done)) {
+      a.path = fwd; a.progress = done; a.lead = null;      // carry on along the current leg
+    } else {
+      if (!path) return false;
+      if (!a.lead) walkBack(a);
+      a.path = path; a.progress = 0;
+    }
+    a.order = kind || 'move'; a.target = dest; a.retreating = false; a.chase = 0;
     return true;
   }
-  function orderHold(a) { if (a.sea && a.sea.phase === 'prep') a.sea = null; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1; a.frontTag = null; }
-  function orderDefend(a, frontTag) { if (a.sea) return; if (a.battle) leaveBattle(a); a.path = []; a.progress = 0; a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; }
+  function orderHold(a) { if (a.sea && a.sea.phase === 'prep') a.sea = null; if (a.battle) leaveBattle(a); walkBack(a); a.order = 'hold'; a.target = -1; a.frontTag = null; a.chase = 0; }
+  function orderDefend(a, frontTag) { if (a.sea) return; if (a.battle) leaveBattle(a); walkBack(a); a.order = 'defend'; a.frontTag = frontTag || null; a.target = -1; a.chase = 0; }
+  // attack an enemy army and keep following it until it is destroyed or the order is changed
+  function orderChase(a, target) {
+    if (!target || !atWar(a.owner, target.owner)) return false;
+    if (!orderMove(a, target.prov, 'move')) return false;
+    a.order = 'attack'; a.chase = target.id;
+    return true;
+  }
+  function chaseStep(a) {
+    const t = army(a.chase);
+    if (!t || !t.units.length || !atWar(a.owner, t.owner)) {
+      a.chase = 0;
+      if (a.order === 'attack' && !a.battle) { walkBack(a); a.order = 'hold'; a.target = -1; }
+      if (a.owner === G.player) notify(a.name + (t && t.units.length ? ' broke off the pursuit.' : ' has destroyed the enemy army it was hunting.'), a.prov, t && t.units.length ? 'info' : 'win', false);
+      return;
+    }
+    if (a.battle || a.sea) return;
+    if (a.order !== 'attack') { if (armyStats(a).org < 0.3) return; a.order = 'attack'; }
+    const dest = t.sea ? -1 : t.prov;
+    if (dest < 0 || dest === a.prov) return;
+    if (a.target === dest && a.path.length && a.path[a.path.length - 1] === dest) return;
+    const id = t.id;
+    if (orderMove(a, dest, 'move')) { a.order = 'attack'; }
+    a.chase = id;
+  }
   function orderRetreat(a) {
     const c = G.countries[a.owner];
     if (a.sea) { if (typeof Navy !== 'undefined') Navy.cancelInvasion(a); return true; }
@@ -5207,7 +5256,7 @@ const Sim = (function () {
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
       endBattle(b);
     } else if (aOrg < 0.12) {
-      for (const a of atts) { a.path = []; a.progress = 0; if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
+      for (const a of atts) { walkBack(a); if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
       if (b.atkTag === pl || defs.some(d => d.owner === pl))
         notify('The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === pl ? 'loss' : 'win', false);
       endBattle(b);
@@ -5508,7 +5557,7 @@ const Sim = (function () {
         const path = findPath(a.owner, a.prov, a.target, 'move');
         if (path) a.path = path; else a.order = 'hold';
       }
-      if ((a.order === 'attack' || a.order === 'move' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length) { a.order = 'hold'; a.target = -1; }
+      if ((a.order === 'attack' || a.order === 'move' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length && !a.chase) { a.order = 'hold'; a.target = -1; }
     }
   }
 
@@ -5520,7 +5569,14 @@ const Sim = (function () {
       if (!G.armies.includes(a)) continue;
       a.rate = 0;   // km per hour this hour; the renderer uses it to glide between ticks
       if (a.sea && typeof Navy !== 'undefined' && Navy.stepArmy(a)) continue;
+      if (a.chase) { chaseStep(a); if (!G.armies.includes(a)) continue; }
       if (a.battle) continue;
+      if (a.lead) {                       // walking back to its own province centre first
+        const sp = armySpeed(a);
+        a.lead.km -= sp; a.rate = -sp;
+        if (a.lead.km <= 0) a.lead = null;
+        continue;
+      }
       if (!a.path.length) {
         a.entrench = Math.min(0.25, a.entrench + 0.25 / (24 * 10));
         recoverOrg(a, 1);
@@ -5530,10 +5586,10 @@ const Sim = (function () {
       const next = a.path[0];
       if (!canEnter(a.owner, next)) {
         const re = a.target >= 0 && a.target !== next ? findPath(a.owner, a.prov, a.target, a.order === 'redeploy' ? 'redeploy' : 'move') : null;
-        a.path = re || []; a.progress = 0; continue;
+        walkBack(a); a.path = re || []; continue;
       }
       if (!a.retreating && hostilesAt(a.owner, next).length) {
-        if (a.order === 'redeploy') { a.path = []; a.progress = 0; a.order = 'hold'; continue; }
+        if (a.order === 'redeploy') { walkBack(a); a.order = 'hold'; continue; }
         startBattle(a, next); continue;
       }
       a.entrench = 0;
@@ -5637,7 +5693,7 @@ const Sim = (function () {
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
-    orderMove, orderHold, orderDefend, orderRetreat, mergeArmies, splitArmy, recruit, canRecruit,
+    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();
@@ -6074,7 +6130,7 @@ const Diplo = (function () {
       if (dest < 0) { const c = g.countries[a.owner]; dest = c.capital >= 0 && g.owner[c.capital] === a.owner ? c.capital : provs.findIndex(p => g.owner[p.id] === a.owner); }
       if (dest < 0) { Sim.removeArmy(a); continue; }
       if (a.battle) { const b = g.battles.find(x => x.id === a.battle); if (b) b.attackers = b.attackers.filter(id => id !== a.id); a.battle = 0; }
-      a.prov = dest; a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1;
+      a.prov = dest; a.path = []; a.progress = 0; a.lead = null; a.order = 'hold'; a.target = -1;
     }
   }
   // peace between `from`'s coalition and `to`'s coalition in every war they fight each other
@@ -8163,7 +8219,7 @@ const Navy = (function () {
       const back = friendlyTo(a.owner, g.owner[s.origin]) ? s.origin : MAP().provs.filter(p => g.owner[p.id] === a.owner && Seas.isCoastal(p.id)).sort((x, y) => Sim.distKm(s.origin, x.id) - Sim.distKm(s.origin, y.id))[0]?.id;
       a.sea = null;
       if (back === undefined) { Sim.notify(g.countries[a.owner].name + ' ' + a.name + ' was lost at sea.', -1, 'loss', false); Sim.removeArmy(a); return true; }
-      a.prov = back; a.path = []; a.progress = 0;
+      a.prov = back; a.path = []; a.progress = 0; a.lead = null;
       return true;
     }
     // landing
@@ -8185,7 +8241,7 @@ const Navy = (function () {
       Sim.startBattle(a, target);
       if (a.owner === g.player || defenders.some(d => d.owner === g.player)) Sim.notify('Troops are storming the beaches at ' + MAP().provs[target].name + '.', target, 'battle', false);
     } else {
-      a.prov = target; a.path = []; a.progress = 0; a.order = 'hold'; a.entrench = 0;
+      a.prov = target; a.path = []; a.progress = 0; a.lead = null; a.order = 'hold'; a.entrench = 0;
       for (const u of a.units) u.org = Math.max(0.2, u.org * 0.7);
       if (hostile) Sim.capture(target, a.owner);
       if (a.owner === g.player) Sim.notify(a.name + (hostile ? ' landed unopposed at ' : ' came ashore at ') + MAP().provs[target].name + '.', target, hostile ? 'win' : 'info', false);
@@ -10295,9 +10351,9 @@ const Figures = (function () {
   const SE = Math.sin(ELEV), CE = Math.cos(ELEV);
   const LIGHT = norm([-0.45, 0.35, 0.82]);         // sun from the north-west, high
   const PX = 2.05;                                 // atlas pixels per model unit
-  // the last six are for the historical eras: foot with spear and shield, musketeers, riders, elephants,
-  // siege engines and horse-drawn cannon
-  const KINDS = ['soldiers', 'truck', 'halftrack', 'tank', 'gun', 'plane', 'car', 'warband', 'musket', 'rider', 'elephant', 'engine', 'cannon'];
+  // the rest are for the historical eras: foot with spear and shield, musketeers, riders, elephants,
+  // siege engines, horse-drawn cannon, archers and swordsmen
+  const KINDS = ['soldiers', 'truck', 'halftrack', 'tank', 'gun', 'plane', 'car', 'warband', 'musket', 'rider', 'elephant', 'engine', 'cannon', 'archer', 'swords', 'riderbow'];
 
   function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
   function mix(a, b, t) { return [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t)); }
@@ -10337,28 +10393,56 @@ const Figures = (function () {
     };
   }
 
-  // opt.hat: 'helmet' (default), 'shako' or 'crest'; opt.spear and opt.shield for pre-gunpowder foot
+  // opt.hat: 'helmet' (default), 'shako' or 'crest'; opt.spear, opt.sword, opt.bow and opt.shield for
+  // pre-gunpowder foot. Fighting poses animate over the 4 frames: spears thrust, swords swing, bows draw
+  // and loose, firearms kick back on each shot.
   function soldier(parts, P, x, y, f, fighting, opt) {
     opt = opt || {};
     const s = fighting ? 0 : Math.sin(f / FRAMES * Math.PI * 2) * 0.55;
-    const kneel = fighting ? -1.2 : 0;
-    box(parts, 0, x, y - 0.55, 0, 0.8, 0.6, 3.0, P.dark, s, x, 3.0);                   // legs swing at the hip
-    box(parts, 0, x, y + 0.55, 0, 0.8, 0.6, 3.0, P.dark, -s, x, 3.0);
-    box(parts, 0, x, y, 2.8 + kneel, 1.3, 1.9, 2.8, P.cloth);                           // torso
-    box(parts, 0, x, y - 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, -s * 0.8, x, 5.4 + kneel); // arms
-    box(parts, 0, x, y + 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, s * 0.8, x, 5.4 + kneel);
-    box(parts, 0, x + 0.1, y, 5.6 + kneel, 0.9, 0.9, 0.9, P.skin);                      // head
-    if (opt.hat === 'shako') { box(parts, 0, x, y, 6.2 + kneel, 1.1, 1.1, 1.4, P.dark); box(parts, 0, x + 0.3, y, 6.2 + kneel, 0.8, 1.2, 0.2, P.dark); }
-    else if (opt.hat === 'crest') { box(parts, 0, x, y, 6.2 + kneel, 1.2, 1.2, 0.6, P.metal); box(parts, 0, x - 0.1, y, 6.8 + kneel, 1.3, 0.3, 0.6, P.mark); }
-    else box(parts, 0, x, y, 6.3 + kneel, 1.5, 1.5, 0.55, P.cloth);                     // helmet
+    const melee = opt.spear || opt.sword;
+    const kneel = fighting && !melee && !opt.bow ? -1.2 : 0;
+    const lunge = fighting && melee ? [0, 0.5, 0.9, 0.3][f] : 0;        // body leans into the blow
+    const stride = fighting && melee ? [0.25, -0.35, -0.5, 0][f] : 0;
+    box(parts, 0, x, y - 0.55, 0, 0.8, 0.6, 3.0, P.dark, s + stride, x, 3.0);           // legs swing at the hip
+    box(parts, 0, x, y + 0.55, 0, 0.8, 0.6, 3.0, P.dark, -s - stride, x, 3.0);
+    box(parts, 0, x + lunge * 0.3, y, 2.8 + kneel, 1.3, 1.9, 2.8, P.cloth, lunge * 0.25, x, 2.8 + kneel); // torso
+    const armL = fighting ? (opt.bow ? -1.5 : opt.shield ? -0.6 : -1.3) : -s * 0.8;
+    const armR = fighting ? (opt.sword ? [-2.4, -1.2, 0.4, -0.6][f] : opt.spear ? -1.4 : opt.bow ? -1.5 : -1.3) : s * 0.8;
+    box(parts, 0, x + lunge * 0.3, y - 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, armL, x + lunge * 0.3, 5.4 + kneel); // arms
+    box(parts, 0, x + lunge * 0.3, y + 1.2, 3.4 + kneel, 0.6, 0.5, 2.1, P.cloth, armR, x + lunge * 0.3, 5.4 + kneel);
+    const hx = x + 0.1 + lunge * 0.55;
+    box(parts, 0, hx, y, 5.6 + kneel, 0.9, 0.9, 0.9, P.skin);                          // head
+    if (opt.hat === 'shako') { box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.1, 1.1, 1.4, P.dark); box(parts, 0, hx + 0.2, y, 6.2 + kneel, 0.8, 1.2, 0.2, P.dark); }
+    else if (opt.hat === 'crest') { box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.2, 1.2, 0.6, P.metal); box(parts, 0, hx - 0.2, y, 6.8 + kneel, 1.3, 0.3, 0.6, P.mark); }
+    else if (opt.hat === 'hood') box(parts, 0, hx - 0.1, y, 6.2 + kneel, 1.2, 1.2, 0.5, P.cloth);
+    else box(parts, 0, hx - 0.1, y, 6.3 + kneel, 1.5, 1.5, 0.55, P.cloth);             // helmet
     if (opt.hat === 'shako') box(parts, 0, x + 0.66, y, 3.2 + kneel, 0.05, 1.5, 2.2, P.white); // crossbelts
-    if (opt.shield) box(parts, 0, x + 0.9, y - 1.3, 2.6 + kneel, 0.3, 1.6, 2.8, P.mark);  // shield on the left arm
+    if (opt.shield) box(parts, 0, x + 0.9 + lunge * 0.6, y - 1.3, 2.6 + kneel, 0.3, 1.6, 2.8, P.mark); // shield on the left arm
     if (opt.spear) {
-      if (fighting) box(parts, 0, x + 1.5, y + 1.0, 4.4 + kneel, 6.5, 0.28, 0.28, P.wood); // spear levelled
-      else box(parts, 0, x + 0.2, y + 1.3, 0.4, 0.28, 0.28, 9.0, P.wood, 0.12, x + 0.2, 0.4);   // spear upright
-      box(parts, 0, fighting ? x + 4.8 : x + 0.2 + 1.05, y + (fighting ? 1.0 : 1.3), fighting ? 4.4 + kneel : 9.2, fighting ? 0.9 : 0.3, 0.3, fighting ? 0.3 : 0.9, P.metal);
-    } else if (fighting) box(parts, 0, x + 1.3, y - 0.5, 4.6 + kneel, 2.6, 0.3, 0.3, P.metal); // rifle levelled
-    else box(parts, 0, x - 0.6, y - 0.9, 3.8, 0.3, 0.3, 3.2, P.metal, 0.35, x - 0.6, 3.8); // rifle slung
+      if (fighting) {
+        const th = [0, 1.4, 2.4, 0.8][f];                                                 // thrust and draw back
+        box(parts, 0, x + 1.5 + th, y + 1.0, 4.4, 6.5, 0.28, 0.28, P.wood);
+        box(parts, 0, x + 4.8 + th, y + 1.0, 4.4, 0.9, 0.3, 0.3, P.metal);
+      } else {
+        box(parts, 0, x + 0.2, y + 1.3, 0.4, 0.28, 0.28, 9.0, P.wood, 0.12, x + 0.2, 0.4);   // spear upright
+        box(parts, 0, x + 1.25, y + 1.3, 9.2, 0.3, 0.3, 0.9, P.metal);
+      }
+    } else if (opt.sword) {
+      // the blade follows the right arm: raised, cutting down, then recovering
+      const sw = fighting ? [-2.6, -1.4, 0.5, -0.8][f] : 0.4;
+      box(parts, 0, x + 0.2 + lunge * 0.3, y + 1.3, 5.2 + kneel, 0.25, 0.22, 2.6, P.metal, sw, x + 0.2 + lunge * 0.3, 5.2 + kneel);
+    } else if (opt.bow) {
+      if (fighting) {
+        const pull = [1.3, 1.6, 0.2, 0.6][f];                                             // draw, hold, loose, nock
+        box(parts, 0, x + 1.8, y - 0.6, 3.0, 0.22, 0.22, 3.6, P.wood, -0.25, x + 1.8, 4.8); // bow held out front
+        box(parts, 0, x + 1.8 - pull, y - 0.3, 4.75, pull + 0.05, 0.08, 0.08, P.white);     // string pulled back
+        if (f < 2) box(parts, 0, x + 1.9 - pull, y - 0.4, 4.7, 2.2, 0.12, 0.12, P.wood);    // arrow on the string
+      } else box(parts, 0, x - 0.7, y - 0.9, 2.4, 0.22, 0.22, 3.8, P.wood, 0.3, x - 0.7, 4.2); // bow on the back
+      box(parts, 0, x - 0.8, y + 0.6, 3.4, 0.6, 0.6, 1.8, P.wood);                          // quiver
+    } else if (fighting) {
+      const kick = f === 1 ? -0.35 : 0;                                                    // recoil on the shot
+      box(parts, 0, x + 1.3 + kick, y - 0.5, 4.6 + kneel + (f === 1 ? 0.1 : 0), 2.6, 0.3, 0.3, P.metal); // rifle levelled
+    } else box(parts, 0, x - 0.6, y - 0.9, 3.8, 0.3, 0.3, 3.2, P.metal, 0.35, x - 0.6, 3.8); // rifle slung
   }
   function horse(parts, P, x, y, f, moving) {
     const s = moving ? Math.sin(f / FRAMES * Math.PI * 2) * 0.5 : 0, lift = moving ? (f % 2) * 0.3 : 0;
@@ -10377,8 +10461,12 @@ const Figures = (function () {
     box(parts, 0, x - 0.3, y, z, 1.2, 1.7, 2.5, P.cloth);                                // torso
     box(parts, 0, x - 0.2, y, z + 2.5, 0.9, 0.9, 0.9, P.skin);                           // head
     box(parts, 0, x - 0.3, y, z + 3.3, 1.3, 1.3, 0.5, P.cloth);                          // cap or helm
-    if (weapon === 'lance') box(parts, 0, x + (fighting ? 2.5 : 0.2), y + 1.0, z + (fighting ? 1.4 : 0.2), fighting ? 7.5 : 0.25, 0.25, fighting ? 0.25 : 6.5, P.wood);
-    else box(parts, 0, x + 0.4, y + 1.0, z + 1.4, 0.25, 0.25, 2.2, P.metal, fighting ? -1.2 : 0.3, x + 0.4, z + 1.4); // sword or sabre
+    if (weapon === 'lance') { const th = fighting ? [0, 1.2, 2.0, 0.6][f] : 0; box(parts, 0, x + (fighting ? 2.5 + th : 0.2), y + 1.0, z + (fighting ? 1.4 : 0.2), fighting ? 7.5 : 0.25, 0.25, fighting ? 0.25 : 6.5, P.wood); }
+    else if (weapon === 'bow') {
+      if (fighting) { box(parts, 0, x + 1.2, y - 0.8, z + 0.4, 0.2, 0.2, 3.0, P.wood, -0.2, x + 1.2, z + 1.9); if (f < 2) box(parts, 0, x + 0.2, y - 0.6, z + 1.9, 1.8, 0.12, 0.12, P.wood); }
+      else box(parts, 0, x - 0.9, y - 0.8, z, 0.2, 0.2, 3.0, P.wood, 0.3, x - 0.9, z + 1.5);
+    }
+    else box(parts, 0, x + 0.4, y + 1.0, z + 1.4, 0.25, 0.25, 2.2, P.metal, fighting ? [-2.4, -1.2, 0.3, -0.8][f] : 0.3, x + 0.4, z + 1.4); // sword or sabre, swung when fighting
   }
   function build(kind, P, f, fighting) {
     const parts = [];
@@ -10392,8 +10480,16 @@ const Figures = (function () {
     } else if (kind === 'musket') {
       const o = { hat: 'shako' };
       soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
+    } else if (kind === 'archer') {
+      const o = { hat: 'hood', bow: true };
+      soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
+    } else if (kind === 'swords') {
+      const o = { hat: 'crest', sword: true, shield: true };
+      soldier(parts, P, 1.8, 0, f, fighting, o); soldier(parts, P, -1.6, -2.6, (f + 2) % FRAMES, fighting, o); soldier(parts, P, -1.6, 2.6, (f + 1) % FRAMES, fighting, o);
     } else if (kind === 'rider') {
       rider(parts, P, 1.6, -1.8, f, fighting, 'lance'); rider(parts, P, -2.0, 2.0, (f + 1) % FRAMES, fighting, 'sword');
+    } else if (kind === 'riderbow') {
+      rider(parts, P, 1.6, -1.8, f, fighting, 'bow'); rider(parts, P, -2.0, 2.0, (f + 2) % FRAMES, fighting, 'bow');
     } else if (kind === 'elephant') {
       const s = Math.sin(f / FRAMES * Math.PI * 2) * 0.3;
       for (const [lx, ly, ph] of [[2.2, -1.1, 1], [2.2, 1.1, -1], [-2.2, -1.1, -1], [-2.2, 1.1, 1]])
@@ -10401,7 +10497,7 @@ const Figures = (function () {
       box(parts, 0, 0, 0, 3.3, 7.2, 3.6, 3.4, P.hide);                                   // body
       box(parts, 0, 4.2, 0, 4.4, 2.2, 2.8, 2.8, P.hide);                                 // head
       box(parts, 0, 3.9, -1.9, 4.6, 0.3, 1.4, 2.2, P.hide); box(parts, 0, 3.9, 1.9, 4.6, 0.3, 1.4, 2.2, P.hide); // ears
-      box(parts, 0, 5.5, 0, 1.2, 0.8, 0.8, 3.4, P.hide, fighting ? -0.9 : 0.15 + s * 0.3, 5.5, 4.6); // trunk
+      box(parts, 0, 5.5, 0, 1.2, 0.8, 0.8, 3.4, P.hide, fighting ? [-0.4, -1.1, -1.6, -0.9][f] : 0.15 + s * 0.3, 5.5, 4.6); // trunk, swinging when fighting
       box(parts, 0, 5.6, -0.8, 3.9, 1.8, 0.3, 0.3, P.white); box(parts, 0, 5.6, 0.8, 3.9, 1.8, 0.3, 0.3, P.white); // tusks
       box(parts, 0, -0.6, 0, 6.7, 3.4, 3.2, 1.8, P.cloth);                               // howdah
       box(parts, 0, 1.6, 0, 7.4, 0.8, 0.8, 0.8, P.skin);                                 // mahout
@@ -10416,7 +10512,7 @@ const Figures = (function () {
       horse(parts, P, 5.0, -1.2, f, !fighting); horse(parts, P, 5.0, 1.2, (f + 1) % FRAMES, !fighting);
       box(parts, 0, 0.8, 0, 1.0, 3.0, 0.3, 0.3, P.wood);                                 // pole
       box(parts, 0, -2.0, 0, 1.3, 2.6, 2.4, 1.0, P.wood);                                // carriage
-      box(parts, 0, -1.6, 0, 2.3, 5.2, 0.8, 0.8, P.bronze, fighting ? 0 : -0.15, -2.4, 2.3); // barrel
+      box(parts, 0, -1.6 - (fighting && f === 1 ? 0.8 : fighting && f === 2 ? 0.4 : 0), 0, 2.3, 5.2, 0.8, 0.8, P.bronze, fighting ? 0 : -0.15, -2.4, 2.3); // barrel, kicking back on the shot
       wheel(parts, -2.2, -1.8, 0, 1.4, 0.4, P.wood, spin); wheel(parts, -2.2, 1.8, 0, 1.4, 0.4, P.wood, spin);
     } else if (kind === 'truck' || kind === 'halftrack') {
       box(parts, 0, 0, 0, 1.0 + bob, 11, 4.2, 0.6, P.dark);                              // chassis
@@ -10446,7 +10542,7 @@ const Figures = (function () {
       wheel(parts, 3.0, -1.9, 0, 0.9, 0.7, P.dark, spin); wheel(parts, 3.0, 1.9, 0, 0.9, 0.7, P.dark, spin);
       box(parts, 0, 0.5, 0, 0.1, 3.4, 0.4, 0.4, P.dark);                                 // tow bar
       box(parts, 0, -2.0, 0, 1.2, 2.0, 3.2, 2.2, P.vehicle);                             // gun shield and carriage
-      box(parts, 0, -1.2, 0, 2.4, 5.6, 0.6, 0.6, P.metal, fighting ? 0 : -0.35, -2.0, 2.4); // barrel
+      box(parts, 0, -1.2 - (fighting && f === 1 ? 0.7 : fighting && f === 2 ? 0.3 : 0), 0, 2.4, 5.6, 0.6, 0.6, P.metal, fighting ? -0.12 : -0.35, -2.0, 2.4); // barrel, recoiling when firing
       wheel(parts, -2.0, -2.0, 0, 1.1, 0.6, P.dark, spin); wheel(parts, -2.0, 2.0, 0, 1.1, 0.6, P.dark, spin);
     } else if (kind === 'car') {
       box(parts, 0, 0, 0, 1.1 + bob, 7.5, 3.6, 2.2, P.vehicle);
@@ -10502,35 +10598,34 @@ const Figures = (function () {
   // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
   const atlases = new Map(); // key -> { cv, g, P, row }
   // one row per model, plus 'fighting' poses for soldiers and guns (vehicles fight in their moving pose)
-  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon'];
-  const FIGHT_ROW = Object.fromEntries(FIGHTERS.map((k, i) => [k, KINDS.length + i]));
-  const ROWS = KINDS.length + FIGHTERS.length;
-  const rowKind = r => r < KINDS.length ? [KINDS[r], false] : [FIGHTERS[r - KINDS.length], true];
+  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'];
+  // only the models the current era's units use get rows, so an atlas stays small (about 12 rows)
+  let layout = null;
+  function getLayout() {
+    if (!layout) {
+      const used = new Set(['soldiers', 'plane']);
+      for (const t in UNIT_TYPES) used.add(kindOf(t));
+      const rows = KINDS.filter(k => used.has(k)).map(k => [k, false]).concat(FIGHTERS.filter(k => used.has(k)).map(k => [k, true]));
+      layout = { rows, index: new Map(rows.map(([k, fi], i) => [k + (fi ? '!' : ''), i])) };
+    }
+    return layout;
+  }
+  const rowsN = () => getLayout().rows.length;
   const MAX_ATLASES = 28;   // about 2 MB each; nations off screen for a while are dropped and repainted on return
   function newAtlas(color) {
     const cv = document.createElement('canvas');
-    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * ROWS;
+    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * rowsN();
     return { cv, g: cv.getContext('2d'), P: palette(color), row: 0, used: 0 };
   }
-  // only the models the current era's units use are painted; the other rows stay blank
-  let usedKinds = null;
-  function kindUsed(kind) {
-    if (!usedKinds) {
-      usedKinds = new Set(['soldiers', 'plane']);
-      for (const t in UNIT_TYPES) usedKinds.add(KIND_OF[t] || (typeof Eras !== 'undefined' && Eras.figureKind(t, KINDS)) || 'soldiers');
-    }
-    return usedKinds.has(kind);
-  }
   function paintRow(A) {
-    const [kind, fight] = rowKind(A.row), g = A.g;
-    if (!kindUsed(kind)) { A.row++; return; }
+    const [kind, fight] = getLayout().rows[A.row], g = A.g;
     for (let f = 0; f < FRAMES; f++) {
       const parts = build(kind, A.P, f, !!fight);
       for (let d = 0; d < DIRS; d++) {
         // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
         const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
         g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' ? 1.55 : kind === 'rider' || kind === 'elephant' ? 1.3 : 1.05);
+        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05);
         g.restore();
       }
     }
@@ -10542,38 +10637,41 @@ const Figures = (function () {
     let A = atlases.get(tag);
     if (!A) {
       if (atlases.size >= MAX_ATLASES) {
-        let old = null; for (const [t, x] of atlases) if (x.row >= ROWS && (!old || x.used < atlases.get(old).used)) old = t;
+        let old = null; for (const [t, x] of atlases) if (x.row >= rowsN() && (!old || x.used < atlases.get(old).used)) old = t;
         if (old) atlases.delete(old);
       }
-      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < ROWS) paintRow(A); else queue.push(A);
+      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < rowsN()) paintRow(A); else queue.push(A);
     }
     return A;
   }
   function pump(budgetMs) {
     const t0 = performance.now();
-    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= ROWS) queue.shift(); }
+    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= rowsN()) queue.shift(); }
   }
-  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < ROWS) paintRow(neutral); } }
+  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < rowsN()) paintRow(neutral); } }
 
   const KIND_OF = { infantry: 'soldiers', marines: 'soldiers', paratroopers: 'soldiers', motorized: 'truck', mechanized: 'halftrack', tanks: 'tank', artillery: 'gun', recon: 'car' };
   // draw one figure with its feet at (x, y) screen px; size is the on-screen cell size in px
+  const kindOf = unitType => KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
   function draw(ctx, tag, unitType, moving, heading, fighting, x, y, size, t) {
-    let kind = KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
+    let kind = kindOf(unitType);
     if (unitType === 'paratroopers' && moving) kind = 'plane';
-    const ki = KINDS.indexOf(kind);
+    const L = getLayout();
     const d = ((Math.round(heading / (Math.PI * 2 / DIRS)) % DIRS) + DIRS) % DIRS;
-    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' ? 150 : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
-    const row = fighting && FIGHT_ROW[kind] !== undefined ? FIGHT_ROW[kind] : ki;
+    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? (fighting ? 170 : 150) : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
+    let row = fighting ? L.index.get(kind + '!') : undefined;
+    if (row === undefined) row = L.index.get(kind);
+    if (row === undefined) row = L.index.get('soldiers');
     const ay = kind === 'plane' ? 0.78 : 0.66;
     ready();
     const A = atlasFor(tag); A.used = t || performance.now();
-    ctx.drawImage(A.row >= ROWS ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
+    ctx.drawImage(A.row >= L.rows.length ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
   }
   // queue nations to paint ahead of need, most important first
   function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; usedKinds = null; neutral = null; }
-  return { draw, warm, pump, reset, KINDS, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; }
+  return { draw, warm, pump, reset, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
 })();
 
 // Canvas map renderer and camera (pan / zoom / picking).
@@ -10763,6 +10861,13 @@ const Render = (function () {
       const t = s.phase === 'sail' ? Math.min(0.85, (s.t + (state.hourFrac || 0)) / Math.max(1, s.sail) * 0.85) : s.phase === 'wait' ? 0.85 : Math.max(0, 0.85 - s.t / Math.max(12, s.sail / 2) * 0.85);
       return [p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t];
     }
+    if (a.lead) {
+      // turned round mid-leg: walking back toward its own province centre
+      const n = MAP.provs[a.lead.to];
+      const km = Math.max(0, a.lead.km + Math.min(0, a.rate || 0) * (state.hourFrac || 0));
+      const t = Math.min(1, km / Sim.distKm(a.prov, a.lead.to));
+      return [p.x + (n.x - p.x) * t, p.y + (n.y - p.y) * t];
+    }
     if (a.path.length) {
       const n = MAP.provs[a.path[0]];
       const prog = a.progress + (a.battle ? 0 : (a.rate || 0) * (state.hourFrac || 0));
@@ -10915,7 +11020,7 @@ const Render = (function () {
     drawLabels(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
-    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
   }
 
   // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
@@ -11062,6 +11167,133 @@ const Render = (function () {
   // smoothed on-screen positions and headings, so figures glide between hourly simulation steps
   const disp = new Map();
   let lastDisp = 0, figCount = 0;
+  // who each fighting army is fighting: attackers face the province they attack, defenders face the
+  // province the attack comes from (so both sides of a battle show it, not only the attacker)
+  let fights = new Map();
+  function buildFights(G) {
+    fights = new Map();
+    for (const b of G.battles) {
+      const atts = b.attackers.filter(id => b.from[id] !== undefined);
+      if (!atts.length) continue;
+      for (const id of atts) fights.set(id, { prov: b.prov, b });
+      for (const d of Sim.hostilesAt(b.atkTag, b.prov)) if (!fights.has(d.id)) fights.set(d.id, { prov: b.from[atts[0]], b });
+    }
+  }
+  const fightTarget = a => fights.get(a.id) || null;
+
+  // ---------- battle effects, matched to the weapons of the era ----------
+  // rifles fire tracers, muskets and cannon give flashes and white smoke, bows and slings send arrows in
+  // volleys, siege engines lob stones, and spears, swords, horsemen and elephants clash in melee
+  const fx = [];
+  let fxLast = 0;
+  function fightStyle(type) {
+    const kind = Figures.kindOf(type), look = UNIT_TYPES[type] && UNIT_TYPES[type].look;
+    if (look === 'horsearcher' || look === 'chariot') return 'arrow';
+    return { soldiers: 'rifle', truck: 'rifle', halftrack: 'rifle', car: 'rifle', tank: 'shell', gun: 'shell', musket: 'musket', cannon: 'cannon',
+      archer: 'arrow', riderbow: 'arrow', engine: 'stone' }[kind] || 'melee';
+  }
+  // rates per figure per second
+  const FX_RATE = { rifle: 5, shell: 0.7, musket: 0.45, cannon: 0.4, arrow: 0.6, stone: 0.3, melee: 7 };
+  function spawnFightFx(wx, wy, figs, foe, dt, fig) {
+    if (!foe) return;
+    const tp = MAP.provs[foe.prov];
+    const [ox, oy] = worldToScreen(wx, wy), [tx, ty] = worldToScreen(tp.x, tp.y);
+    const now = performance.now();
+    const dist = Math.hypot(tx - ox, ty - oy) || 1;
+    // where the enemy line stands: toward the foe, but not further than the battle marker
+    const reach = Math.min(dist * 0.6, fig * 3.2);
+    const ex = (tx - ox) / dist, ey = (ty - oy) / dist;
+    const S = Math.max(0.8, fig / 26);                          // effects grow with the figures
+    for (const [fx0, fy0, ty0] of figs) {
+      const st = fightStyle(ty0);
+      if (Math.random() > FX_RATE[st] * dt) continue;
+      const x0 = fx0 - ox, y0 = fy0 - oy - fig * 0.35;          // from the figure's hands, relative to the army
+      const aimX = ex * reach + (Math.random() - 0.5) * fig * 0.9, aimY = ey * reach + (Math.random() - 0.5) * fig * 0.5 - fig * 0.1;
+      const base = { wx, wy, t0: now };
+      if (st === 'rifle') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.25, y: y0 + ey * fig * 0.1, r: (1.8 + Math.random() * 1.4) * S, dur: 70 });
+        fx.push({ ...base, k: 'tracer', w: S, x: x0 + ex * fig * 0.25, y: y0, x1: aimX, y1: aimY, dur: 180 + Math.random() * 80 });
+      } else if (st === 'shell') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.35, y: y0, r: (3.5) * S, dur: 110 });
+        fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.35, y: y0, r: (3) * S, dur: 1400, grey: 120 });
+        fx.push({ ...base, k: 'burst', x: aimX * 1.3, y: aimY * 1.3, r: (5) * S, dur: 600, t0: now + 250 });
+      } else if (st === 'musket') {
+        // a volley: every man in the line fires at once
+        for (let i = 0; i < 3; i++) {
+          const sx = x0 + ex * fig * 0.3 + (Math.random() - 0.5) * fig * 0.5, sy = y0 + (Math.random() - 0.5) * fig * 0.25;
+          fx.push({ ...base, k: 'flash', x: sx, y: sy, r: (1.6 + Math.random()) * S, dur: 90 });
+          fx.push({ ...base, k: 'smoke', x: sx, y: sy, r: (2.5) * S, dur: 1800 + Math.random() * 600, grey: 225 });
+        }
+      } else if (st === 'cannon') {
+        fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.4, y: y0, r: (4) * S, dur: 120 });
+        fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.4, y: y0, r: (4) * S, dur: 2400, grey: 230 });
+        fx.push({ ...base, k: 'ball', s: S, x: x0 + ex * fig * 0.4, y: y0, x1: aimX * 1.3, y1: aimY * 1.3, dur: 450, arc: fig * 0.3 });
+        fx.push({ ...base, k: 'dust', x: aimX * 1.3, y: aimY * 1.3, r: (3) * S, dur: 700, t0: now + 450 });
+      } else if (st === 'arrow') {
+        // a volley of arrows (or slingstones) on a high arc
+        const n = 4 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < n; i++) {
+          const d = 650 + Math.random() * 250;
+          fx.push({ ...base, k: 'arrow', len: 5 * S, x: x0 + (Math.random() - 0.5) * fig * 0.4, y: y0, x1: aimX + (Math.random() - 0.5) * fig * 0.6, y1: aimY + (Math.random() - 0.5) * fig * 0.3, dur: d, arc: fig * (0.7 + Math.random() * 0.4), t0: now + i * 40 });
+        }
+      } else if (st === 'stone') {
+        fx.push({ ...base, k: 'ball', s: S, x: x0, y: y0 - fig * 0.3, x1: aimX * 1.4, y1: aimY * 1.4, dur: 1100, arc: fig * 1.6, big: true });
+        fx.push({ ...base, k: 'dust', x: aimX * 1.4, y: aimY * 1.4, r: (4) * S, dur: 900, t0: now + 1100 });
+      } else {
+        // melee: blades catching the light where the lines meet, and dust kicked up
+        const mx = x0 + ex * fig * 0.55 + (Math.random() - 0.5) * fig * 0.4, my = y0 + ey * fig * 0.2 + (Math.random() - 0.5) * fig * 0.3;
+        fx.push({ ...base, k: 'spark', x: mx, y: my, r: (2.5 + Math.random() * 2) * S, dur: 220, rot: Math.random() * 3 });
+        if (Math.random() < 0.25) fx.push({ ...base, k: 'dust', x: mx, y: my + fig * 0.3, r: (2.5) * S, dur: 900 });
+      }
+    }
+    if (fx.length > 600) fx.splice(0, fx.length - 600);
+  }
+  function drawFx() {
+    const now = performance.now();
+    let w = 0;
+    for (let i = 0; i < fx.length; i++) {
+      const e = fx[i], age = now - e.t0;
+      if (age > e.dur) continue;
+      fx[w++] = e;
+      if (age < 0) continue;
+      const u = age / e.dur;
+      const [bx, by] = worldToScreen(e.wx, e.wy);
+      const x = bx + e.x, y = by + e.y;
+      if (e.k === 'flash') {
+        ctx.globalAlpha = 1 - u; ctx.fillStyle = '#ffe07a';
+        ctx.beginPath(); ctx.arc(x, y, e.r * (1 + u), 0, 7); ctx.fill();
+      } else if (e.k === 'tracer') {
+        const a = Math.max(0, u - 0.25), b = u;
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#ffd36a'; ctx.lineWidth = 1.1 * e.w;
+        ctx.beginPath(); ctx.moveTo(x + (bx + e.x1 - x) * a, y + (by + e.y1 - y) * a); ctx.lineTo(x + (bx + e.x1 - x) * b, y + (by + e.y1 - y) * b); ctx.stroke();
+      } else if (e.k === 'smoke' || e.k === 'dust' || e.k === 'burst') {
+        const g = e.k === 'dust' ? '150,128,96' : e.k === 'burst' ? '90,80,70' : `${e.grey},${e.grey},${e.grey - 8}`;
+        if (e.k === 'burst' && u < 0.15) { ctx.globalAlpha = 1 - u / 0.15; ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(x, y, e.r, 0, 7); ctx.fill(); }
+        ctx.globalAlpha = (e.k === 'smoke' ? 0.55 : 0.5) * (1 - u);
+        ctx.fillStyle = 'rgb(' + g + ')';
+        ctx.beginPath(); ctx.arc(x + u * 4, y - u * (e.k === 'smoke' ? 10 : 4), e.r * (1 + u * 2.2), 0, 7); ctx.fill();
+      } else if (e.k === 'arrow' || e.k === 'ball') {
+        const px = x + (bx + e.x1 - x) * u, py = y + (by + e.y1 - y) * u - Math.sin(u * Math.PI) * e.arc;
+        if (e.k === 'arrow') {
+          const u2 = Math.min(1, u + 0.04);
+          const qx = x + (bx + e.x1 - x) * u2, qy = y + (by + e.y1 - y) * u2 - Math.sin(u2 * Math.PI) * e.arc;
+          const l = Math.hypot(qx - px, qy - py) || 1;
+          ctx.globalAlpha = 0.95; ctx.strokeStyle = '#2a2218'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(px - (qx - px) / l * e.len, py - (qy - py) / l * e.len); ctx.lineTo(px, py); ctx.stroke();
+        } else {
+          ctx.globalAlpha = 1; ctx.fillStyle = e.big ? '#5a5248' : '#222';
+          ctx.beginPath(); ctx.arc(px, py, (e.big ? 2.6 : 1.6) * e.s, 0, 7); ctx.fill();
+        }
+      } else if (e.k === 'spark') {
+        ctx.globalAlpha = 1 - u; ctx.strokeStyle = '#fff4c8'; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let j = 0; j < 4; j++) { const a = e.rot + j * Math.PI / 2; ctx.moveTo(x + Math.cos(a) * 1, y + Math.sin(a) * 1); ctx.lineTo(x + Math.cos(a) * e.r * (1 + u), y + Math.sin(a) * e.r * (1 + u)); }
+        ctx.stroke();
+      }
+    }
+    fx.length = w;
+    ctx.globalAlpha = 1;
+  }
   function dispPos(a, k) {
     const [tx, ty] = armyPos(a);
     let d = disp.get(a.id);
@@ -11071,8 +11303,11 @@ const Render = (function () {
     if (jump > 6 || jump < 0.35) { d.x = tx; d.y = ty; } else { d.x += (tx - d.x) * Math.max(k, 0.3); d.y += (ty - d.y) * Math.max(k, 0.3); }
     d.seen = lastDisp;
     let want = null;
-    if (a.path.length) { const p = MAP.provs[a.prov], n = MAP.provs[a.path[0]]; want = Math.atan2(-(n.y - p.y), n.x - p.x); }
-    else if (a.battle) { const b = Sim.G.battles.find(x => x.id === a.battle); if (b && b.prov !== a.prov) { const p = MAP.provs[a.prov], n = MAP.provs[b.prov]; want = Math.atan2(-(n.y - p.y), n.x - p.x); } }
+    const face = (from, to) => { const p = MAP.provs[from], n = MAP.provs[to]; return Math.atan2(-(n.y - p.y), n.x - p.x); };
+    const foe = fightTarget(a);
+    if (a.lead) want = face(a.lead.to, a.prov);
+    else if (a.path.length && !a.battle) want = face(a.prov, a.path[0]);
+    else if (foe && foe.prov !== a.prov) want = face(a.prov, foe.prov);
     if (want !== null) { let dh = want - d.h; while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI; d.h += dh * Math.min(1, k * 1.5); }
     return d;
   }
@@ -11088,6 +11323,8 @@ const Render = (function () {
     const now = performance.now();
     const k = lastDisp ? 1 - Math.exp(-(now - lastDisp) / 1000 * 9) : 1;
     lastDisp = now;
+    buildFights(G);
+    const fxDt = fxLast ? Math.min(0.1, (now - fxLast) / 1000) : 0; fxLast = now;
     counterHits = [];
     figCount = 0;
     const rel = z / minZoom();
@@ -11124,7 +11361,8 @@ const Render = (function () {
         const compact = small || (!mine && !hostile && !Sim.allied(a.owner, G.player) && z < 16);
         let divs = 0; for (const g of grp) divs += g.units.length;
         const moving = grp.some(g => g.path.length) && !G.paused;
-        const fighting = grp.some(g => g.battle);
+        const foe = grp.map(fightTarget).find(Boolean) || null;
+        const fighting = !!foe;
         // --- 3D figures: 1 to 3 depending on size, in a small column behind the leader ---
         const types = figureTypes(grp);
         const nFig = compact ? 1 : divs >= 10 ? 3 : divs >= 4 ? 2 : 1;
@@ -11141,10 +11379,7 @@ const Render = (function () {
         ctx.fillStyle = c.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
         ctx.lineWidth = 1.2; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : 'rgba(0,0,0,0.6)'; ctx.stroke();
         if (state.figures !== false) for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
-        if (fighting && !G.paused && Math.random() < 0.35) {     // muzzle flashes
-          ctx.fillStyle = '#ffd36a';
-          ctx.beginPath(); ctx.arc(sx + hx * fig * 0.45 + (Math.random() - 0.5) * 6, sy + hy * fig * 0.3 - fig * 0.15, 1.6 + Math.random() * 1.6, 0, 7); ctx.fill();
-        }
+        if (fighting && !G.paused && state.figures !== false) spawnFightFx(d.x, d.y, figs, foe, fxDt, fig);
         const figTop = sy + 4 - fig * 0.62;
         if (compact) {
           if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
@@ -11412,7 +11647,7 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
 
 // Interface: start screen, top bar, dossier panels, army tray, orders and input.
@@ -11618,7 +11853,7 @@ const UI = (function () {
     $('#st-name').textContent = d.name;
     $('#st-gov').textContent = d.gov + (d.overlord ? ' · subject of ' + COUNTRY_BY_TAG[d.overlord].name : '');
     $('#st-diff').innerHTML = '<div class="diff">' + [0, 1, 2, 3, 4].map(i => `<i class="${i <= dl ? 'on' : ''}"></i>`).join('') + '</div><span class="label">' + d.diff + '</span>';
-    $('#st-nums').innerHTML = `<div><b>${fmtN(d.pop * 1e6)}</b><span>Population</span></div><div><b>${d.civ + d.mil}</b><span>Factories (${d.civ} civ · ${d.mil} mil)</span></div>
+    $('#st-nums').innerHTML = `<div><b>${fmtN(d.pop * 1e6)}</b><span>Population</span></div><div><b>${d.civ + d.mil}</b><span>Factories</span><small>${d.civ} civilian · ${d.mil} military</small></div>
       <div><b>${d.divs}</b><span>Divisions</span></div><div><b>${f.provs}</b><span>Provinces</span></div>`;
     const rn = { steel: 'Steel', oil: 'Oil', coal: 'Coal', aluminium: 'Aluminium', rubber: 'Rubber', rare: 'Rare materials' };
     $('#st-res').innerHTML = Object.keys(rn).map(k => `<span>${rn[k]} ${f.res[k] || 0}</span>`).join('');
@@ -12031,7 +12266,9 @@ const UI = (function () {
     if (a.retreating) return 'Retreating to ' + MAP.provs[a.path[a.path.length - 1]]?.name;
     let t = ORDER_TEXT[a.order] || a.order;
     if (a.order === 'defend') t += a.frontTag ? ' vs ' + G.countries[a.frontTag].name : ' (all enemies)';
-    if ((a.order === 'move' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
+    const prey = a.chase && Sim.army(a.chase);
+    if (prey) t = 'Hunting ' + prey.name + (prey.prov >= 0 ? ' at ' + MAP.provs[prey.prov].name : '');
+    else if ((a.order === 'move' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
     if (a.path.length) { const km = a.path.reduce((s, id, i) => s + Sim.distKm(i ? a.path[i - 1] : a.prov, id), 0) - a.progress; t += ' · ~' + Math.max(1, Math.round(km / Math.max(0.5, Sim.armySpeed(a)) / 24)) + ' days'; }
     return t;
   }
@@ -12045,8 +12282,8 @@ const UI = (function () {
   }
   // ---------- compact army card ----------
   const ORDERS = [['move', 'Move', 'move'], ['attack', 'Attack', 'attack', 'atk'], ['front', 'Defend', 'shield'], ['hold', 'Hold', 'hold'], ['retreat', 'Retreat', 'retreat'],
-    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Reinforce', 'plus'], ['invade', 'By sea', 'anchor']];
-  const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy objective; the army keeps attacking toward it', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
+    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Recruit', 'plus'], ['invade', 'By sea', 'anchor']];
+  const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy province, or an enemy army to hunt until it is destroyed', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
     hold: 'Stop and hold here', retreat: 'Fall back to friendly land', redeploy: 'Fast move through friendly land; organisation drops', split: 'Split the army in two', merge: 'Armies must share a province',
     recruit: 'Train new divisions for this army', invade: 'Ship this army across the sea: pick a coastal province' };
   function renderCard() {
@@ -12507,7 +12744,7 @@ const UI = (function () {
   }
   function showHint() {
     const h = $('#hint');
-    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy objective to push toward', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
+    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy province, or an enemy army to hunt down', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
       invade: 'Choose a coastal province to land in', fleet: 'Choose a sea zone to sail to', rebase: 'Choose a province with a friendly airbase',
       wing: pending && pending.mission === 'naval' ? 'Choose a sea zone to strike' : pending && pending.mission === 'bomb' ? 'Choose an enemy province to bomb' : 'Choose where the wing should fly' };
     if (!pending) { h.hidden = true; $('#map').classList.remove('targeting'); return; }
@@ -12539,6 +12776,12 @@ const UI = (function () {
       list.forEach(a => Sim.orderDefend(a, tag));
       toast(list.length + ' ' + (list.length > 1 ? 'armies' : 'army') + ' now defending the front against ' + G.countries[tag].name + '.', -1, 'info');
     } else issueMove(list, prov, kind);
+    renderRight();
+  }
+  function chase(list, foe) {
+    if (!list.length) return;
+    const ok = list.filter(a => Sim.orderChase(a, foe)).length;
+    toast(ok ? (ok > 1 ? ok + ' armies are' : list[0].name + ' is') + ' hunting ' + Sim.G.countries[foe.owner].name + ' ' + foe.name + ' until it is destroyed.' : 'No land route to ' + foe.name + '.', foe.prov, 'info');
     renderRight();
   }
   function issueMove(list, prov, kind) {
@@ -12851,11 +13094,15 @@ const UI = (function () {
     const prov = Render.provinceAt(wx, wy);
     const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
-    if (pending && button === 0) { resolvePending(prov, zone); return; }
+    // an enemy army clicked while ordering an attack (or right-clicked) is hunted down wherever it goes
+    const foeAt = () => { const g = Render.stackAt(sx, sy); return g && g.find(a => Sim.atWar(a.owner, G.player)) || null; };
+    if (pending && button === 0) { const foe = pending.kind === 'attack' || pending.kind === 'move' ? foeAt() : null; if (foe) { pending = null; showHint(); chase(myArmiesSel(), foe); return; } resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
       const f = sel.fleet ? Navy.fleet(sel.fleet) : null;
       if (f && f.owner === G.player) { const z = zone >= 0 ? zone : prov >= 0 && Seas.isCoastal(prov) ? Seas.zonesOf(prov)[0] : -1; if (z >= 0) sendFleet(z); return; }
+      const foe = foeAt();
+      if (foe && myArmiesSel().length) { chase(myArmiesSel(), foe); return; }
       const list = myArmiesSel();
       if (list.length && prov >= 0) issueMove(list, prov, 'auto');
       return;

@@ -299,6 +299,43 @@ async function desktopRun(browser) {
     }
   }
 
+  // --- orders: no snapping back when an order turns an army round, and hunting an enemy army ---
+  {
+    const r = await page.evaluate(() => {
+      const G = Sim.G, P = Sim.MAP.provs;
+      const a = G.armies.find(x => x.owner === G.player && !x.battle && !x.path.length && !x.sea && P[x.prov].nb.some(n => G.owner[n] === G.player));
+      if (!a) return null;
+      const home = a.prov, next = P[a.prov].nb.find(n => G.owner[n] === G.player);
+      Sim.orderMove(a, next, 'move');
+      let h = 0; while (a.progress <= 0 && h++ < 20) Sim.hourTick();
+      const [x0, y0] = [a.prov === home ? a.progress : -1, 0];
+      Sim.orderMove(a, home, 'move');
+      const back = !!a.lead && a.lead.km === x0;
+      Sim.orderMove(a, next, 'move');
+      const fwd = !a.lead && a.progress === x0 && a.path[0] === next;
+      return { back, fwd, x0 };
+    });
+    check('orders: turning round mid-march walks back instead of jumping', r && r.back, JSON.stringify(r));
+    check('orders: a repeated order keeps the march going from where it is', r && r.fwd, JSON.stringify(r));
+    const hunt = await page.evaluate(() => {
+      const G = Sim.G;
+      const foes = G.armies.filter(x => Sim.atWar(x.owner, G.player) && !x.sea);
+      const mine = G.armies.filter(x => x.owner === G.player && !x.sea && !x.battle);
+      for (const f of foes) for (const m of mine) if (Sim.findPath(m.owner, m.prov, f.prov, 'move')) {
+        if (!Sim.orderChase(m, f)) continue;
+        const fid = f.id, mid = m.id;
+        // the prey moves away: the hunter follows it
+        const P = Sim.MAP.provs, away = P[f.prov].nb.find(n => G.owner[n] === f.owner && n !== m.prov);
+        if (away !== undefined) { Sim.orderMove(f, away, 'move'); while (f.path.length && Sim.army(fid)) { Sim.hourTick(); if (m.battle) break; } }
+        for (let i = 0; i < 12; i++) Sim.hourTick();
+        const mm = Sim.army(mid), ff = Sim.army(fid);
+        return { chasing: !!mm && mm.chase === fid, follows: !ff || !mm || mm.target === ff.prov || mm.battle > 0, gone: !ff };
+      }
+      return null;
+    });
+    check('orders: attacking an enemy army keeps hunting it as it moves', hunt && (hunt.chasing || hunt.gone) && hunt.follows, JSON.stringify(hunt));
+  }
+
   // --- long run at top speed with frame timing ---
   await page.evaluate(() => { Sim.G.speed = 5; Sim.G.paused = false; Sim.G.settings.autoPause = false; Sim.G.settings.pauseEvent = false; window.__ft = []; let last = performance.now(); (function f(t) { window.__ft.push(t - last); last = t; if (window.__ft.length < 100000) requestAnimationFrame(f); })(performance.now()); });
   const runMs = QUICK ? 6000 : 20000;

@@ -430,7 +430,7 @@ const Diplo = (function () {
       if (dest < 0) { const c = g.countries[a.owner]; dest = c.capital >= 0 && g.owner[c.capital] === a.owner ? c.capital : provs.findIndex(p => g.owner[p.id] === a.owner); }
       if (dest < 0) { Sim.removeArmy(a); continue; }
       if (a.battle) { const b = g.battles.find(x => x.id === a.battle); if (b) b.attackers = b.attackers.filter(id => id !== a.id); a.battle = 0; }
-      a.prov = dest; a.path = []; a.progress = 0; a.order = 'hold'; a.target = -1;
+      a.prov = dest; a.path = []; a.progress = 0; a.lead = null; a.order = 'hold'; a.target = -1;
     }
   }
   // peace between `from`'s coalition and `to`'s coalition in every war they fight each other

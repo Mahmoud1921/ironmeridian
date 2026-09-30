@@ -726,7 +726,7 @@ const Navy = (function () {
       const back = friendlyTo(a.owner, g.owner[s.origin]) ? s.origin : MAP().provs.filter(p => g.owner[p.id] === a.owner && Seas.isCoastal(p.id)).sort((x, y) => Sim.distKm(s.origin, x.id) - Sim.distKm(s.origin, y.id))[0]?.id;
       a.sea = null;
       if (back === undefined) { Sim.notify(g.countries[a.owner].name + ' ' + a.name + ' was lost at sea.', -1, 'loss', false); Sim.removeArmy(a); return true; }
-      a.prov = back; a.path = []; a.progress = 0;
+      a.prov = back; a.path = []; a.progress = 0; a.lead = null;
       return true;
     }
     // landing
@@ -748,7 +748,7 @@ const Navy = (function () {
       Sim.startBattle(a, target);
       if (a.owner === g.player || defenders.some(d => d.owner === g.player)) Sim.notify('Troops are storming the beaches at ' + MAP().provs[target].name + '.', target, 'battle', false);
     } else {
-      a.prov = target; a.path = []; a.progress = 0; a.order = 'hold'; a.entrench = 0;
+      a.prov = target; a.path = []; a.progress = 0; a.lead = null; a.order = 'hold'; a.entrench = 0;
       for (const u of a.units) u.org = Math.max(0.2, u.org * 0.7);
       if (hostile) Sim.capture(target, a.owner);
       if (a.owner === g.player) Sim.notify(a.name + (hostile ? ' landed unopposed at ' : ' came ashore at ') + MAP().provs[target].name + '.', target, hostile ? 'win' : 'info', false);
