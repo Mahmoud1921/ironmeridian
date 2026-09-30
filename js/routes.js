@@ -163,7 +163,7 @@ const Routes = (function () {
     const R = list(), out = new Map(), edge = new Map(), onRoute = new Map();
     for (const r of R) {
       const w = working(r);
-      r.cutNow = r.state === 'open' && r.idle === undefined && !w;
+      r.cutNow = r.state === 'open' && !w && cut(r);
       const k = kindOf(r);
       if (w) {
         for (const pid of [r.a, r.b]) out.set(pid, Math.max(out.get(pid) || 1, OUT[k]));
@@ -258,7 +258,7 @@ const Routes = (function () {
     for (const r of list()) {
       if (r.tag !== tag && r.trade !== tag) continue;
       const k = kindOf(r);
-      if (r.idle !== undefined) { idle++; continue; }
+      if (r.idle !== undefined && !r.cutNow) { idle++; continue; }
       if (r.rail) rails++;
       if (r.state === 'building') building++; else if (r.cutNow) cutN++; else open++;
       up += UPKEEP[k] * (r.trade ? 0.5 : 1);

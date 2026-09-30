@@ -394,7 +394,7 @@ const UI = (function () {
       ${p.core !== owner && G.countries[p.core] && G.countries[p.core].alive ? `<div class="note">Occupied territory of ${esc(G.countries[p.core].name)}.</div>` : ''}
       <dl class="kv"><dt>Terrain</dt><dd>${TERRAIN[p.terrain].name}</dd><dt>Population</dt><dd>${fmtN(p.pop)}</dd>
       <dt>Infrastructure</dt><dd>Level ${p.infra}</dd>${res}${works}
-      <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd></dl>${buildHere}
+      <dt>Units</dt><dd>${armies.reduce((s, a) => s + a.units.length, 0)} divisions</dd>${routeRows(p.id)}</dl>${buildHere}
       <div class="list">${armyRows}</div>
       ${wingsHere.length ? '<div class="label" style="margin-top:6px">Air wings based here</div><div class="list">' + wingsHere.map(w => `<div class="row click" data-wing="${w.id}">${flagSVG(w.owner)}<div class="grow"><div>${esc(w.name)}</div><div class="sub">${esc(Air.typeName(w.type))} · ${esc(Air.MISSIONS[w.mission].name)}</div></div></div>`).join('') + '</div>' : ''}
       <hr class="sep">
@@ -412,6 +412,19 @@ const UI = (function () {
     spinBuildings(performance.now(), true);
     if (canDeclare) $('#lp-war').onclick = () => confirmWar(owner);
     if (owner !== G.player) $('#lp-dip').onclick = () => { sel.dip = owner; sel.tab = 'diplo'; sel.collapsed = false; renderRight(); };
+  }
+  // the roads and railways that start in a province, and what they give
+  function routeRows(pid) {
+    if (typeof Routes === 'undefined') return '';
+    const G = Sim.G, l = Routes.of(pid);
+    if (!l.length) return '';
+    const txt = r => {
+      const other = r.a === pid ? r.b : r.a, name = MAP.provs[other].name, rail = r.rail;
+      const what = (r.trade ? 'Trade ' + (rail ? 'railway' : 'road') : rail ? 'Railway' : 'Road') + ' to ' + name;
+      const st = r.idle !== undefined ? 'quiet, no deal' : r.state === 'building' ? 'building, ' + Math.max(1, Math.ceil(r.left)) + ' d left' : Routes.isCut(r) ? 'cut by the enemy' : (rail ? '+20% output, armies ×2' : '+10% output, armies +30%');
+      return esc(what) + ' <span class="sub">(' + esc(st) + ')</span>';
+    };
+    return `<dt>Routes</dt><dd>${l.map(txt).join('<br>')}</dd>`;
   }
   function compStr(a) {
     const cnt = {};
@@ -845,6 +858,10 @@ const UI = (function () {
       <div class="list">${parts.map(x => `<div class="row"><div class="grow">${x[0]}</div><span class="num ${x[1] < 0 ? 'neg' : 'pos'}">${sgn(x[1])}</span></div>`).join('')}</div>
       ${e.gold < 0 ? '<div class="why bad">In debt: you cannot build or buy, and stability falls.</div>' : ''}
       <p class="note">Health is how well you are supplied with ${esc(Economy.goodName('food').toLowerCase())}, ${esc(Economy.goodName('metal').toLowerCase())} and ${esc(Economy.goodName('fuel').toLowerCase())}. It speeds up research and taxes. ${Economy.anyShort(G.player) ? '<a href="#" class="lnk" data-gotrade="goods">Some goods are running short: see Trade.</a>' : 'Goods, partners and deals are in the Trade tab.'}</p>`;
+    if (typeof Routes !== 'undefined' && G.routes) {
+      const R = Routes.summary(G.player);
+      if (R.open + R.building + R.cut + R.idle) html += `<hr class="sep"><div class="label">Roads and railways</div><p class="note" style="margin-top:4px">${R.open} working${R.building ? ', ' + R.building + ' being built' : ''}${R.cut ? ', ' + R.cut + ' cut by the enemy' : ''}${R.idle ? ', ' + R.idle + ' quiet' : ''}. Tolls ${f1(R.tolls)} and upkeep ${f1(R.upkeep)} ${esc(Economy.coin())} a month. They build themselves between your buildings and to land neighbours you trade with, and give more output, faster armies and better supply.</p>`;
+    }
     html += `<hr class="sep"><div class="label">Construction · ${f1(e.cp)} points a day</div>`;
     const bp = buildPick();
     if (e.queue.length) html += '<div class="list" style="margin:6px 0">' + e.queue.map((q, i) => `<div class="row">${bicon(q.kind, 60)}<div class="grow"><div>${esc(Economy.kindName(q.kind))} <span class="sub">in ${esc(MAP.provs[q.prov].name)}</span></div><div class="bar prog"><i style="width:${Math.round((1 - q.left / q.total) * 100)}%"></i></div></div><span class="sub">${i < 3 ? Math.max(1, Math.ceil(q.left / Math.max(0.1, e.cp / Math.min(3, e.queue.length)))) + ' d' : 'waiting'}</span><button class="btn sm" data-unbuild="${i}" aria-label="Cancel construction" title="Cancel (half the gold back)">×</button></div>`).join('') + '</div>';

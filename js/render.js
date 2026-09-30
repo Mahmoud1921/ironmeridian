@@ -345,6 +345,7 @@ const Render = (function () {
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawLabels(z, vx0, vy0, vx1, vy1);
+    if (G && G.routes && G.routes.length) drawRoutes(z, vx0, vy0, vx1, vy1);
     if (G && G.ind) drawBuildings(z, vx0, vy0, vx1, vy1);
     drawCities(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
@@ -523,6 +524,289 @@ const Render = (function () {
       if (q) for (const j of q) put(j.kind, 1, j);
       for (const [k, c] of list) put(k, c, null);
     }
+  }
+
+  // ---------- roads and railways: drawn under the buildings, with era traffic and a laying animation ----------
+  const ROAD_LOOK = {
+    'greece-431bc': { w: 3, col: '#b39264', edge: 'rgba(52,36,18,.6)' },
+    'rome-117': { w: 3.8, col: '#cbc3b1', edge: '#4a4339', stones: '#8b8374' },
+    'medieval-1200': { w: 3.2, col: '#a17f55', edge: 'rgba(46,32,18,.65)', ruts: '#6f5434' },
+    'napoleonic-1805': { w: 3.5, col: '#cfbb92', edge: '#56462f' },
+    'greatwar-1914': { w: 3.8, col: '#8c8980', edge: '#2d2b27' },
+    'ww2-1936': { w: 4.2, col: '#3d3d3b', edge: '#171716', centre: '#e6ddbb' }
+  };
+  const LAY_MS = 2200, STAGGER_MS = 380;
+  const rGeo = new Map(), rAnim = new Map();
+  const rSmoke = [], rSparks = [];
+  let rLast = 0, rStagger = 0, rStaggerAt = 0, rDrawn = 0;
+  const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+  // world-space centre line: from a building spot, through the province centres on the way, to a building spot
+  function routeGeo(r) {
+    const key = r.id + ':' + r.path.join(',');
+    let g = rGeo.get(r.id);
+    if (g && g.key === key) return g;
+    const P = MAP.provs, a = P[r.a], b = P[r.b];
+    const sa = spotsFor(a)[0], sb = spotsFor(b)[0];
+    let pts = [[sa[0], sa[1]]].concat(r.path.slice(1, -1).map(i => [P[i].x, P[i].y]), [[sb[0], sb[1]]]);
+    if (pts.length === 2) {
+      // a gentle bend, so neighbouring routes don't look ruled
+      const [p0, p1] = pts, d = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1, side = r.id & 1 ? 1 : -1, bend = d * (0.06 + (r.id % 5) * 0.012) * side;
+      const cx = (p0[0] + p1[0]) / 2 - (p1[1] - p0[1]) / d * bend, cy = (p0[1] + p1[1]) / 2 + (p1[0] - p0[0]) / d * bend;
+      pts = []; for (let i = 0; i <= 16; i++) { const t = i / 16, u = 1 - t; pts.push([u * u * p0[0] + 2 * u * t * cx + t * t * p1[0], u * u * p0[1] + 2 * u * t * cy + t * t * p1[1]]); }
+    } else for (let k = 0; k < 2; k++) {             // Chaikin: round the corners at each province centre
+      const q = [pts[0]];
+      for (let i = 0; i < pts.length - 1; i++) { const A = pts[i], B = pts[i + 1]; q.push([A[0] * 0.75 + B[0] * 0.25, A[1] * 0.75 + B[1] * 0.25], [A[0] * 0.25 + B[0] * 0.75, A[1] * 0.25 + B[1] * 0.75]); }
+      q.push(pts[pts.length - 1]); pts = q;
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    // the border post stands where the route enters the partner's land
+    let post = null;
+    if (r.trade && r.cross > 0) { const A = P[r.path[r.cross - 1]], B = P[r.path[r.cross]]; post = [(A.x + B.x) / 2, (A.y + B.y) / 2]; }
+    else if (r.trade) post = [(pts[0][0] + pts[pts.length - 1][0]) / 2, (pts[0][1] + pts[pts.length - 1][1]) / 2];
+    g = { key, pts, box: [x0, y0, x1, y1], sp: ((a.spacing || 1) + (b.spacing || 1)) / 2, post };
+    rGeo.set(r.id, g);
+    if (rGeo.size > 4000) rGeo.clear();
+    return g;
+  }
+  // the same line in screen pixels, with the running length
+  function screenLine(g) {
+    const out = []; let L = 0;
+    for (let i = 0; i < g.pts.length; i++) {
+      const [x, y] = worldToScreen(g.pts[i][0], g.pts[i][1]);
+      if (i) { const o = out[i - 1]; L += Math.hypot(x - o.x, y - o.y); o.ang = Math.atan2(y - o.y, x - o.x); }
+      out.push({ x, y, s: L, ang: 0 });
+    }
+    if (out.length > 1) out[out.length - 1].ang = out[out.length - 2].ang;
+    out.len = L;
+    return out;
+  }
+  function lineAt(l, s) {
+    s = Math.max(0, Math.min(l.len, s));
+    let lo = 1, hi = l.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (l[m].s < s) lo = m + 1; else hi = m; }
+    const a = l[lo - 1], b = l[lo] || a, f = (s - a.s) / Math.max(1e-6, b.s - a.s);
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, ang: a.ang };
+  }
+  function traceLine(l, upto, off, pa) {
+    const lim = upto === undefined ? l.len : upto;
+    const c = pa || ctx;
+    if (!pa) ctx.beginPath();
+    for (let i = 0; i < l.length; i++) {
+      const p = l[i];
+      if (p.s > lim) { const q = lineAt(l, lim); c.lineTo(q.x - (off ? Math.sin(q.ang) * off : 0), q.y + (off ? Math.cos(q.ang) * off : 0)); break; }
+      const x = off ? p.x - Math.sin(p.ang) * off : p.x, y = off ? p.y + Math.cos(p.ang) * off : p.y;
+      i ? c.lineTo(x, y) : c.moveTo(x, y);
+    }
+  }
+  function tickPath(l, upto, every, half, pa) {
+    for (let s = every / 2; s < upto; s += every) { const q = lineAt(l, s), nx = -Math.sin(q.ang), ny = Math.cos(q.ang); pa.moveTo(q.x - nx * half, q.y - ny * half); pa.lineTo(q.x + nx * half, q.y + ny * half); }
+  }
+  function tickMarks(l, upto, every, half, col, w) {
+    ctx.beginPath(); tickPath(l, upto, every, half, ctx);
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+  }
+  // finished routes are stroked together, one path per layer and width, which is far cheaper
+  let rBatch = null;
+  function layerStroke(stat, layer, col, w, dash, fn) {
+    if (stat) {
+      const key = layer + '|' + col + '|' + w.toFixed(2) + '|' + (dash || '');
+      let b = rBatch.get(key);
+      if (!b) { b = { layer, col, w, dash, pa: new Path2D() }; rBatch.set(key, b); }
+      fn(b.pa);
+      return;
+    }
+    ctx.beginPath(); fn(ctx);
+    if (dash) ctx.setLineDash(dash);
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+    if (dash) ctx.setLineDash([]);
+  }
+  // little vehicles, facing +x, about 10 px long at scale 1
+  const vRect = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+  const vEll = (x, y, rx, ry, c) => { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); };
+  const vLine = (x, y, w, h) => { ctx.strokeStyle = 'rgba(10,10,8,.85)'; ctx.lineWidth = 0.5; ctx.strokeRect(x, y, w, h); };
+  const vAnimal = (x, y, c, ph) => { const b = Math.sin(ph) * 0.35; vEll(x, y + b, 2.4, 1.05, c); vEll(x + 2.5, y + b, 0.9, 0.7, c); };
+  function vCart(bed, cover) { vRect(-7, -2.2, 6, 4.4, bed); vLine(-7, -2.2, 6, 4.4); if (cover) vEll(-4, 0, 3.1, 2.1, cover); vRect(-6, -2.9, 1.6, 0.7, '#1b1812'); vRect(-6, 2.2, 1.6, 0.7, '#1b1812'); vRect(-1, -0.3, 2, 0.6, '#5a4128'); }
+  function vLorry(cab, bed) { vRect(-6, -2.2, 7, 4.4, bed); vLine(-6, -2.2, 7, 4.4); vRect(1.4, -2, 3.2, 4, cab); vLine(1.4, -2, 3.2, 4); vRect(3.2, -1.6, 0.8, 3.2, 'rgba(170,190,200,.7)'); }
+  function vehicle(era, war, pick, col, ph) {
+    if (war) {
+      if (era === 'greatwar-1914' || era === 'ww2-1936') return vLorry('#4d5634', '#667046');
+      vCart('#6b5436', '#b8ae8a'); vAnimal(3.5, -1, '#5a3c26', ph); vAnimal(3.5, 1.1, '#4a3120', ph + 1); return;
+    }
+    if (era === 'greece-431bc') { vCart('#8a6a3c'); vAnimal(3.6, -1.1, '#d6c8ad', ph * 0.6); vAnimal(3.6, 1.1, '#c2b394', ph * 0.6 + 1); return; }
+    if (era === 'rome-117') { if (pick < 0.35) { vAnimal(0, 0, '#7a6a58', ph); vRect(-1.6, -1.8, 3, 3.6, 'rgba(160,120,70,.95)'); return; } vCart('#9b6b3e'); vAnimal(3.6, 0, '#6b4a2e', ph); return; }
+    if (era === 'medieval-1200') { if (pick < 0.4) { vAnimal(0, 0, '#6d5a47', ph); vRect(-1.5, -2, 2.6, 4, '#8f7a52'); return; } vCart('#7e6240', '#d9cfb4'); vAnimal(3.6, 0, '#5b3f28', ph); return; }
+    if (era === 'napoleonic-1805') {
+      if (pick < 0.5) { vRect(-7, -2.4, 6.4, 4.8, '#2d2620'); vRect(-6.4, -1.8, 5.2, 3.6, col % 2 ? '#6b2a24' : '#2b3f5a'); vLine(-7, -2.4, 6.4, 4.8); vAnimal(3.4, -1.1, '#3a2a1c', ph); vAnimal(3.4, 1.1, '#5b3f28', ph + 1); return; }
+      vCart('#7b5f3d', '#e2d8bd'); vAnimal(3.6, -1, '#6b4a2e', ph); vAnimal(3.6, 1.1, '#4a3120', ph + 1); return;
+    }
+    if (era === 'greatwar-1914') { if (pick < 0.5) { vCart('#6d5a3a'); vAnimal(3.6, 0, '#5b3f28', ph); return; } return vLorry('#4a4a44', '#8a8570'); }
+    if (pick < 0.3) return vLorry('#5a5f55', '#8e8c80');
+    const cols = ['#a8382c', '#2f4c78', '#1e1e1e', '#d6c79d', '#3c6848'];
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(-4, -1.9, 8, 3.8, 1.4); else ctx.rect(-4, -1.9, 8, 3.8);
+    ctx.fillStyle = cols[col % 5]; ctx.fill(); ctx.strokeStyle = 'rgba(8,8,8,.8)'; ctx.lineWidth = 0.5; ctx.stroke();
+    vRect(-1.4, -1.5, 3, 3, 'rgba(20,24,28,.7)'); vRect(1.8, -1.5, 0.8, 3, 'rgba(160,190,210,.8)');
+  }
+  function drawTrain(l, s, dir, f, war, era, world) {
+    const cars = war ? ['#4d5634', '#4d5634', '#5a6340', '#4d5634'] : (era === 'ww2-1936' ? ['#6b3b2a', '#56585a', '#2a3b52', '#6b3b2a'] : ['#6b3b2a', '#5d5448', '#6b3b2a']);
+    const L = 9.5, k = 1.3 * f;
+    [null].concat(cars).forEach((c, i) => {
+      const at = s - dir * k * (i ? i * (L + 1) + 3 : 0);
+      if (at < 0 || at > l.len) return;
+      const q = lineAt(l, at);
+      ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.ang + (dir < 0 ? Math.PI : 0)); ctx.scale(k, k);
+      if (!c) {
+        vRect(-6.5, -2.3, 3.2, 4.6, '#26221f'); vLine(-6.5, -2.3, 3.2, 4.6);
+        vEll(0.5, 0, 5.6, 2.1, '#1a1918'); vRect(-3.8, -2.4, 3, 4.8, '#1a1918'); vLine(-3.8, -2.4, 3, 4.8);
+        vEll(3.6, 0, 1, 1, '#3a3a38'); vRect(5.4, -1.6, 0.8, 3.2, '#8c2a22');
+      } else { vRect(-L / 2, -2.2, L, 4.4, c); vLine(-L / 2, -2.2, L, 4.4); vRect(-L / 2 + 0.6, -0.2, L - 1.2, 0.4, 'rgba(0,0,0,.35)'); }
+      ctx.restore();
+      if (!c && rSmoke.length < 160 && Math.random() < 0.12) rSmoke.push({ w: screenToWorld(q.x + Math.cos(q.ang) * 4.7 * dir * k, q.y + Math.sin(q.ang) * 4.7 * dir * k), r: 1.4 * f, a: 0.75 });
+    });
+  }
+  function drawRoutes(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, now = performance.now(), era = typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936';
+    const S = ROAD_LOOK[era] || ROAD_LOOK['ww2-1936'];
+    const dt = rLast ? Math.min(0.1, (now - rLast) / 1000) : 0; rLast = now;
+    const still = reduceMotion(), paused = G.paused;
+    if (now - rStaggerAt > 3000) rStagger = 0;
+    const R = G.routes.slice().sort((a, b) => (a.rail === b.rail ? 0 : a.rail ? 1 : -1));
+    rBatch = new Map();
+    const traffic = [];
+    rDrawn = 0;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const r of R) {
+      const g = routeGeo(r), b = g.box;
+      if (b[2] < vx0 - 2 || b[0] > vx1 + 2 || b[3] < vy0 - 2 || b[1] > vy1 + 2) continue;
+      const px = g.sp * z;
+      // first sight of a new route: lay it down over two seconds, one after another
+      let A = rAnim.get(r.id);
+      if (!A) {
+        const fresh = r.state === 'building' && G.hour - r.born < 72 && !still;
+        A = { t0: fresh ? now + 250 + (rStagger++) * STAGGER_MS : -1e9, state: r.state, flash: 0 };
+        if (fresh) rStaggerAt = now;
+        rAnim.set(r.id, A);
+      }
+      if (A.state !== r.state) { if (r.state === 'open' && !still) A.flash = now; A.state = r.state; }
+      if (px < 30) continue;
+      let f = Math.max(0.45, Math.min(1.4, px / 80));
+      const l = screenLine(g);
+      if (l.len < 4) continue;
+      const lay = still ? 1 : Math.max(0, Math.min(1, (now - A.t0) / LAY_MS));
+      if (lay <= 0) continue;
+      const reveal = 1 - Math.pow(1 - lay, 2.2);
+      const cutNow = Routes.isCut(r);
+      const idle = r.idle !== undefined;
+      ctx.save();
+      if (cutNow) ctx.globalAlpha = 0.45;
+      if (idle && !cutNow) ctx.globalAlpha = 0.3;
+      const prog = r.state === 'building' ? Math.max(0, Math.min(1, 1 - r.left / r.total)) : 1;
+      if (r.state === 'building') {
+        ctx.setLineDash([5 * f, 5 * f]); traceLine(l); ctx.strokeStyle = r.rail ? '#27231f' : S.edge; ctx.lineWidth = (r.rail ? 3 : S.w) * f; ctx.stroke(); ctx.setLineDash([]);
+      }
+      const upto = l.len * prog * reveal;
+      rDrawn++;
+      const st = lay >= 1 && r.state === 'open' && !cutNow && !idle && !(A.flash && now - A.flash < 900);
+      if (st) f = Math.round(f * 10) / 10;
+      if (r.rail) {
+        // ballast and sleepers first, the rails a little behind
+        layerStroke(st, 0, '#6a635a', 6.2 * f, null, pa => traceLine(l, upto, 0, pa));
+        if (f >= 0.7) layerStroke(st, 1, '#3b2d21', 1.2 * f, null, pa => tickPath(l, upto, 3.6 * f, 3.4 * f, pa));
+        const railTo = lay >= 1 ? upto : Math.max(0, upto - 22 * f);
+        layerStroke(st, 2, '#1c1c1d', 0.9 * f, null, pa => { traceLine(l, railTo, -1.4 * f, pa); traceLine(l, railTo, 1.4 * f, pa); });
+      } else {
+        layerStroke(st, 0, S.edge, (S.w + 1.8) * f, null, pa => traceLine(l, upto, 0, pa));
+        layerStroke(st, 1, S.col, S.w * f, null, pa => traceLine(l, upto, 0, pa));
+        if (S.stones && f >= 0.7) layerStroke(st, 2, S.stones, 0.6 * f, null, pa => tickPath(l, upto, 3 * f, S.w / 2 * f, pa));
+        if (S.ruts && f >= 0.7) layerStroke(st, 2, S.ruts, 0.5 * f, null, pa => { traceLine(l, upto, -0.8 * f, pa); traceLine(l, upto, 0.8 * f, pa); });
+        if (S.centre) layerStroke(st, 2, S.centre, 0.6 * f, [3 * f, 3 * f], pa => traceLine(l, upto, 0, pa));
+      }
+      ctx.restore();
+      // the working end while it is being laid: a work cart, with dust on roads and sparks on rails
+      if (lay < 1) {
+        const q = lineAt(l, upto);
+        if (Math.random() < 0.6) rSmoke.push({ w: screenToWorld(q.x + (Math.random() - 0.5) * 4, q.y + (Math.random() - 0.5) * 4), r: 1.2 * f, a: 0.55, dust: !r.rail });
+        if (r.rail && Math.random() < 0.5) rSparks.push({ x: q.x, y: q.y, vx: (Math.random() - 0.5) * 30, vy: -Math.random() * 25, a: 1 });
+        ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.ang); ctx.scale(1.35 * f, 1.35 * f);
+        if (r.rail) { vRect(-5, -2.2, 6, 4.4, '#4a4036'); vLine(-5, -2.2, 6, 4.4); vRect(-4.4, -1.6, 4.8, 1.2, '#8a6a44'); vRect(-4.4, 0.4, 4.8, 1.2, '#8a6a44'); }
+        else if (era === 'greatwar-1914' || era === 'ww2-1936') vLorry('#6a5a3a', '#9a8a60');
+        else { vCart('#7a5c38'); vAnimal(3.6, 0, '#5b3f28', now / 140); }
+        ctx.restore();
+      } else if (A.flash && now - A.flash < 900 && !cutNow) {
+        // a brass flash runs along a route the moment it is finished
+        const k = (now - A.flash) / 900;
+        ctx.save(); ctx.globalAlpha = 0.6 * (1 - k); traceLine(l); ctx.strokeStyle = '#f0c56a'; ctx.lineWidth = ((r.rail ? 6 : S.w) + 5 * (1 - k)) * f; ctx.stroke(); ctx.restore();
+      }
+      if (lay >= 1 && r.state === 'building') {
+        const q = lineAt(l, l.len / 2), rad = 7 * f;
+        ctx.beginPath(); ctx.arc(q.x, q.y, rad, 0, Math.PI * 2); ctx.fillStyle = 'rgba(20,18,14,.85)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(q.x, q.y, rad - 1.5 * f, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prog); ctx.strokeStyle = '#d6b052'; ctx.lineWidth = 2.2 * f; ctx.stroke();
+      }
+      if (g.post && reveal >= 0.6) {
+        const [sx, sy] = worldToScreen(g.post[0], g.post[1]), q = lineAt(l, l.len * 0.55);
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(q.ang + Math.PI / 2); ctx.scale(f, f);
+        vRect(-5.5, -0.9, 11, 1.8, '#f2eee4'); for (let i = -4; i < 5; i += 3) vRect(i, -0.9, 1.5, 1.8, !cutNow && !idle ? '#b8392c' : '#77706a');
+        ctx.strokeStyle = '#1b1a14'; ctx.lineWidth = 0.5; ctx.strokeRect(-5.5, -0.9, 11, 1.8); vRect(-6.8, -1.6, 1.8, 3.2, '#3a3a36');
+        ctx.restore();
+      }
+      if (cutNow && lay >= 1) for (const k of [0.42, 0.58]) {
+        const q = lineAt(l, l.len * k);
+        ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.ang); ctx.strokeStyle = '#e0503d'; ctx.lineWidth = 2.4 * f; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-3.5 * f, -3.5 * f); ctx.lineTo(3.5 * f, 3.5 * f); ctx.moveTo(3.5 * f, -3.5 * f); ctx.lineTo(-3.5 * f, 3.5 * f); ctx.stroke(); ctx.restore();
+      }
+      // traffic on working routes, more of it between busy buildings; wartime traffic is military
+      if (lay < 1 || r.state !== 'open' || cutNow || idle || px < 50) continue;
+      traffic.push([r, l, f, A]);
+    }
+    // the batched strokes, bottom layer first
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const b of [...rBatch.values()].sort((a, c) => a.layer - c.layer)) {
+      if (b.dash) ctx.setLineDash(b.dash);
+      ctx.strokeStyle = b.col; ctx.lineWidth = b.w; ctx.stroke(b.pa);
+      if (b.dash) ctx.setLineDash([]);
+    }
+    rBatch = null;
+    let vehicles = 0;
+    for (const [r, l, f, A] of traffic) {
+      if (vehicles > 80) break;
+      const war = Sim.isAtWar(r.tag);
+      const t = still || paused ? (A.frozen || (A.frozen = now)) : (A.frozen = 0, now);
+      if (r.rail) {
+        const cyc = r.km / 26 + 2.4, u = ((t / 1000 + r.id * 7.3) % (cyc * 2)) / cyc;   // out and back, waiting at each end
+        const dir = u < 1 ? 1 : -1, v = u < 1 ? u : u - 1, frac = Math.min(1, Math.max(0, (v * cyc - 1.2) / (cyc - 2.4)));
+        const s = dir > 0 ? frac * (l.len + 40 * f) - 20 * f : l.len + 20 * f - frac * (l.len + 40 * f);
+        drawTrain(l, s, dir, f, war, era);
+        vehicles += 4;
+        continue;
+      }
+      const I = G.ind, busy = [r.a, r.b].reduce((n, p) => n + (I[p] ? Object.values(I[p]).reduce((x, y) => x + y, 0) : 0), 0);
+      const n = Math.max(1, Math.min(5, Math.round(r.km / 110) + Math.floor(busy / 3)));
+      const speed = era === 'greatwar-1914' || era === 'ww2-1936' ? 16 : 7;
+      for (let i = 0; i < n; i++) {
+        const h = ((r.id * 2654435761 + i * 40503) >>> 0) / 4294967296;
+        const vs = speed * (0.8 + h * 0.4), per = r.km / vs;
+        const u = ((t / 1000 / per + h * 2 + i * 0.37) % 2 + 2) % 2, dir = u < 1 ? 1 : -1, frac = u < 1 ? u : 2 - u;
+        const q = lineAt(l, frac * l.len), lane = (dir > 0 ? 1.6 : -1.6) * f;
+        ctx.save(); ctx.translate(q.x - Math.sin(q.ang) * lane, q.y + Math.cos(q.ang) * lane); ctx.rotate(q.ang + (dir < 0 ? Math.PI : 0)); ctx.scale(1.35 * f, 1.35 * f);
+        vehicle(era, war, h, i, t / 160 + frac * 20);
+        ctx.restore();
+        vehicles++;
+      }
+    }
+    // smoke, dust and sparks
+    for (let i = rSmoke.length - 1; i >= 0; i--) {
+      const p = rSmoke[i]; if (!still) { p.r += dt * 4; p.a -= dt * 0.55; }
+      if (p.a <= 0) { rSmoke.splice(i, 1); continue; }
+      const [x, y] = worldToScreen(p.w[0], p.w[1]);
+      vEll(x, y - (0.75 - p.a) * 8, p.r, p.r, p.dust ? `rgba(196,170,120,${p.a.toFixed(3)})` : `rgba(215,210,200,${p.a.toFixed(3)})`);
+    }
+    for (let i = rSparks.length - 1; i >= 0; i--) {
+      const p = rSparks[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 60 * dt; p.a -= dt * 2.5;
+      if (p.a <= 0) { rSparks.splice(i, 1); continue; }
+      vEll(p.x, p.y, 0.7, 0.7, `rgba(255,${190 + Math.round(50 * p.a)},90,${p.a.toFixed(3)})`);
+    }
+    if (rSmoke.length > 400) rSmoke.splice(0, rSmoke.length - 400);
+    if (rSparks.length > 200) rSparks.splice(0, rSparks.length - 200);
   }
 
   function drawPaths(z) {
@@ -1050,5 +1334,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

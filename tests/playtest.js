@@ -518,6 +518,30 @@ async function economyRun(browser) {
   const spawned = await waitFor(page, ([q, id]) => { const Q = Sim.G.countries.GER.queue; return Q.length === q + 1 && Q[Q.length - 1].prov === id; }, [r0, spid]);
   const readyAt = spawned && await G(id => { const c = Sim.G.countries.GER; c.queue.forEach(q => { if (q.prov === id) q.hours = 1; }); for (let h = 0; h < 3 && c.queue.some(q => q.prov === id); h++) Sim.hourTick(); return Sim.G.owner[id] !== 'GER' || Sim.G.armies.some(a => a.owner === 'GER' && a.prov === id && a.reserve); }, spid);
   check('train: new troops gather in the chosen province', spawned && readyAt);
+
+  // roads and railways between buildings
+  const net = await G(() => { const g = Sim.G, R = g.routes.filter(r => r.tag === 'GER' && !r.trade); return { n: R.length, inside: R.every(r => r.path.every(p => g.owner[p] === 'GER')), links: Math.max(0, ...Object.values(R.reduce((m, r) => { m[r.a] = (m[r.a] || 0) + 1; m[r.b] = (m[r.b] || 0) + 1; return m; }, {}))) }; });
+  check('routes: a nation starts with roads between its buildings', net.n > 0 && net.inside && net.links <= 3, JSON.stringify(net));
+  const lay = await G(() => {
+    const g = Sim.G, c = g.countries.GER;
+    const empty = Sim.MAP.provs.filter(p => g.owner[p.id] === 'GER' && !(g.ind[p.id] && Object.values(g.ind[p.id]).some(x => x)) && !(g.inf && g.inf[p.id] && Object.values(g.inf[p.id]).some(x => x)));
+    c.eco.gold += 5000;
+    for (const p of empty) {
+      if (!Economy.build('GER', 'fort', p.id).ok) continue;
+      c.eco.queue[c.eco.queue.length - 1].left = 0.01;
+      for (let h = 0; h < 48; h++) Sim.hourTick();
+      const R = g.routes.filter(r => r.a === p.id || r.b === p.id);
+      if (!R.length) continue;
+      const r = R[0], was = r.state;
+      for (let d = 0; d < 50 && r.state !== 'open'; d++) for (let h = 0; h < 24; h++) Sim.hourTick();
+      return { pid: p.id, was, now: r.state, id: r.id, out: Routes.outMul(p.id), speed: Routes.speedMul('GER', r.path[0], r.path[1]), rail: r.rail };
+    }
+    return null;
+  });
+  check('routes: a new building lays a route that opens after its build time', !!lay && lay.was === 'building' && lay.now === 'open', JSON.stringify(lay));
+  check('routes: working routes raise output and army speed', !!lay && lay.out > 1 && lay.speed >= 1.3, lay ? 'output ×' + lay.out + ', speed ×' + lay.speed : '');
+  await G(p => { const pr = Sim.MAP.provs[p]; Object.assign(Render.cam, { x: pr.x, y: pr.y, z: 40, tx: pr.x, ty: pr.y, tz: 40, anim: false }); }, lay ? lay.pid : 0);
+  check('map: roads and railways are drawn', await waitFor(page, () => Render._routes() > 0, null, 2000));
   await clickEl(page, '.tab[data-tab="econ"]');
 
   // buy fuel from a nation with a surplus, through the Nations tab trade form (after freeing a trade slot)
