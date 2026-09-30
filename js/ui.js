@@ -683,7 +683,7 @@ const UI = (function () {
     for (const t of trainable) {
       const u = UNIT_TYPES[t];
       const strat = Economy.stratUnit(t) ? `<div class="sub">Needs ${esc(Economy.goodName('strategic').toLowerCase())}${c.eco && c.eco.sat.strategic < 0.99 ? ': trains at ' + pct(c.eco.sat.strategic) + ' speed' : ''}</div>` : '';
-      html += `<div class="row">${unitIcon(t, COUNTRY_BY_TAG[G.player].color).replace('<svg', '<svg style="width:34px;height:22px;flex:none"')}<div class="grow"><div>${u.name}</div>
+      html += `<div class="row rec-row"><canvas class="spin" data-spin="${t}" width="128" height="128" role="img" aria-label="${esc(u.name)} model"></canvas><div class="grow"><div>${u.name}</div>
         <div class="sub">Atk ${u.atk} · Def ${u.def} · ${u.speed} km/h · Org ${u.org}</div><div class="sub">${fmtN(Sim.mpCost(G.player, t))} men · ${u.eq} ${esc(Economy.goodName('arms').toLowerCase())} · ${u.days} days</div>${strat}</div>
         <button class="btn sm" data-rec="${t}" ${Sim.canRecruit(G.player, t) ? '' : 'disabled'}>Train</button></div>`;
     }
@@ -1602,10 +1602,19 @@ const UI = (function () {
 
   // ---------- periodic refresh ----------
   let lastRefresh = 0, lastFront = 0, inFrame = false;
+  // the unit models in the Train list turn slowly: one full turn every ten seconds
+  const SPIN_MS = 10000;
+  function spinModels(now) {
+    if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
+    const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
+    const tag = Sim.G.player;
+    $('#rp-body').querySelectorAll('canvas[data-spin]').forEach(cv => { try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { } });
+  }
   function frame(now) {
     const dtPan = lastPan ? Math.min(0.1, (now - lastPan) / 1000) : 0; lastPan = now;
     panStep(dtPan);
     const G = Sim.G; if (!G) return;
+    spinModels(now);
     // an event card answered elsewhere (or a finished conference) closes; one still waiting comes back
     const evCard = $('#modal').hidden ? null : $('#modal [data-evn]');
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;

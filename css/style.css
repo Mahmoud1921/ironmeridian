@@ -556,3 +556,5 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .swatch { width: 18px; height: 18px; flex: none; border: 1px solid rgba(0,0,0,.5); }
 #tb-net { display: none; align-items: center; gap: 6px; padding: 0 10px; font-size: 13px; color: #9fd48a; white-space: nowrap; cursor: pointer; background: none; border: 0; font: inherit; }
 #tb-net.on { display: inline-flex; }
+/* turning unit models in the Train list */
+canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px; background: radial-gradient(circle at 50% 66%, rgba(214,196,150,.28), rgba(214,196,150,.08) 45%, rgba(0,0,0,0) 72%); }

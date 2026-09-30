@@ -560,6 +560,8 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .swatch { width: 18px; height: 18px; flex: none; border: 1px solid rgba(0,0,0,.5); }
 #tb-net { display: none; align-items: center; gap: 6px; padding: 0 10px; font-size: 13px; color: #9fd48a; white-space: nowrap; cursor: pointer; background: none; border: 0; font: inherit; }
 #tb-net.on { display: inline-flex; }
+/* turning unit models in the Train list */
+canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px; background: radial-gradient(circle at 50% 66%, rgba(214,196,150,.28), rgba(214,196,150,.08) 45%, rgba(0,0,0,0) 72%); }
 
 </style>
 <div id="app">
@@ -11116,6 +11118,29 @@ const Figures = (function () {
     }
   }
 
+  const scaleOf = kind => kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05;
+  // a single model drawn live at any angle, for the turning previews in the Train list
+  const previewParts = new Map();
+  function preview(cv, tag, unitType, yaw) {
+    const kind = kindOf(unitType), c = COUNTRY_BY_TAG[tag];
+    const key = (c ? c.color : '') + '|' + kind;
+    let parts = previewParts.get(key);
+    if (!parts) {
+      parts = build(kind, palette(c ? c.color : '#6b7058'), 0, false);
+      // fit the model to the frame whatever its size: a column of soldiers and a tank fill it alike
+      let r = 1, top = 1, low = 0;
+      for (const f of parts) for (const v of f.v) { r = Math.max(r, Math.hypot(v[0], v[1])); top = Math.max(top, v[2]); }
+      if (kind === 'plane') low = 8;
+      parts.fit = Math.min(CELL * 0.4 / (r * PX), CELL * 0.62 / (((top - low) * CE + r * SE) * PX));
+      parts.low = low;
+      previewParts.set(key, parts); if (previewParts.size > 60) previewParts.delete(previewParts.keys().next().value);
+    }
+    const g = cv.getContext('2d'), s = cv.width / CELL;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+    g.setTransform(s, 0, 0, s, 0, 0);
+    renderModel(g, parts, yaw, CELL / 2, CELL * 0.72 + parts.low * CE * PX * parts.fit, kind === 'plane', parts.fit);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+  }
   // Atlases are painted a row at a time within a small per-frame budget, so a new nation appearing on
   // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
   const atlases = new Map(); // key -> { cv, g, P, row }
@@ -11147,7 +11172,7 @@ const Figures = (function () {
         // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
         const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
         g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05);
+        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
         g.restore();
       }
     }
@@ -11192,8 +11217,8 @@ const Figures = (function () {
   // queue nations to paint ahead of need, most important first
   function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; }
-  return { draw, warm, pump, reset, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; previewParts.clear(); }
+  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
 })();
 
 // Canvas map renderer and camera (pan / zoom / picking).
@@ -12857,7 +12882,7 @@ const UI = (function () {
     for (const t of trainable) {
       const u = UNIT_TYPES[t];
       const strat = Economy.stratUnit(t) ? `<div class="sub">Needs ${esc(Economy.goodName('strategic').toLowerCase())}${c.eco && c.eco.sat.strategic < 0.99 ? ': trains at ' + pct(c.eco.sat.strategic) + ' speed' : ''}</div>` : '';
-      html += `<div class="row">${unitIcon(t, COUNTRY_BY_TAG[G.player].color).replace('<svg', '<svg style="width:34px;height:22px;flex:none"')}<div class="grow"><div>${u.name}</div>
+      html += `<div class="row rec-row"><canvas class="spin" data-spin="${t}" width="128" height="128" role="img" aria-label="${esc(u.name)} model"></canvas><div class="grow"><div>${u.name}</div>
         <div class="sub">Atk ${u.atk} · Def ${u.def} · ${u.speed} km/h · Org ${u.org}</div><div class="sub">${fmtN(Sim.mpCost(G.player, t))} men · ${u.eq} ${esc(Economy.goodName('arms').toLowerCase())} · ${u.days} days</div>${strat}</div>
         <button class="btn sm" data-rec="${t}" ${Sim.canRecruit(G.player, t) ? '' : 'disabled'}>Train</button></div>`;
     }
@@ -13776,10 +13801,19 @@ const UI = (function () {
 
   // ---------- periodic refresh ----------
   let lastRefresh = 0, lastFront = 0, inFrame = false;
+  // the unit models in the Train list turn slowly: one full turn every ten seconds
+  const SPIN_MS = 10000;
+  function spinModels(now) {
+    if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
+    const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
+    const tag = Sim.G.player;
+    $('#rp-body').querySelectorAll('canvas[data-spin]').forEach(cv => { try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { } });
+  }
   function frame(now) {
     const dtPan = lastPan ? Math.min(0.1, (now - lastPan) / 1000) : 0; lastPan = now;
     panStep(dtPan);
     const G = Sim.G; if (!G) return;
+    spinModels(now);
     // an event card answered elsewhere (or a finished conference) closes; one still waiting comes back
     const evCard = $('#modal').hidden ? null : $('#modal [data-evn]');
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;

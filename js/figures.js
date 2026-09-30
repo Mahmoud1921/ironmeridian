@@ -251,6 +251,29 @@ const Figures = (function () {
     }
   }
 
+  const scaleOf = kind => kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05;
+  // a single model drawn live at any angle, for the turning previews in the Train list
+  const previewParts = new Map();
+  function preview(cv, tag, unitType, yaw) {
+    const kind = kindOf(unitType), c = COUNTRY_BY_TAG[tag];
+    const key = (c ? c.color : '') + '|' + kind;
+    let parts = previewParts.get(key);
+    if (!parts) {
+      parts = build(kind, palette(c ? c.color : '#6b7058'), 0, false);
+      // fit the model to the frame whatever its size: a column of soldiers and a tank fill it alike
+      let r = 1, top = 1, low = 0;
+      for (const f of parts) for (const v of f.v) { r = Math.max(r, Math.hypot(v[0], v[1])); top = Math.max(top, v[2]); }
+      if (kind === 'plane') low = 8;
+      parts.fit = Math.min(CELL * 0.4 / (r * PX), CELL * 0.62 / (((top - low) * CE + r * SE) * PX));
+      parts.low = low;
+      previewParts.set(key, parts); if (previewParts.size > 60) previewParts.delete(previewParts.keys().next().value);
+    }
+    const g = cv.getContext('2d'), s = cv.width / CELL;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+    g.setTransform(s, 0, 0, s, 0, 0);
+    renderModel(g, parts, yaw, CELL / 2, CELL * 0.72 + parts.low * CE * PX * parts.fit, kind === 'plane', parts.fit);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+  }
   // Atlases are painted a row at a time within a small per-frame budget, so a new nation appearing on
   // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
   const atlases = new Map(); // key -> { cv, g, P, row }
@@ -282,7 +305,7 @@ const Figures = (function () {
         // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
         const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
         g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05);
+        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
         g.restore();
       }
     }
@@ -327,6 +350,6 @@ const Figures = (function () {
   // queue nations to paint ahead of need, most important first
   function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; }
-  return { draw, warm, pump, reset, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; previewParts.clear(); }
+  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
 })();
