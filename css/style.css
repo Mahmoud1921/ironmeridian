@@ -178,6 +178,14 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 #hud.drawer-open.wide #bottombar { left: calc(var(--rail) + 450px); }
 #offer { pointer-events: auto; align-self: flex-start; width: min(360px, 100%); padding: 10px 12px; border-left: 4px solid var(--brass); animation: tin .25s ease-out; }
 #offer p { margin: 6px 0 8px; font-size: 14px; }
+/* everyday events wait here while the clock runs */
+#evside { pointer-events: auto; align-self: flex-start; width: min(380px, 100%); padding: 10px 12px; border-left: 4px solid var(--info); animation: tin .25s ease-out; display: flex; flex-direction: column; gap: 6px; }
+#evside h3 { margin: 0; font-size: 17px; }
+#evside .ev-text { font-size: 13.5px; color: var(--muted); max-height: 4.6em; overflow: hidden; }
+#evside .ev-opt { padding: 5px 8px; }
+#evside .ev-opt b { font-size: 13.5px; }
+#evside .ev-opt small { font-size: 12px; }
+#evside .ev-foot { font-size: 12px; color: var(--faint); }
 #offer .acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
 #offer .acts .note { margin: 0 auto 0 0; }
 #armytray { pointer-events: auto; align-self: flex-start; max-width: calc(100% - 330px); display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: thin; }

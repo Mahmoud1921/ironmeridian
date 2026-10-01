@@ -232,11 +232,11 @@ async function desktopRun(browser) {
     let ok = false;
     if (box) {
       const sx = box.x + box.width / 2, sy = box.y + box.height / 2;
-      const want = await page.evaluate(([x, y]) => { const w = Render.screenToWorld(x, y); return Render.counterAt(x, y) ? -2 : Render.provinceAt(w[0], w[1]); }, [sx, sy]);
-      if (want >= 0) { await page.keyboard.press('Escape'); await page.mouse.click(sx, sy); ok = await waitFor(page, w => Render.state.selProv === w, want); }
+      const want = await page.evaluate(([x, y]) => { const w = Render.screenToWorld(x, y); return Render.counterAt(x, y) || Render.battleAtScreen(x, y) || Render.fleetAt(x, y) || Render.wingAt(x, y) ? -2 : Render.provinceAt(w[0], w[1]); }, [sx, sy]);
+      if (want >= 0) { await page.keyboard.press('Escape'); await page.mouse.click(sx, sy); ok = await waitFor(page, w => Render.state.selProv === w, want, 2000); }
       else ok = true;
     }
-    check('map: a click under a notification reaches the map', ok);
+    check('map: a click under a notification reaches the map', ok, ok ? '' : await page.evaluate(([x, y]) => { const e = document.elementFromPoint(x, y); return JSON.stringify({ under: e && (e.id || e.className), sel: Render.state.selProv, armies: UI._selected().length, counter: !!Render.counterAt(x, y), battle: !!Render.battleAtScreen(x, y), fleet: !!Render.fleetAt(x, y), wing: !!Render.wingAt(x, y), bsel: UI._sel().battle, modal: !document.getElementById('modal').hidden, paused: Sim.G.paused }); }, [box.x + box.width / 2, box.y + box.height / 2]));
   }
 
   // --- the side panel folds and opens with one click on its tab ---
@@ -361,6 +361,8 @@ async function desktopRun(browser) {
   // --- 3D troop figures: visible, animated, and cheap to draw even over a crowded front ---
   {
     const figs = await page.evaluate(async () => {
+      // the test's war can cost the player the game by now; these checks are about drawing, so the clock runs on
+      if (Sim.G.over) { Sim.G.over = false; Sim.G.paused = false; document.getElementById('modal').hidden = true; }
       const G = Sim.G, cap = Sim.MAP.provs[G.countries[G.player].capital];
       Render.flyTo(cap.x, cap.y, Render.minZoom() * 2.6);
       await new Promise(r => setTimeout(r, 1200));
@@ -377,9 +379,10 @@ async function desktopRun(browser) {
       const a = Sim.G.armies.find(x => x.path.length && !x.battle && Render.dispPos(x) && performance.now() - Render.dispPos(x).seen < 300);
       if (!a) return null;
       const p0 = { ...Render.dispPos(a) }; await new Promise(r => setTimeout(r, 400)); const p1 = Render.dispPos(a);
-      return Math.hypot(p1.x - p0.x, p1.y - p0.y) > 0;
+      const ok = Math.hypot(p1.x - p0.x, p1.y - p0.y) > 0;
+      return ok ? true : JSON.stringify({ paused: Sim.G.paused, over: Sim.G.over, peace: !!Sim.G.peace, ev: Events.holding(), order: a.order, owner: a.owner, chase: a.chase, path: a.path.length, rate: a.rate });
     });
-    if (moved !== null) check('figures: moving troops glide between provinces', moved);
+    if (moved !== null) check('figures: moving troops glide between provinces', moved === true, moved === true ? '' : moved);
 
     // smooth marching: follow one army frame by frame; it should advance a little every frame,
     // never jump or step backwards, even as it crosses from one province into the next
@@ -1137,8 +1140,18 @@ async function politicsRun(browser) {
   const expired = await G(() => { Politics.addMod('ITA', { id: 'test', name: 'Test', days: 1, fx: [{ mod: 'industry', value: 0.5 }] }); const had = Tech.mod('ITA', 'industry'); for (let h = 0; h < 72; h++) Sim.hourTick(); while (Events.open().length) Events.choose(Events.open()[0].n, 0); return had >= 0.5 && !Politics.mods('ITA').some(m => m.id === 'test') && Tech.mod('ITA', 'industry') < 0.5; });
   check('politics: timed effects run out', expired);
 
-  // events: a card with choices, the clock waits for the answer
-  const evId = await G(() => { const d = Events.defs().find(d => !d.tag && d.options.length >= 2 && Events.check(Sim.G.countries.ITA, d.cond)); if (!d) return null; Sim.G.paused = false; Events.fire(d.id, 'ITA'); return d.id; });
+  // everyday events wait in a side card while the clock keeps running, then the ministers decide
+  const minor = await G(() => { const d = Events.defs().find(d => !d.tag && d.options.length >= 2 && Events.check(Sim.G.countries.ITA, d.cond)); if (!d) return null; Sim.G.settings.pauseEvent = true; Sim.G.paused = false; Sim.G.speed = 3; Events.fire(d.id, 'ITA'); return d.id; });
+  check('events: an everyday event shows beside the armies, not over the map', !!minor && await waitFor(page, () => !document.getElementById('evside').hidden && document.querySelectorAll('#evside .ev-opt').length >= 2 && document.getElementById('modal').hidden, null, 2000), minor || 'no everyday event applies');
+  const hm = await G(() => Sim.G.hour);
+  await page.waitForTimeout(900);
+  check('events: the clock keeps running for an everyday event', await G(h => Sim.G.hour > h && !Sim.G.paused, hm));
+  await clickEl(page, '#evside .ev-opt[data-x="1"]');
+  check('events: answering the side card records it', await waitFor(page, id => document.getElementById('evside').hidden && Sim.G.ev.hist.some(h => h.id === id && h.tag === 'ITA' && h.pick === 1), minor, 1500));
+  const auto = await G(() => { const d = Events.defs().find(d => !d.tag && d.options.length >= 2); Sim.G.paused = true; Events.fire(d.id, 'ITA'); const n = Sim.G.ev.next - 1; for (let h = 0; h < 24 * (Events.DECIDE_DAYS + 2); h++) Sim.hourTick(); const r = { left: Events.open().some(e => e.n === n), hist: Sim.G.ev.hist.some(h => h.id === d.id && h.tag === 'ITA') }; while (Events.open().length) Events.choose(Events.open()[0].n, 0); return r; });
+  check('events: an unanswered everyday event is decided after a month', !auto.left && auto.hist, JSON.stringify(auto));
+  // big historical events: a card with choices, the clock waits for the answer
+  const evId = await G(() => { Sim.G.paused = false; const d = Events.defs().find(d => [].concat(d.tag || []).includes('ITA') && (d.options || []).length >= 2) || Events.defs().find(d => d.tag && (d.options || []).length >= 2); if (!d) return null; Events.fire(d.id, 'ITA'); return d.id; });
   check('events: an event opens as a card with choices', !!evId && await waitFor(page, () => !document.getElementById('modal').hidden && document.querySelectorAll('#modal .ev-opt').length >= 2, null, 2000), evId || 'no everyday event applies');
   const h0 = await G(() => Sim.G.hour);
   await page.waitForTimeout(700);
@@ -1208,6 +1221,37 @@ async function politicsRun(browser) {
   await clickEl(page, '#tb-menu'); await clickEl(page, '#modal [data-x="saves"]');
   await page.setInputFiles('#sv-file', { name: 'save.json', mimeType: 'application/json', buffer: Buffer.from(expText) });
   check('save: Import from file loads it', await waitFor(page, () => Sim.G && Sim.G.player === 'ITA' && Eras.isBase(), null, 4000));
+
+  // a beaten army is destroyed, not sent running; a hunt aims where the enemy is marching to
+  const fight = await G(() => {
+    const S = Sim.G; S.paused = true;
+    if (!Sim.atWar('ITA', 'ETH')) Sim.declareWar('ITA', 'ETH', true);
+    const land = id => !Sim.MAP.provs[id].sea && Sim.MAP.provs[id].nb.length;
+    const a = S.armies.find(x => x.owner === 'ITA' && !x.sea && !x.battle && x.units.length >= 2 && Sim.MAP.provs[x.prov].nb.some(n => S.owner[n] === 'ITA' && land(n)));
+    if (!a) return null;
+    const p = Sim.MAP.provs[a.prov].nb.find(n => S.owner[n] === 'ITA' && land(n));
+    const e = Sim.newArmy('ETH', p, [{ type: 'infantry', str: 0.6, org: 0.08 }]);
+    a.units.forEach(u => { u.org = 1; u.str = 1; });
+    Sim.orderMove(a, p, 'move'); a.order = 'attack';
+    let ret = false;
+    for (let h = 0; h < 24 * 8 && S.armies.includes(e); h++) { Sim.hourTick(); if (e.retreating) ret = true; }
+    const gone = !S.armies.includes(e);
+    // the hunt: an enemy marching away is chased to its next stop, not to the province it left
+    const far = Sim.MAP.provs.filter(q => S.owner[q.id] === 'ITA' && land(q.id) && Sim.distKm(a.prov, q.id) > 300).map(q => q.id);
+    const e2 = Sim.newArmy('ETH', a.prov, [{ type: 'infantry', str: 1, org: 1 }]);
+    let moving = false;
+    for (const q of far) { if (Sim.orderMove(e2, q, 'move') && e2.path.length >= 2) { moving = true; break; } }
+    const hp = moving ? Sim.MAP.provs[e2.prov].nb.find(n => S.owner[n] === 'ITA' && n !== e2.path[0] && land(n) && Sim.findPath('ITA', n, e2.path[0], 'move')) : undefined;
+    const h2 = hp !== undefined ? Sim.newArmy('ITA', hp, [{ type: 'infantry', str: 1, org: 1 }]) : null;
+    const ok2 = moving && h2 && Sim.orderChase(h2, e2);
+    const r = { gone, ran: ret, chased: !!ok2, moving, hunter: !!h2, aim: ok2 ? h2.path[h2.path.length - 1] : null, next: e2.path[0], left: e2.prov };
+    Sim.removeArmy(e2); if (h2) Sim.removeArmy(h2);
+    return r;
+  });
+  if (fight) {
+    check('battle: a beaten army is destroyed instead of running away', fight.gone && !fight.ran, JSON.stringify(fight));
+    if (fight.chased) check('orders: hunting a marching army heads for where it is going', fight.aim === fight.next, JSON.stringify(fight));
+  }
 
   // the peace conference
   await G(() => { Sim.G.settings.autoPause = false; const S = Sim.G; if (!Sim.atWar('ITA', 'ETH')) Sim.declareWar('ITA', 'ETH', true); const eth = Sim.MAP.provs.filter(p => p.core === 'ETH' && p.home); eth.slice(0, Math.ceil(eth.length * 0.7)).forEach(p => { S.owner[p.id] = 'ITA'; }); S.ownVer++; for (let i = 0; i < 24; i++) Sim.hourTick(); });

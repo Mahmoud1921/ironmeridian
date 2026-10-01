@@ -212,7 +212,8 @@ const Events = (function () {
     if (!d.tag) ev.cd[key] = g.hour + (d.repeat || 1500) * DAY;
     if (Sim.isHuman(tag)) {
       ev.open.push({ n: ev.next++, id: d.id, tag, hour: g.hour });
-      if (g.settings.pauseEvent !== false && !g.paused) { g.paused = true; Sim.hooks.pause(); }
+      // big historical events stop the clock; everyday ones wait at the side while the game runs on
+      if (holds({ id: d.id }) && !g.paused) { g.paused = true; Sim.hooks.pause(); }
       if (hooks.show) hooks.show();
       return;
     }
@@ -235,6 +236,14 @@ const Events = (function () {
       Sim.notify(fill(d.title, tag) + (o && d.options.length > 1 ? ': ' + fill(o.text, tag) : '') + ' (' + c.name + ')', c.capital, 'info', false);
     }
   }
+  // historical events (tied to a nation and a date) are the big ones; the rest are everyday events
+  function isMajor(e) { const d = def(e.id); return !!(d && d.tag); }
+  function holds(e) { const st = G().settings; return isMajor(e) ? st.pauseEvent !== false : !!st.pauseMinor; }
+  // does an open event hold the clock?
+  function holding() { const g = G(); return !!(g && g.ev && g.ev.open.some(holds)); }
+  const DECIDE_DAYS = 30;
+  // the most likely answer, for an everyday event left unanswered too long
+  function aiPick(d) { const w = (d.options || []).map(o => o.ai === undefined ? 1 : o.ai); let best = 0; w.forEach((x, i) => { if (x > w[best]) best = i; }); return best; }
   // the player picks an option of an open event
   function choose(n, pick) {
     const g = G(), i = g.ev.open.findIndex(e => e.n === n);
@@ -250,6 +259,16 @@ const Events = (function () {
     const g = G(); if (!g.ev) setup();
     const ev = g.ev, day = Math.floor(g.hour / DAY), now = Sim.dateTime(g.hour);
     const L = defs();
+    // everyday events nobody answered within a month: the ministers decide
+    for (const e of ev.open.slice()) {
+      if (isMajor(e) || g.hour - e.hour < DECIDE_DAYS * DAY) continue;
+      const d = def(e.id), i = ev.open.indexOf(e);
+      ev.open.splice(i, 1);
+      if (!d) continue;
+      const pick = aiPick(d);
+      resolve(d, e.tag, pick);
+      if (d.options && d.options[pick]) Sim.tell(e.tag, fill(d.title, e.tag) + ': no answer came, so your ministers chose "' + fill(d.options[pick].text, e.tag) + '".', g.countries[e.tag].capital, 'info', false);
+    }
     // follow-ups that fall due
     for (const q of ev.queue.slice()) {
       if (q.at > g.hour) continue;
@@ -289,5 +308,5 @@ const Events = (function () {
   function open() { const g = G(); return g && g.ev ? g.ev.open.filter(e => e.tag === g.player) : []; }
   function openAll() { const g = G(); return g && g.ev ? g.ev.open : []; }
   function recent(n) { const g = G(); if (!g || !g.ev) return []; return g.ev.hist.slice(0, n || 12).map(h => { const d = def(h.id); return d ? { title: fill(d.title, h.tag), news: !!d.news, tag: h.tag, hour: h.hour, choice: d.options && d.options[h.pick] ? fill(d.options[h.pick].text, h.tag) : '' } : null; }).filter(Boolean); }
-  return { hooks, setup, daily, choose, view, open, openAll, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
+  return { hooks, setup, daily, choose, view, open, openAll, isMajor, holding, DECIDE_DAYS, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
 })();

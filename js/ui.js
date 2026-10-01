@@ -1280,7 +1280,7 @@ const UI = (function () {
     const chk = (k, t) => `<label class="check"><input type="checkbox" id="set-${k}" ${s[k] ? 'checked' : ''}> ${t}</label>`;
     modal(`<h2 class="display" style="font-size:24px">Command menu</h2>
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
-      <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on or by me')}${chk('pauseLoss', 'Loss of a city or my capital')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseCapitulation', 'A nation in my wars capitulates')}</div>
+      <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on me')}${chk('pauseLoss', 'My capital falls')}${chk('pauseCities', 'Any of my cities falls (once a day at most)')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseMinor', 'Everyday events (big historical events always pause)')}</div>
       ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
       ${netSection()}
       <hr class="sep"><div class="label">Saved games</div>
@@ -1298,7 +1298,7 @@ const UI = (function () {
     if (s.autosave === undefined) s.autosave = true;
     if (s.pauseEvent === undefined) s.pauseEvent = true;
     $('#set-autosave').checked = s.autosave; $('#set-pauseEvent').checked = s.pauseEvent;
-    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
+    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseCities', 'pauseBattle', 'pauseMinor', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
     Net.setPaused(true); refreshTop();
     const cp = $('#modal [data-copy]'); if (cp) cp.onclick = () => copyInvite();
   }
@@ -1412,9 +1412,30 @@ const UI = (function () {
   }
 
   // ---------- events ----------
+  // everyday events: a card beside the army tray, answered whenever the player likes while time runs on
+  let sideShown = 0;
+  function showSideEvent() {
+    const G = Sim.G, box = $('#evside'); if (!G || !box) return;
+    const e = Events.open().find(x => !Events.isMajor(x));
+    if (!e) { if (!box.hidden) { box.hidden = true; box.innerHTML = ''; } sideShown = 0; return; }
+    const left = Math.max(1, Events.DECIDE_DAYS - Math.floor((G.hour - e.hour) / 24));
+    const more = Events.open().filter(x => !Events.isMajor(x)).length - 1;
+    const foot = `Time keeps running. Your ministers decide in ${left} day${left > 1 ? 's' : ''} if you don't.${more > 0 ? ' ' + more + ' more waiting.' : ''}`;
+    if (sideShown === e.n) { const f = box.querySelector('.ev-foot'); if (f && f.textContent !== foot) f.textContent = foot; return; }
+    const v = Events.view(e);
+    if (!v) { Events.choose(e.n, 0); return; }
+    sideShown = e.n;
+    box.innerHTML = `<div class="ev-top" data-evs="${e.n}">${flagSVG(e.tag)}<span class="label">${esc(v.date)}</span></div>
+      <h3 class="display">${esc(v.title)}</h3><p class="ev-text">${esc(v.text)}</p>
+      <div class="ev-opts">${v.options.map(o => `<button class="btn ev-opt" data-x="${o.i}"><b>${esc(o.text)}</b><small>${o.fx.map(esc).join(' · ')}</small></button>`).join('')}</div>
+      <div class="ev-foot">${esc(foot)}</div>`;
+    box.hidden = false;
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { Events.choose(e.n, +b.dataset.x); sideShown = 0; refreshTop(); renderRight(); renderLeft(); showSideEvent(); });
+  }
   function showEvent() {
     const G = Sim.G; if (!G) return;
-    const e = Events.open()[0]; if (!e) return;
+    showSideEvent();
+    const e = Events.open().find(x => Events.isMajor(x) || G.settings.pauseMinor); if (!e) return;
     const v = Events.view(e);
     if (!v) { Events.choose(e.n, 0); return; }
     const c = G.countries[e.tag];
@@ -1422,7 +1443,7 @@ const UI = (function () {
       <h2 class="display" style="font-size:24px;margin:0">${esc(v.title)}</h2>
       <p class="ev-text">${esc(v.text)}</p>
       <div class="ev-opts">${v.options.map(o => `<button class="btn ev-opt" data-x="${o.i}"><b>${esc(o.text)}</b><small>${o.fx.map(esc).join(' · ')}</small></button>`).join('')}</div>`,
-      x => { Events.choose(e.n, +x); refreshTop(); renderRight(); renderLeft(); if (Events.open().length) showEvent(); });
+      x => { Events.choose(e.n, +x); refreshTop(); renderRight(); renderLeft(); showEvent(); });
   }
 
   // ---------- peace conference ----------
@@ -1500,7 +1521,7 @@ const UI = (function () {
   function backToStart() {
     if (Net.active()) Net.stop();
     netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
-    Sim.G = null; $('#modal').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);
@@ -1582,7 +1603,18 @@ const UI = (function () {
     const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
     // an enemy army clicked while ordering an attack (or right-clicked) is hunted down wherever it goes
-    const foeAt = () => { const g = Render.stackAt(sx, sy); return g && g.find(a => Sim.atWar(a.owner, G.player)) || null; };
+    // a marching army is a moving target: a click close to its troops counts as a click on it
+    const foeAt = () => {
+      const g = Render.stackAt(sx, sy), hit = g && g.find(a => Sim.atWar(a.owner, G.player));
+      if (hit) return hit;
+      let best = null, bd = 28;
+      for (const h of Render._hits()) {
+        const d = Math.hypot(sx - (h.x + h.w / 2), sy - (h.y + h.h / 2));
+        const foe = d < bd && h.group.find(a => Sim.atWar(a.owner, G.player));
+        if (foe) { best = foe; bd = d; }
+      }
+      return best;
+    };
     if (pending && button === 0) { const foe = pending.kind === 'attack' || pending.kind === 'move' ? foeAt() : null; if (foe) { pending = null; showHint(); chase(myArmiesSel(), foe); return; } resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
@@ -1691,6 +1723,7 @@ const UI = (function () {
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;
     if (!$('#modal').hidden && $('#modal .pz') && !G.peace) $('#modal').hidden = true;
     if ($('#modal').hidden && !G.over) { if (G.peace) showPeace(); else if (G.ev && G.ev.open.length) showEvent(); }
+    if (now - (frame.side || 0) > 500) { frame.side = now; showSideEvent(); }
     if (now - lastRefresh > 300) {
       lastRefresh = now;
       if (G.humans) pollOffers();

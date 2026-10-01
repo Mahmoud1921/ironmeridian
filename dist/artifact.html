@@ -182,6 +182,14 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 #hud.drawer-open.wide #bottombar { left: calc(var(--rail) + 450px); }
 #offer { pointer-events: auto; align-self: flex-start; width: min(360px, 100%); padding: 10px 12px; border-left: 4px solid var(--brass); animation: tin .25s ease-out; }
 #offer p { margin: 6px 0 8px; font-size: 14px; }
+/* everyday events wait here while the clock runs */
+#evside { pointer-events: auto; align-self: flex-start; width: min(380px, 100%); padding: 10px 12px; border-left: 4px solid var(--info); animation: tin .25s ease-out; display: flex; flex-direction: column; gap: 6px; }
+#evside h3 { margin: 0; font-size: 17px; }
+#evside .ev-text { font-size: 13.5px; color: var(--muted); max-height: 4.6em; overflow: hidden; }
+#evside .ev-opt { padding: 5px 8px; }
+#evside .ev-opt b { font-size: 13.5px; }
+#evside .ev-opt small { font-size: 12px; }
+#evside .ev-foot { font-size: 12px; color: var(--faint); }
 #offer .acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
 #offer .acts .note { margin: 0 auto 0 0; }
 #armytray { pointer-events: auto; align-self: flex-start; max-width: calc(100% - 330px); display: flex; gap: 6px; overflow-x: auto; padding: 6px; scrollbar-width: thin; }
@@ -683,6 +691,7 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
     </div>
 
     <footer id="bottombar">
+      <div id="evside" class="panel" hidden role="status"></div>
       <div id="offer" class="panel" hidden role="alert"></div>
       <div id="armytray" class="panel"></div>
     </footer>
@@ -4826,7 +4835,7 @@ const Sim = (function () {
       countries: {}, owner: MAP.provs.map(p => p.owner),
       armies: [], nextArmy: 1, battles: [], nextBattle: 1, wars: [], nextWar: 1,
       log: [], stats: { captured: 0, lost: 0, battlesWon: 0, battlesLost: 0 },
-      settings: { autoPause: true, pauseWar: true, pauseBattle: false, pauseLoss: true, pauseCapitulation: true },
+      settings: { autoPause: true, pauseWar: true, pauseBattle: false, pauseLoss: true, pauseCities: false, pauseCapitulation: false, pauseMinor: false },
       // diplomacy: relation changes, factions, pacts, guarantees, trade deals, cooldowns and war claims
       dip: { rel: {}, factions: [], facOf: {}, nextFac: 1, pacts: {}, guar: [], trade: [], embargo: [], plan: {}, cd: {}, claims: {} }
     };
@@ -4996,8 +5005,9 @@ const Sim = (function () {
     G.wars.push(war);
     for (const t of A.concat(D)) { const c = G.countries[t]; c.ws = Math.min(1, c.ws + 0.1); }
     if (!silent) {
-      const involvesPlayer = A.includes(G.player) || D.includes(G.player);
-      notify(G.countries[att].name + ' declared war on ' + G.countries[def].name + '.', G.countries[def].capital, 'war', involvesPlayer && G.settings.pauseWar);
+      // the clock stops only when someone else drags the player into a war, not for wars it starts itself
+      const onPlayer = D.includes(G.player) || (A.includes(G.player) && att !== G.player && !allied(att, G.player));
+      notify(G.countries[att].name + ' declared war on ' + G.countries[def].name + '.', G.countries[def].capital, 'war', onPlayer && G.settings.pauseWar);
     }
     return war;
   }
@@ -5119,7 +5129,9 @@ const Sim = (function () {
   // attack an enemy army and keep following it until it is destroyed or the order is changed
   function orderChase(a, target) {
     if (!target || !atWar(a.owner, target.owner)) return false;
-    if (!orderMove(a, target.prov, 'move')) return false;
+    const dest = target.path.length && target.path[0] !== a.prov ? target.path[0] : target.prov;
+    if (dest === a.prov) { orderHold(a); a.order = 'attack'; a.chase = target.id; return true; }
+    if (!orderMove(a, dest, 'move') && (dest === target.prov || !orderMove(a, target.prov, 'move'))) return false;
     a.order = 'attack'; a.chase = target.id;
     return true;
   }
@@ -5133,8 +5145,16 @@ const Sim = (function () {
     }
     if (a.battle || a.sea) return;
     if (a.order !== 'attack') { if (armyStats(a).org < 0.3) return; a.order = 'attack'; }
-    const dest = t.sea ? -1 : t.prov;
-    if (dest < 0 || dest === a.prov) return;
+    if (t.sea) return;
+    // aim where the enemy army is going, not the province it is leaving: its next stop while it marches
+    let dest = t.prov;
+    if (t.path.length) {
+      const nx = t.path[0];
+      // it is marching into our province: stand and meet it here
+      if (nx === a.prov) { if (a.path.length) { walkBack(a); a.target = a.prov; } return; }
+      dest = nx;
+    }
+    if (dest === a.prov) return;
     if (a.target === dest && a.path.length && a.path[a.path.length - 1] === dest) return;
     const id = t.id;
     if (orderMove(a, dest, 'move')) { a.order = 'attack'; }
@@ -5280,8 +5300,8 @@ const Sim = (function () {
     b.aStr = avg(atts.flatMap(a => a.units.map(u => u.str))); b.dStr = avg(defs.flatMap(d => d.units.map(u => u.str)));
     const pl = G.player;
     if (!defs.some(d => d.units.length) || dOrg < 0.06) {
-      // attackers win; defenders retreat
-      for (const d of defs) if (G.armies.includes(d)) retreatFrom(d, b);
+      // attackers win; the beaten defenders are destroyed where they stand (no running away)
+      for (const d of defs) if (G.armies.includes(d)) destroyBeaten(d, b.prov);
       if (allied(b.atkTag, pl)) G.stats.battlesWon++;
       if (allied(b.defTag, pl)) G.stats.battlesLost++;
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
@@ -5289,14 +5309,22 @@ const Sim = (function () {
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
       endBattle(b);
     } else if (aOrg < 0.12) {
-      for (const a of atts) { walkBack(a); if (a.order !== 'defend') a.order = 'hold'; a.battle = 0; }
+      // the attack broke down: the beaten attackers are destroyed too
+      for (const a of atts) if (G.armies.includes(a)) destroyBeaten(a, b.prov);
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
-        tell(h, 'The attack on ' + prov.name + ' was repulsed.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
+        tell(h, 'The attack on ' + prov.name + ' was beaten off.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
       endBattle(b);
     }
   }
   function avg(arr) { return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0; }
 
+  // an army that loses a battle does not run: what is left of it is killed or taken prisoner
+  function destroyBeaten(a, prov) {
+    tell(a.owner, a.name + ' was destroyed at ' + MAP.provs[prov].name + '.', prov, 'loss', false);
+    for (const h of humans()) if (h !== a.owner && G.battles.some(x => x.prov === prov)) tell(h, G.countries[a.owner].name + ' ' + a.name + ' was destroyed at ' + MAP.provs[prov].name + '.', prov, 'win', false);
+    G.countries[a.owner].losses += manpowerOf(a);
+    removeArmy(a);
+  }
   function retreatFrom(d, b) {
     const from = MAP.provs[b.prov];
     const attFrom = new Set(Object.values(b.from));
@@ -5329,8 +5357,8 @@ const Sim = (function () {
     if (isHuman(prev)) {
       if (prev === G.player) G.stats.lost++;
       if (p.capital || p.city) {
-        // pause at most once a day for lost cities, so a collapsing front doesn't stop the clock every hour
-        const pause = G.settings.pauseLoss && (p.capital || !(G.hour - (G.lossPauseAt ?? -99) < 24));
+        // only the capital falling stops the clock; other losses are notices (unless the player asked for city pauses, once a day at most)
+        const pause = (G.settings.pauseLoss && p.capital) || (G.settings.pauseCities && p.city && !(G.hour - (G.lossPauseAt ?? -99) < 24));
         if (pause) G.lossPauseAt = G.hour;
         tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
       }
@@ -5368,8 +5396,7 @@ const Sim = (function () {
       const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
       G.wars = G.wars.filter(w => w.attackers.length && w.defenders.length);
       for (const b of G.battles.slice()) if (!atWar(b.atkTag, b.defTag)) endBattle(b);
-      const involves = enemies.includes(G.player) || allied(tag, G.player);
-      notify(c.name + ' has capitulated.', c.capital, 'cap', involves && G.settings.pauseCapitulation);
+      notify(c.name + ' has capitulated.', c.capital, 'cap', false);   // a conference that needs the player pauses on its own
       for (const w of ended) notify('The ' + w.name + ' has ended.', -1, 'info', false);
       Peace.open(tag, enemies, counts, myWars.length ? myWars[0].name : '', leaders);
       return;
@@ -5389,7 +5416,7 @@ const Sim = (function () {
     const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
     G.wars = G.wars.filter(w => w.attackers.length && w.defenders.length);
     const involves = enemies.includes(G.player) || tag === G.player || allied(tag, G.player);
-    notify(c.name + ' has capitulated' + (winner ? ' to ' + G.countries[winner].name : '') + '.', G.countries[winner]?.capital ?? -1, 'cap', involves && G.settings.pauseCapitulation);
+    notify(c.name + ' has capitulated' + (winner ? ' to ' + G.countries[winner].name : '') + '.', G.countries[winner]?.capital ?? -1, 'cap', tag === G.player);
     for (const w of ended) notify('The ' + w.name + ' has ended.', -1, 'info', false);
     if (tag === G.player) { G.over = true; G.paused = true; hooks.gameOver(false); }
     else if (!Object.values(G.countries).some(o => o.alive && o.tag !== G.player && atWar(o.tag, G.player)) && ended.some(w => sideOf(w, G.player) !== null)) { /* player's war ended */ }
@@ -6070,7 +6097,7 @@ const Diplo = (function () {
         const joined = [];
         const f = Sim.factionOf(from);
         if (f && f.leader === from) for (const m of f.members) if (m !== from && !Sim.isHuman(m) && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
-        log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', to === g.player);
+        log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', false);
         return res(true, 'Embargo on ' + name(to) + ' in force' + (joined.length ? '. Joined by ' + joined.join(', ') : '') + '.' + (r.strangled ? ' It strangles them: they now have a reason for war against you.' : ''));
       }
       case 'lift':
@@ -6202,7 +6229,7 @@ const Diplo = (function () {
         const provs = demandTargets(from, to);
         for (const id of provs) transferProvince(id, from);
         addRel(from, to, -40);
-        log(name(to) + ' ceded ' + provs.map(id => MAP().provs[id].name).join(', ') + ' to ' + name(from) + '.', provs[0], 'loss', to === g.player && g.settings.pauseLoss);
+        log(name(to) + ' ceded ' + provs.map(id => MAP().provs[id].name).join(', ') + ' to ' + name(from) + '.', provs[0], 'loss', false);
         return res(true, name(to) + ' gave in and ceded ' + provs.length + ' province' + (provs.length > 1 ? 's' : '') + '.');
       }
       case 'peace':
@@ -10482,7 +10509,8 @@ const Events = (function () {
     if (!d.tag) ev.cd[key] = g.hour + (d.repeat || 1500) * DAY;
     if (Sim.isHuman(tag)) {
       ev.open.push({ n: ev.next++, id: d.id, tag, hour: g.hour });
-      if (g.settings.pauseEvent !== false && !g.paused) { g.paused = true; Sim.hooks.pause(); }
+      // big historical events stop the clock; everyday ones wait at the side while the game runs on
+      if (holds({ id: d.id }) && !g.paused) { g.paused = true; Sim.hooks.pause(); }
       if (hooks.show) hooks.show();
       return;
     }
@@ -10505,6 +10533,14 @@ const Events = (function () {
       Sim.notify(fill(d.title, tag) + (o && d.options.length > 1 ? ': ' + fill(o.text, tag) : '') + ' (' + c.name + ')', c.capital, 'info', false);
     }
   }
+  // historical events (tied to a nation and a date) are the big ones; the rest are everyday events
+  function isMajor(e) { const d = def(e.id); return !!(d && d.tag); }
+  function holds(e) { const st = G().settings; return isMajor(e) ? st.pauseEvent !== false : !!st.pauseMinor; }
+  // does an open event hold the clock?
+  function holding() { const g = G(); return !!(g && g.ev && g.ev.open.some(holds)); }
+  const DECIDE_DAYS = 30;
+  // the most likely answer, for an everyday event left unanswered too long
+  function aiPick(d) { const w = (d.options || []).map(o => o.ai === undefined ? 1 : o.ai); let best = 0; w.forEach((x, i) => { if (x > w[best]) best = i; }); return best; }
   // the player picks an option of an open event
   function choose(n, pick) {
     const g = G(), i = g.ev.open.findIndex(e => e.n === n);
@@ -10520,6 +10556,16 @@ const Events = (function () {
     const g = G(); if (!g.ev) setup();
     const ev = g.ev, day = Math.floor(g.hour / DAY), now = Sim.dateTime(g.hour);
     const L = defs();
+    // everyday events nobody answered within a month: the ministers decide
+    for (const e of ev.open.slice()) {
+      if (isMajor(e) || g.hour - e.hour < DECIDE_DAYS * DAY) continue;
+      const d = def(e.id), i = ev.open.indexOf(e);
+      ev.open.splice(i, 1);
+      if (!d) continue;
+      const pick = aiPick(d);
+      resolve(d, e.tag, pick);
+      if (d.options && d.options[pick]) Sim.tell(e.tag, fill(d.title, e.tag) + ': no answer came, so your ministers chose "' + fill(d.options[pick].text, e.tag) + '".', g.countries[e.tag].capital, 'info', false);
+    }
     // follow-ups that fall due
     for (const q of ev.queue.slice()) {
       if (q.at > g.hour) continue;
@@ -10559,7 +10605,7 @@ const Events = (function () {
   function open() { const g = G(); return g && g.ev ? g.ev.open.filter(e => e.tag === g.player) : []; }
   function openAll() { const g = G(); return g && g.ev ? g.ev.open : []; }
   function recent(n) { const g = G(); if (!g || !g.ev) return []; return g.ev.hist.slice(0, n || 12).map(h => { const d = def(h.id); return d ? { title: fill(d.title, h.tag), news: !!d.news, tag: h.tag, hour: h.hour, choice: d.options && d.options[h.pick] ? fill(d.options[h.pick].text, h.tag) : '' } : null; }).filter(Boolean); }
-  return { hooks, setup, daily, choose, view, open, openAll, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
+  return { hooks, setup, daily, choose, view, open, openAll, isMajor, holding, DECIDE_DAYS, recent, check, apply, describe, fill, fire: (id, tag) => { const d = def(id); if (d) fire(d, tag); return !!d; }, def, defs, annex };
 })();
 
 // Peace conferences: when a nation capitulates, the victors share out the spoils with points.
@@ -14675,7 +14721,7 @@ const UI = (function () {
     const chk = (k, t) => `<label class="check"><input type="checkbox" id="set-${k}" ${s[k] ? 'checked' : ''}> ${t}</label>`;
     modal(`<h2 class="display" style="font-size:24px">Command menu</h2>
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
-      <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on or by me')}${chk('pauseLoss', 'Loss of a city or my capital')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseCapitulation', 'A nation in my wars capitulates')}</div>
+      <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on me')}${chk('pauseLoss', 'My capital falls')}${chk('pauseCities', 'Any of my cities falls (once a day at most)')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseMinor', 'Everyday events (big historical events always pause)')}</div>
       ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
       ${netSection()}
       <hr class="sep"><div class="label">Saved games</div>
@@ -14693,7 +14739,7 @@ const UI = (function () {
     if (s.autosave === undefined) s.autosave = true;
     if (s.pauseEvent === undefined) s.pauseEvent = true;
     $('#set-autosave').checked = s.autosave; $('#set-pauseEvent').checked = s.pauseEvent;
-    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseBattle', 'pauseCapitulation', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
+    ['autoPause', 'pauseWar', 'pauseLoss', 'pauseCities', 'pauseBattle', 'pauseMinor', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
     Net.setPaused(true); refreshTop();
     const cp = $('#modal [data-copy]'); if (cp) cp.onclick = () => copyInvite();
   }
@@ -14807,9 +14853,30 @@ const UI = (function () {
   }
 
   // ---------- events ----------
+  // everyday events: a card beside the army tray, answered whenever the player likes while time runs on
+  let sideShown = 0;
+  function showSideEvent() {
+    const G = Sim.G, box = $('#evside'); if (!G || !box) return;
+    const e = Events.open().find(x => !Events.isMajor(x));
+    if (!e) { if (!box.hidden) { box.hidden = true; box.innerHTML = ''; } sideShown = 0; return; }
+    const left = Math.max(1, Events.DECIDE_DAYS - Math.floor((G.hour - e.hour) / 24));
+    const more = Events.open().filter(x => !Events.isMajor(x)).length - 1;
+    const foot = `Time keeps running. Your ministers decide in ${left} day${left > 1 ? 's' : ''} if you don't.${more > 0 ? ' ' + more + ' more waiting.' : ''}`;
+    if (sideShown === e.n) { const f = box.querySelector('.ev-foot'); if (f && f.textContent !== foot) f.textContent = foot; return; }
+    const v = Events.view(e);
+    if (!v) { Events.choose(e.n, 0); return; }
+    sideShown = e.n;
+    box.innerHTML = `<div class="ev-top" data-evs="${e.n}">${flagSVG(e.tag)}<span class="label">${esc(v.date)}</span></div>
+      <h3 class="display">${esc(v.title)}</h3><p class="ev-text">${esc(v.text)}</p>
+      <div class="ev-opts">${v.options.map(o => `<button class="btn ev-opt" data-x="${o.i}"><b>${esc(o.text)}</b><small>${o.fx.map(esc).join(' · ')}</small></button>`).join('')}</div>
+      <div class="ev-foot">${esc(foot)}</div>`;
+    box.hidden = false;
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { Events.choose(e.n, +b.dataset.x); sideShown = 0; refreshTop(); renderRight(); renderLeft(); showSideEvent(); });
+  }
   function showEvent() {
     const G = Sim.G; if (!G) return;
-    const e = Events.open()[0]; if (!e) return;
+    showSideEvent();
+    const e = Events.open().find(x => Events.isMajor(x) || G.settings.pauseMinor); if (!e) return;
     const v = Events.view(e);
     if (!v) { Events.choose(e.n, 0); return; }
     const c = G.countries[e.tag];
@@ -14817,7 +14884,7 @@ const UI = (function () {
       <h2 class="display" style="font-size:24px;margin:0">${esc(v.title)}</h2>
       <p class="ev-text">${esc(v.text)}</p>
       <div class="ev-opts">${v.options.map(o => `<button class="btn ev-opt" data-x="${o.i}"><b>${esc(o.text)}</b><small>${o.fx.map(esc).join(' · ')}</small></button>`).join('')}</div>`,
-      x => { Events.choose(e.n, +x); refreshTop(); renderRight(); renderLeft(); if (Events.open().length) showEvent(); });
+      x => { Events.choose(e.n, +x); refreshTop(); renderRight(); renderLeft(); showEvent(); });
   }
 
   // ---------- peace conference ----------
@@ -14895,7 +14962,7 @@ const UI = (function () {
   function backToStart() {
     if (Net.active()) Net.stop();
     netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
-    Sim.G = null; $('#modal').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);
@@ -14977,7 +15044,18 @@ const UI = (function () {
     const zone = prov < 0 && G && typeof Seas !== 'undefined' ? Seas.zoneAt(wx, wy) : -1;
     if (!G) { if (prov >= 0) pickStart(MAP.provs[prov].owner); return; }
     // an enemy army clicked while ordering an attack (or right-clicked) is hunted down wherever it goes
-    const foeAt = () => { const g = Render.stackAt(sx, sy); return g && g.find(a => Sim.atWar(a.owner, G.player)) || null; };
+    // a marching army is a moving target: a click close to its troops counts as a click on it
+    const foeAt = () => {
+      const g = Render.stackAt(sx, sy), hit = g && g.find(a => Sim.atWar(a.owner, G.player));
+      if (hit) return hit;
+      let best = null, bd = 28;
+      for (const h of Render._hits()) {
+        const d = Math.hypot(sx - (h.x + h.w / 2), sy - (h.y + h.h / 2));
+        const foe = d < bd && h.group.find(a => Sim.atWar(a.owner, G.player));
+        if (foe) { best = foe; bd = d; }
+      }
+      return best;
+    };
     if (pending && button === 0) { const foe = pending.kind === 'attack' || pending.kind === 'move' ? foeAt() : null; if (foe) { pending = null; showHint(); chase(myArmiesSel(), foe); return; } resolvePending(prov, zone); return; }
     if (button === 2) {
       pending = null; showHint();
@@ -15086,6 +15164,7 @@ const UI = (function () {
     if (evCard && !(G.ev && G.ev.open.some(e => e.n === +evCard.dataset.evn))) $('#modal').hidden = true;
     if (!$('#modal').hidden && $('#modal .pz') && !G.peace) $('#modal').hidden = true;
     if ($('#modal').hidden && !G.over) { if (G.peace) showPeace(); else if (G.ev && G.ev.open.length) showEvent(); }
+    if (now - (frame.side || 0) > 500) { frame.side = now; showSideEvent(); }
     if (now - lastRefresh > 300) {
       lastRefresh = now;
       if (G.humans) pollOffers();
@@ -15626,7 +15705,7 @@ const Menu = (function () {
       if (G && !Net.ticks()) {
         // a joined player's browser only shows the game; the host's browser runs it
         Render.state.hourFrac = Net.hourFrac();
-      } else if (G && !G.paused && !G.over && !G.peace && !(G.ev && G.ev.open.length && G.settings.pauseEvent !== false)) {
+      } else if (G && !G.paused && !G.over && !G.peace && !Events.holding()) {
         acc += dt * UI.HPS[G.speed];
         let n = 0;
         while (acc >= 1 && n < 80) { Sim.hourTick(); acc -= 1; n++; }

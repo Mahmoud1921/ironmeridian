@@ -280,7 +280,7 @@ const Diplo = (function () {
         const joined = [];
         const f = Sim.factionOf(from);
         if (f && f.leader === from) for (const m of f.members) if (m !== from && !Sim.isHuman(m) && alive(m) && Economy.joinsEmbargo(m, to) && !Sim.allied(m, to)) { Economy.embargo(m, to); joined.push(name(m)); }
-        log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', to === g.player);
+        log(name(from) + ' declared an embargo on ' + name(to) + (joined.length ? ', joined by ' + joined.join(', ') : '') + '.', g.countries[to].capital, 'war', false);
         return res(true, 'Embargo on ' + name(to) + ' in force' + (joined.length ? '. Joined by ' + joined.join(', ') : '') + '.' + (r.strangled ? ' It strangles them: they now have a reason for war against you.' : ''));
       }
       case 'lift':
@@ -412,7 +412,7 @@ const Diplo = (function () {
         const provs = demandTargets(from, to);
         for (const id of provs) transferProvince(id, from);
         addRel(from, to, -40);
-        log(name(to) + ' ceded ' + provs.map(id => MAP().provs[id].name).join(', ') + ' to ' + name(from) + '.', provs[0], 'loss', to === g.player && g.settings.pauseLoss);
+        log(name(to) + ' ceded ' + provs.map(id => MAP().provs[id].name).join(', ') + ' to ' + name(from) + '.', provs[0], 'loss', false);
         return res(true, name(to) + ' gave in and ceded ' + provs.length + ' province' + (provs.length > 1 ? 's' : '') + '.');
       }
       case 'peace':
