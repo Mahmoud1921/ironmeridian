@@ -8,7 +8,7 @@ const Render = (function () {
   let lmClips = [], lmProvs = [], lmBorders = [], lmCountryBorders = [];
   let fillCache = [], labels = [];
   let provGrid = null;
-  const state = { mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), selFleet: 0, selWing: 0, selZone: -1, dirtyOwners: true, frontEdges: null, pendingHint: null };
+  const state = { look: 'cartoon', mode: 'political', hover: -1, selProv: -1, selArmies: new Set(), selFleet: 0, selWing: 0, selZone: -1, dirtyOwners: true, frontEdges: null, pendingHint: null };
   let counterHits = [], battleHits = [], fleetHits = [], wingHits = [];
   const stripeCache = {};
   let cityOrder = null;
@@ -39,6 +39,8 @@ const Render = (function () {
       const k = Math.floor(p.x / 4) * 1000 + Math.floor(p.y / 4);
       if (!provGrid.has(k)) provGrid.set(k, []); provGrid.get(k).push(p);
     }
+    LOOKS.classic = { provPaths, coastPath, lakePath, lmClips, lmBorders };
+    setLook(state.look);
     resize();
     window.addEventListener('resize', resize);
   }
@@ -57,6 +59,7 @@ const Render = (function () {
   let lastOwn = null, lastMode = null, lastDead = 0, lastDeadHour = -1;
   const deadCount = () => { let n = 0; for (const t in Sim.G.countries) if (!Sim.G.countries[t].alive) n++; return n; };
   function provColor(p, owner) {
+    if (look()) return cartoonColor(p, owner);
     const T = TERRAIN[p.terrain];
     const j = ((p.id * 2654435761) >>> 0) % 100 / 100 - 0.5;
     if (state.mode === 'terrain') return rgbStr(mix(hexToRgb(T.color), j > 0 ? [255, 255, 255] : [0, 0, 0], Math.abs(j) * 0.12));
@@ -78,7 +81,7 @@ const Render = (function () {
     if (!changed) fillCache = MAP.provs.map(p => provColor(p, own[p.id]));
     else for (const i of changed) fillCache[i] = provColor(MAP.provs[i], own[i]);
     lmCountryBorders = MAP.lms.map(() => new Path2D());
-    for (const e of MAP.edges) if (own[e.a] !== own[e.b]) { const bb = lmCountryBorders[MAP.provs[e.a].lm]; bb.moveTo(e.x1, e.y1); bb.lineTo(e.x2, e.y2); }
+    MAP.edges.forEach((e, i) => { if (own[e.a] !== own[e.b]) edgeTo(lmCountryBorders[MAP.provs[e.a].lm], i); });
     computeLabels(own);
     state.dirtyOwners = false;
     if (!layer) return;
@@ -214,8 +217,354 @@ const Render = (function () {
     return (stripeCache[color] = c);
   }
 
+  // ---------- cartoon look: smooth coasts, wavy borders, bright colours, Blender props, live sea ----------
+  // Geometry for both looks is built once; setLook() swaps which set the painters use.
+  const LOOKS = {};
+  const look = () => state.look === 'cartoon';
+  let edgeWob = [];
+  let lmCoast = [];          // per landmass coast (smoothed), so shore strokes skip landmasses out of view          // per MAP.edges index: wavy polyline [x0,y0,x1,y1,...] (cartoon) or null
+  // centripetal Catmull-Rom through every coast point: rounder shores that still pass through the real coastline
+  function smoothRing(pts) {
+    const n = pts.length / 2, out = [];
+    const P = i => { i = (i + n) % n; return [pts[i * 2], pts[i * 2 + 1]]; };
+    for (let i = 0; i < n; i++) {
+      const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+      const L = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      const k = Math.max(1, Math.min(10, Math.round(L * 3)));
+      const d = (a, b) => Math.pow(Math.hypot(b[0] - a[0], b[1] - a[1]), 0.5) || 1e-4;
+      const t0 = 0, t1 = t0 + d(p0, p1), t2 = t1 + d(p1, p2), t3 = t2 + d(p2, p3);
+      for (let s = 0; s < k; s++) {
+        const t = t1 + (t2 - t1) * s / k;
+        const lerp = (a, b, ta, tb) => [(tb - t) / (tb - ta) * a[0] + (t - ta) / (tb - ta) * b[0], (tb - t) / (tb - ta) * a[1] + (t - ta) / (tb - ta) * b[1]];
+        const A1 = lerp(p0, p1, t0, t1), A2 = lerp(p1, p2, t1, t2), A3 = lerp(p2, p3, t2, t3);
+        const B1 = lerp(A1, A2, t0, t2), B2 = lerp(A2, A3, t1, t3);
+        const C = lerp(B1, B2, t1, t2);
+        out.push(C[0], C[1]);
+      }
+    }
+    return out;
+  }
+  // a gentle hand-drawn wave along a shared province edge; zero at both ends so corners still meet
+  function hash3(a, b) { let h = (a * 73856093) ^ (b * 19349663); const r = mulberry32(h >>> 0); return [r(), r(), r()]; }
+  function wobble(x1, y1, x2, y2, a, b) {
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1e-6;
+    const n = Math.max(2, Math.min(8, Math.round(L * 4)));
+    const nx = -dy / L, ny = dx / L, [r1, r2, r3] = hash3(a, b);
+    const amp = Math.min(0.1 * L, 0.3);
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, s = Math.PI * t;
+      const d = amp * ((r1 - 0.5) * 1.5 * Math.sin(s) + (r2 - 0.5) * 0.9 * Math.sin(2 * s) + (r3 - 0.5) * 0.6 * Math.sin(3 * s));
+      out.push(x1 + dx * t + nx * d, y1 + dy * t + ny * d);
+    }
+    return out;
+  }
+  function buildCartoonGeometry() {
+    const addPoly = (path, pts) => { path.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) path.lineTo(pts[i], pts[i + 1]); path.closePath(); };
+    const coastS = MAP.lms.map(l => smoothRing(l.pts)), lakeS = MAP.lakes.map(l => smoothRing(l.pts));
+    const L = { coastPath: new Path2D(), lakePath: new Path2D(), lmClips: [], lmBorders: [], provPaths: [] };
+    coastS.forEach(pts => addPoly(L.coastPath, pts));
+    lmCoast = coastS.map(pts => { const p = new Path2D(); addPoly(p, pts); return p; });
+    lakeS.forEach(pts => { addPoly(L.coastPath, pts); addPoly(L.lakePath, pts); });
+    MAP.lms.forEach((l, i) => {
+      const c = new Path2D(); addPoly(c, coastS[i]);
+      MAP.lakes.forEach((k, j) => { if (k.bbox[0] < l.bbox[2] && k.bbox[2] > l.bbox[0] && k.bbox[1] < l.bbox[3] && k.bbox[3] > l.bbox[1]) addPoly(c, lakeS[j]); });
+      L.lmClips.push(c); L.lmBorders.push(new Path2D());
+    });
+    // wavy edges, computed once per pair from the lower id's side so both provinces share the exact same line
+    const wob = new Map();
+    const key = (a, b) => a < b ? a * 4096 + b : b * 4096 + a;
+    L.provPaths = MAP.provs.map(p => {
+      const poly = p.poly, path = new Path2D();
+      let started = false;
+      for (let i = 0; i < poly.length; i++) {
+        const v = poly[i], w = poly[(i + 1) % poly.length];
+        let seg;
+        if (v.n >= 0) {
+          const k = key(p.id, v.n);
+          if (p.id < v.n) { seg = wob.get(k) || wobble(v.x, v.y, w.x, w.y, p.id, v.n); wob.set(k, seg); }
+          else {
+            let s = wob.get(k);
+            if (!s) { s = wobble(w.x, w.y, v.x, v.y, v.n, p.id); wob.set(k, s); }
+            seg = []; for (let j = s.length - 2; j >= 0; j -= 2) seg.push(s[j], s[j + 1]);
+          }
+        } else seg = [v.x, v.y, w.x, w.y];
+        for (let j = started ? 2 : 0; j < seg.length; j += 2) { if (!started) { path.moveTo(seg[j], seg[j + 1]); started = true; } else path.lineTo(seg[j], seg[j + 1]); }
+      }
+      path.closePath();
+      return path;
+    });
+    edgeWob = MAP.edges.map(e => wob.get(key(e.a, e.b)) || null);
+    MAP.edges.forEach((e, i) => { const b = L.lmBorders[MAP.provs[e.a].lm], s = edgeWob[i]; if (!s) { b.moveTo(e.x1, e.y1); b.lineTo(e.x2, e.y2); return; } b.moveTo(s[0], s[1]); for (let j = 2; j < s.length; j += 2) b.lineTo(s[j], s[j + 1]); });
+    return L;
+  }
+  function edgeTo(path, i) {
+    const e = MAP.edges[i], s = look() && edgeWob[i];
+    if (!s) { path.moveTo(e.x1, e.y1); path.lineTo(e.x2, e.y2); return; }
+    path.moveTo(s[0], s[1]); for (let j = 2; j < s.length; j += 2) path.lineTo(s[j], s[j + 1]);
+  }
+  function setLook(name) {
+    if (!LOOKS.cartoon) { LOOKS.cartoon = buildCartoonGeometry(); buildWaves(); }
+    state.look = name === 'cartoon' ? 'cartoon' : 'classic';
+    const L = LOOKS[state.look];
+    provPaths = L.provPaths; coastPath = L.coastPath; lakePath = L.lakePath; lmClips = L.lmClips; lmBorders = L.lmBorders;
+    seaClip = null; lastOwn = null; state.dirtyOwners = true; vc.valid = false;
+    if (layer) { recolor(); }
+    if (state.frontPairs) setFrontEdges(state.frontPairs);
+  }
+
+  // bright, friendly palette: nation colours pushed to clear, saturated mid tones
+  function rgbToHsl([r, g, b]) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    if (mx === mn) return [0, 0, l];
+    const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h / 6, s, l];
+  }
+  function hslToRgb([h, s, l]) {
+    const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+    return [f(0), f(8), f(4)];
+  }
+  const CARTOON_TERRAIN = { plains: '#a9d46a', forest: '#5fae55', hills: '#c9b46c', mountains: '#a39486', desert: '#f2d58a', jungle: '#3f9d5a', marsh: '#7fb39a', tundra: '#dfe8e6', urban: '#b9b2c4' };
+  const cartoonCache = {};
+  function cartoonNation(hex) {
+    if (cartoonCache[hex]) return cartoonCache[hex];
+    const [h, s, l] = rgbToHsl(hexToRgb(hex));
+    return (cartoonCache[hex] = hslToRgb([h, Math.min(0.82, s * 1.25 + 0.12), Math.max(0.5, Math.min(0.74, l * 1.05 + 0.1))]));
+  }
+  function cartoonColor(p, owner) {
+    const j = ((p.id * 2654435761) >>> 0) % 100 / 100 - 0.5;
+    if (state.mode === 'terrain') return rgbStr(mix(hexToRgb(CARTOON_TERRAIN[p.terrain]), j > 0 ? [255, 255, 255] : [0, 0, 0], Math.abs(j) * 0.08));
+    const c = mix(cartoonNation(COUNTRY_BY_TAG[owner].color), hexToRgb(CARTOON_TERRAIN[p.terrain]), 0.1);
+    return rgbStr(mix(c, j > 0 ? [255, 255, 255] : [0, 0, 0], Math.abs(j) * 0.05));
+  }
+
+  // ---- Blender props: placed once per province by terrain, drawn into the cached map ----
+  const props = { img: null, ready: false, items: null };
+  function loadProps() {
+    if (props.img || typeof MAP_PROPS === 'undefined') return;
+    props.img = new Image();
+    props.img.onload = () => { props.ready = true; props.dark = darkClouds(); vc.valid = false; if (layer && look()) buildLayer(); };
+    props.img.src = MAP_PROPS.src;
+  }
+  function darkClouds() {
+    const out = {};
+    for (const k of ['cloud_a', 'cloud_b']) {
+      const r = MAP_PROPS.rects[k], c = document.createElement('canvas'); c.width = r[2]; c.height = r[3];
+      const g = c.getContext('2d'); g.drawImage(props.img, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+      g.globalCompositeOperation = 'source-in'; g.fillStyle = '#0b2a3c'; g.fillRect(0, 0, r[2], r[3]);
+      out[k] = c;
+    }
+    return out;
+  }
+  const PROP_SETS = {
+    forest:    { n: 9, pick: (r, lat) => lat > 52 ? (r < 0.6 ? 'pine' : 'tree_c') : r < 0.4 ? 'tree_a' : r < 0.7 ? 'tree_c' : r < 0.85 ? 'tree_b' : 'pine' },
+    jungle:    { n: 9, pick: r => r < 0.45 ? 'palm' : r < 0.8 ? 'tree_c' : 'tree_a' },
+    mountains: { n: 4, pick: (r, lat) => r < 0.5 ? 'mountain_a' : r < 0.85 ? 'mountain_b' : (Math.abs(lat) < 35 ? 'mesa' : 'pine'), big: 1.5 },
+    hills:     { n: 4, pick: (r, lat) => Math.abs(lat) < 36 ? (r < 0.6 ? 'hill_dry' : 'mesa') : (r < 0.7 ? 'hill' : 'tree_b'), big: 1.15 },
+    desert:    { n: 4, pick: (r, lat, lon) => r < 0.6 ? 'dune' : (lon < -30 && r < 0.85 ? 'cactus' : r < 0.85 ? 'dune' : 'mesa') },
+    tundra:    { n: 5, pick: (r, lat) => lat < 0 ? 'hill' : r < 0.7 ? 'pine_snow' : 'pine' },
+    marsh:     { n: 4, pick: r => r < 0.7 ? 'reeds' : 'bush' },
+    plains:    { n: 3, pick: (r, lat) => Math.abs(lat) < 28 ? (r < 0.5 ? 'bush' : 'palm') : r < 0.55 ? 'bush' : r < 0.85 ? 'tree_b' : 'tree_a' },
+    urban:     { n: 0 }
+  };
+  function placeProps() {
+    const items = MAP.lms.map(() => []);
+    for (const p of MAP.provs) {
+      const set = PROP_SETS[p.terrain]; if (!set || !set.n) continue;
+      const rnd = mulberry32(p.id * 7919 + 13), sp = p.spacing || 1;
+      const [lon, lat] = GEO.unproject(p.x, p.y);
+      let lvl = 0;
+      for (let i = 0; i < set.n * 3 && lvl < set.n; i++) {
+        const an = rnd() * Math.PI * 2, rr = 0.24 + rnd() * 0.42;
+        const x = p.x + Math.cos(an) * sp * rr, y = p.y + Math.sin(an) * sp * rr * 0.8;
+        if (provinceAt(x, y) !== p.id) continue;
+        items[p.lm].push({ x, y, p: p.id, lvl: lvl++, k: set.pick(rnd(), lat, lon), big: set.big || 1, sp, flip: rnd() < 0.5 });
+      }
+    }
+    for (const a of items) a.sort((u, v) => u.y - v.y);
+    props.items = items;
+  }
+  function paintProps(g, z, li, vx0, vy0, vx1, vy1) {
+    // props belong to the terrain map only; each keeps a fixed size on the ground, so it shrinks as you zoom out
+    if (!props.ready || state.mode !== 'terrain') return;
+    if (!props.items) placeProps();
+    const zd = z;
+    const maxLvl = z === LS ? 2 : Math.max(2, Math.floor(zd / 5));
+    const R = MAP_PROPS.rects, img = props.img;
+    for (const it of props.items[li]) {
+      if (it.lvl >= maxLvl) continue;
+      const hpx = it.sp * zd * 0.42 * it.big;
+      const r = R[it.k], s = hpx / zd / r[3];
+      const w = r[2] * s, h = r[3] * s, x = it.x - r[4] * s, y = it.y - r[5] * s;
+      if (x > vx1 || x + w < vx0 || y > vy1 || y + h < vy0) continue;
+      if (it.flip) { g.save(); g.translate(it.x, 0); g.scale(-1, 1); g.drawImage(img, r[0], r[1], r[2], r[3], -r[4] * s, y, w, h); g.restore(); }
+      else g.drawImage(img, r[0], r[1], r[2], r[3], x, y, w, h);
+    }
+  }
+
+  function paintCartoon(g, z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G;
+    loadProps();
+    g.fillStyle = '#3a9acb'; g.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    // shallow water rings hugging every shore
+    const vis = [];
+    MAP.lms.forEach((l, li) => { const b = l.bbox, m = 3; if (!(b[2] < vx0 - m || b[0] > vx1 + m || b[3] < vy0 - m || b[1] > vy1 + m)) vis.push(li); });
+    for (const [w, col] of [[16, 'rgba(140,215,238,0.34)'], [7, 'rgba(196,240,248,0.55)']]) {
+      g.strokeStyle = col; g.lineWidth = w / z; for (const li of vis) g.stroke(lmCoast[li]);
+    }
+    MAP.lms.forEach((l, li) => {
+      const b = l.bbox;
+      if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) return;
+      g.save();
+      g.clip(lmClips[li], 'evenodd');
+      for (const p of lmProvs[li]) {
+        const bb = p.tb;
+        if (bb[2] < vx0 || bb[0] > vx1 || bb[3] < vy0 || bb[1] > vy1) continue;
+        g.fillStyle = fillCache[p.id];
+        g.fill(provPaths[p.id]);
+        if (G && state.mode === 'political' && G.owner[p.id] !== p.core && G.countries[p.core] && G.countries[p.core].alive) {
+          const pat = g.createPattern(stripes(rgbStr(cartoonNation(COUNTRY_BY_TAG[p.core].color))), 'repeat');
+          pat.setTransform(new DOMMatrix().scale(1 / z));
+          g.globalAlpha = 0.6; g.fillStyle = pat; g.fill(provPaths[p.id]); g.globalAlpha = 1;
+        }
+      }
+      // sandy beach line and a soft rim just inside the shore
+      g.strokeStyle = 'rgba(255,244,205,0.55)'; g.lineWidth = 5 / z; g.stroke(lmClips[li]);
+      if (z > 4) {
+        g.lineWidth = Math.min(0.1, 1.1 / z); g.strokeStyle = 'rgba(40,40,30,' + Math.min(0.22, (z - 4) * 0.04) + ')';
+        // the waves in province lines vanish at world scale, so the cheaper straight lines do there
+        g.stroke(z === LS ? LOOKS.classic.lmBorders[li] : lmBorders[li]);
+      }
+      paintProps(g, z, li, vx0 - 3, vy0 - 3, vx1 + 3, vy1 + 3);
+      // nation borders: a light glow both sides, then a chunky ink line
+      g.lineWidth = 7 / z; g.strokeStyle = 'rgba(255,255,255,0.28)'; g.stroke(lmCountryBorders[li]);
+      g.lineWidth = Math.max(2.1 / z, Math.min(0.16, 2.6 / z)); g.strokeStyle = 'rgba(38,30,44,0.85)'; g.stroke(lmCountryBorders[li]);
+      g.restore();
+    });
+    g.strokeStyle = '#1c3f5c'; g.lineWidth = 2 / z; for (const li of vis) g.stroke(lmCoast[li]);
+    g.fillStyle = '#3a9acb'; g.fill(lakePath);
+    g.strokeStyle = 'rgba(196,240,248,0.7)'; g.lineWidth = 3 / z; g.stroke(lakePath);
+    g.strokeStyle = '#1c3f5c'; g.lineWidth = 1.6 / z; g.stroke(lakePath);
+    g.setLineDash([4 / z, 4 / z]); g.strokeStyle = 'rgba(255,255,255,0.75)'; g.lineWidth = 1.6 / z;
+    g.beginPath();
+    for (const [a, b2] of MAP.straits) { g.moveTo(MAP.provs[a].x, MAP.provs[a].y); g.lineTo(MAP.provs[b2].x, MAP.provs[b2].y); }
+    g.stroke(); g.setLineDash([]);
+  }
+
+  // ---- the living sea and sky, drawn every frame on top of the cached map ----
+  let wavePts = null, waveGrid = null;
+  const crestCache = {};
+  function crestSprite(sz) {
+    const key = sz + ':' + dpr;
+    if (crestCache[key]) return crestCache[key];
+    const c = document.createElement('canvas'), w = sz * 2 + 4, h = sz * 0.6 + 4;
+    c.width = Math.ceil(w * dpr); c.height = Math.ceil(h * dpr);
+    const g = c.getContext('2d'); g.scale(dpr, dpr);
+    g.strokeStyle = '#fff'; g.lineWidth = 1.6; g.lineCap = 'round';
+    const x = w / 2, y = h - 2;
+    g.beginPath(); g.moveTo(x - sz, y); g.quadraticCurveTo(x - sz / 2, y - sz * 0.55, x, y); g.quadraticCurveTo(x + sz / 2, y - sz * 0.55, x + sz, y); g.stroke();
+    return (crestCache[key] = c);
+  }
+  function buildWaves() {
+    wavePts = [];
+    const r = mulberry32(4242);
+    for (let x = WORLD.x0 + 1; x < WORLD.x1; x += 1.7) for (let y = WORLD.y0 + 1; y < WORLD.y1; y += 1.3) {
+      const px = x + (r() - 0.5) * 1.2, py = y + (r() - 0.5) * 0.9;
+      if (MAP.landmassAt(px, py) >= 0) { r(); continue; }
+      // stay a little off the shore so waves never sit on a beach
+      let near = false;
+      for (const [ox, oy] of [[0.7, 0], [-0.7, 0], [0, 0.6], [0, -0.6]]) if (MAP.landmassAt(px + ox, py + oy) >= 0) { near = true; break; }
+      if (near) { r(); continue; }
+      wavePts.push(px, py, r());
+    }
+    // bucket the crests into 10-unit cells so a frame only looks at the visible ones
+    waveGrid = new Map();
+    for (let i = 0; i < wavePts.length; i += 3) {
+      const k = Math.floor(wavePts[i] / 10) * 1000 + Math.floor(wavePts[i + 1] / 10);
+      let a = waveGrid.get(k); if (!a) waveGrid.set(k, a = []); a.push(i);
+    }
+  }
+  const CLOUDS = (() => { const r = mulberry32(777), a = []; for (let i = 0; i < 22; i++) a.push({ x: -180 + r() * 360, y: -110 + r() * 170, w: 9 + r() * 14, k: r() < 0.5 ? 'cloud_a' : 'cloud_b', v: 0.12 + r() * 0.12 }); return a; })();
+  function drawLive(z, vx0, vy0, vx1, vy1) {
+    const t = performance.now() / 1000;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // little cartoon wave crests that swell and fade
+    if (!wavePts) buildWaves();
+    const keep = Math.min(1, (1.7 * z / 75) ** 2), sz = Math.max(4, Math.min(9, z * 0.5));
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+    // each crest is a tiny pre-drawn sprite; stroking hundreds of curves a frame is too slow without a GPU
+    const spr = crestSprite(Math.round(sz));
+    const sw = spr.width / dpr, sh = spr.height / dpr;
+    const gx0 = Math.floor(vx0 / 10), gx1 = Math.floor(vx1 / 10), gy0 = Math.floor(vy0 / 10), gy1 = Math.floor(vy1 / 10);
+    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+      const cell = waveGrid.get(gx * 1000 + gy); if (!cell) continue;
+      for (const i of cell) {
+        const ph = wavePts[i + 2];
+        if ((ph * 977) % 1 > keep) continue;
+        const s = Math.sin(t * 0.9 + ph * 40);
+        if (s < 0.1) continue;
+        const wx = wavePts[i] + Math.sin(t * 0.4 + ph * 9) * 0.25, wy = wavePts[i + 1];
+        const sx = (wx - cam.x) * z + W / 2, sy = (wy - cam.y) * z + H / 2;
+        if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+        const k = 0.7 + 0.3 * s;
+        ctx.globalAlpha = Math.min(0.85, (s - 0.1) * 1.1);
+        ctx.drawImage(spr, sx - sw * k / 2, sy - sh * k * 0.75, sw * k, sh * k);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+  let FLOCKS = null;
+  function drawClouds(z) {
+    if (!props.ready) return;
+    const a = Math.max(0, Math.min(0.85, (10 - z) / 5));
+    if (a <= 0.01) return;
+    const t = performance.now() / 1000, R = MAP_PROPS.rects;
+    for (const c of CLOUDS) {
+      let x = c.x + t * c.v; x = ((x + 200) % 400 + 400) % 400 - 200;
+      const r = R[c.k], s = c.w / r[2];
+      const [sx, sy] = worldToScreen(x - c.w / 2, c.y);
+      const w = c.w * z, h = r[3] * s * z;
+      if (sx > W || sx + w < 0 || sy > H || sy + h < -60) continue;
+      ctx.globalAlpha = a * 0.22; ctx.drawImage(props.dark[c.k], sx + z * 2.5, sy + z * 3.2, w, h);
+      ctx.globalAlpha = a; ctx.drawImage(props.img, r[0], r[1], r[2], r[3], sx, sy, w, h);
+    }
+    // flocks of birds circling their own patch of the world, so they stay put on the map while the camera moves
+    if (z > 3.5 && z < 16) {
+      if (!FLOCKS) {
+        FLOCKS = [];
+        const r = mulberry32(31337), land = MAP.provs.filter(p => p.terrain !== 'tundra');
+        for (let i = 0; i < 70; i++) { const p = land[Math.floor(r() * land.length)]; FLOCKS.push({ x: p.x, y: p.y, R: 2 + r() * 4, w: (0.05 + r() * 0.05) * (r() < 0.5 ? -1 : 1), ph: r() * 6.3, n: 3 + Math.floor(r() * 4) }); }
+      }
+      ctx.globalAlpha = Math.min(0.8, (z - 3.5) / 3); ctx.strokeStyle = '#2b2a35'; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.beginPath();
+      const sc = Math.max(0.7, Math.min(1.3, z / 9));
+      for (const f of FLOCKS) {
+        const an = t * f.w + f.ph;
+        const [cx, cy] = worldToScreen(f.x + Math.cos(an) * f.R, f.y + Math.sin(an) * f.R * 0.7);
+        if (cx < -60 || cx > W + 60 || cy < -60 || cy > H + 60) continue;
+        // heading along the circle; the V trails behind the leader
+        const hx = -Math.sin(an) * Math.sign(f.w), hy = Math.cos(an) * 0.7 * Math.sign(f.w), hl = Math.hypot(hx, hy) || 1;
+        const ux = hx / hl, uy = hy / hl, px = -uy, py = ux;
+        for (let k = 0; k < f.n; k++) {
+          const row = Math.ceil(k / 2), side = k % 2 ? 1 : -1;
+          const bx = cx - ux * row * 12 * sc + px * side * row * 9 * sc, by = cy - uy * row * 12 * sc + py * side * row * 9 * sc;
+          const flap = Math.sin(t * 7 + k * 1.3 + f.ph) * 2.5 * sc, s5 = 5 * sc;
+          ctx.moveTo(bx - s5, by - 2 * sc - flap); ctx.quadraticCurveTo(bx - 2 * sc, by - 3 * sc, bx, by); ctx.quadraticCurveTo(bx + 2 * sc, by - 3 * sc, bx + s5, by - 2 * sc - flap);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // Paint ocean, land, borders and coasts into context g (world transform already applied), limited to a view box.
   function paintWorld(g, z, vx0, vy0, vx1, vy1) {
+    if (look()) return paintCartoon(g, z, vx0, vy0, vx1, vy1);
     const G = Sim.G;
     g.fillStyle = '#1f384b'; g.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
     g.strokeStyle = 'rgba(190,215,230,0.07)'; g.lineWidth = 1 / z;
@@ -316,8 +665,8 @@ const Render = (function () {
     const [vx0, vy0] = screenToWorld(0, 0), [vx1, vy1] = screenToWorld(W, H);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (z * dpr <= LS * 1.25) {
-      ctx.fillStyle = '#1f384b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
+      ctx.fillStyle = look() ? '#3a9acb' : '#1f384b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = look() && z * dpr < LS * 0.6 ? 'high' : 'low';
       const sx = (vx0 - WORLD.x0) * LS, sy = (vy0 - WORLD.y0) * LS;
       ctx.drawImage(layer, sx, sy, (vx1 - vx0) * LS, (vy1 - vy0) * LS, 0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (W / 2 - cam.x * z), dpr * (H / 2 - cam.y * z));
@@ -325,11 +674,12 @@ const Render = (function () {
       const covers = vc.valid && vx0 >= vc.x0 && vy0 >= vc.y0 && vx1 <= vc.x1 && vy1 <= vc.y1;
       const zooming = cam.anim || performance.now() - lastZoomInput < 220;
       if (!(covers && (vc.z === z || zooming))) buildView(vx0, vy0, vx1, vy1);
-      ctx.fillStyle = '#1f384b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = look() ? '#3a9acb' : '#1f384b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(vc.canvas, (vx0 - vc.x0) * vc.s, (vy0 - vc.y0) * vc.s, (vx1 - vx0) * vc.s, (vy1 - vy0) * vc.s, 0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (W / 2 - cam.x * z), dpr * (H / 2 - cam.y * z));
     }
+    if (look()) drawLive(z, vx0, vy0, vx1, vy1);
     // live overlays: front lines, hover, selection
     const overlay = (id, fn) => { const p = MAP.provs[id]; ctx.save(); ctx.clip(lmClips[p.lm], 'evenodd'); fn(p); ctx.restore(); };
     if (state.frontEdges) { ctx.lineWidth = 4 / z; ctx.strokeStyle = 'rgba(214,176,82,0.9)'; ctx.lineCap = 'round'; ctx.stroke(state.frontEdges); }
@@ -354,6 +704,7 @@ const Render = (function () {
     if (G && state.selZone >= 0 && typeof Seas !== 'undefined') drawZoneOutline(z, state.selZone);
     // ---- screen space ----
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (look()) drawClouds(z);
     drawLabels(z, vx0, vy0, vx1, vy1);
     if (G && G.routes && G.routes.length) drawRoutes(z, vx0, vy0, vx1, vy1);
     if (G && G.ind) drawBuildings(z, vx0, vy0, vx1, vy1);
@@ -396,8 +747,9 @@ const Render = (function () {
       const [sx, sy] = worldToScreen(l.x, l.y);
       if (sx < -200 || sx > W + 200 || sy < -50 || sy > H + 50) continue;
       const name = COUNTRY_BY_TAG[l.tag].name.toUpperCase();
-      ctx.font = '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
-      const spacing = fs * 0.12;
+      const toon = look();
+      ctx.font = toon ? fs.toFixed(1) + 'px "Lilita One", "Barlow Semi Condensed", sans-serif' : '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
+      const spacing = fs * (toon ? 0.07 : 0.12);
       const w = ctx.measureText(name).width + spacing * name.length;
       if (w > l.size * z * 1.6 && fs > 14) continue;
       const box = [sx - w / 2, sy - fs / 2, sx + w / 2, sy + fs / 2];
@@ -406,6 +758,12 @@ const Render = (function () {
       ctx.globalAlpha = Math.max(0, Math.min(1, (11 - z) / 3));
       ctx.fillStyle = 'rgba(18,16,12,0.62)';
       let x = sx - w / 2;
+      if (toon) {
+        // chunky storybook lettering: white with a dark outline
+        ctx.globalAlpha *= 0.92; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2.5, fs * 0.16); ctx.strokeStyle = 'rgba(44,34,52,0.55)'; ctx.fillStyle = 'rgba(255,252,240,0.9)';
+        for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.strokeText(ch, x + cw / 2, sy); x += cw + spacing; }
+        x = sx - w / 2;
+      }
       for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.fillText(ch, x + cw / 2, sy); x += cw + spacing; }
       ctx.globalAlpha = 1;
     }
@@ -431,13 +789,13 @@ const Render = (function () {
       if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
       (isCap ? starPts : dotPts).push(sx, sy);
       if ((isCap && z > 4.5) || z > 13) {
-        ctx.font = (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
+        ctx.font = look() ? (isCap ? '600 14px' : '500 12.5px') + ' "Fredoka", "Barlow Semi Condensed", sans-serif' : (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
         const w = ctx.measureText(p.city).width;
         const box = [sx + 6, sy - 8, sx + 10 + w, sy + 8];
         if (placedCity.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
         placedCity.push(box);
-        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,16,12,0.85)'; ctx.strokeText(p.city, sx + 8, sy);
-        ctx.fillStyle = '#f1ead2'; ctx.fillText(p.city, sx + 8, sy);
+        ctx.lineJoin = 'round'; ctx.lineWidth = look() ? 4 : 3; ctx.strokeStyle = look() ? 'rgba(40,30,50,0.9)' : 'rgba(16,16,12,0.85)'; ctx.strokeText(p.city, sx + 8, sy);
+        ctx.fillStyle = look() ? '#ffffff' : '#f1ead2'; ctx.fillText(p.city, sx + 8, sy);
       }
     }
     ctx.beginPath();
@@ -449,7 +807,7 @@ const Render = (function () {
       for (let k = 0; k < 10; k++) { const an = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? 2.7 : 6; const px = cx + Math.cos(an) * rr, py = cy + Math.sin(an) * rr; k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
       ctx.closePath();
     }
-    ctx.fillStyle = '#efe6c8'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#1b1a14'; ctx.stroke();
+    ctx.fillStyle = look() ? '#ffd447' : '#efe6c8'; ctx.fill(); ctx.lineWidth = look() ? 1.6 : 1.2; ctx.strokeStyle = look() ? '#3a2a10' : '#1b1a14'; ctx.stroke();
     if (z > 16) {
       ctx.font = 'italic 500 11px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center';
       for (const p of MAP.provs) {
@@ -1336,13 +1694,14 @@ const Render = (function () {
   }
 
   function setFrontEdges(pairs) {
+    state.frontPairs = pairs;
     if (!pairs || !pairs.size) { state.frontEdges = null; return; }
     const path = new Path2D();
-    for (const e of MAP.edges) if (pairs.has(e.a + ':' + e.b) || pairs.has(e.b + ':' + e.a)) { path.moveTo(e.x1, e.y1); path.lineTo(e.x2, e.y2); }
+    MAP.edges.forEach((e, i) => { if (pairs.has(e.a + ':' + e.b) || pairs.has(e.b + ':' + e.a)) edgeTo(path, i); });
     state.frontEdges = path;
   }
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
