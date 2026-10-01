@@ -449,7 +449,10 @@ a.lnk:hover { color: var(--brass); }
 /* ---------- main menu ---------- */
 #menu { position: absolute; inset: 0; z-index: 45; overflow: hidden; background: #120d0b; user-select: none; -webkit-user-select: none; }
 #menu .bg { position: absolute; inset: 0; overflow: hidden; }
-#bg-paint, #bg-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#bg-paint, #bg-img, #bg-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* the battle film fades in over the painting once it is really playing */
+#bg-video { opacity: 0; transition: opacity 1.2s ease; }
+#bg-video.on { opacity: 1; }
 #bg-paint { animation: drift 48s ease-in-out infinite alternate; transform-origin: 62% 70%; }
 @keyframes drift { from { transform: scale(1); } to { transform: scale(1.07) translateX(-12px); } }
 #embers { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -505,7 +508,7 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 .upload { position: relative; overflow: hidden; }
 .upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 #st-back { align-self: flex-start; min-height: 30px; padding: 6px 12px; line-height: 1; }
-@media (prefers-reduced-motion: reduce) { #bg-paint { animation: none; } #drawer, #drawer.open { transition: none; } }
+@media (prefers-reduced-motion: reduce) { #bg-paint { animation: none; } #bg-video { display: none; } #drawer, #drawer.open { transition: none; } }
 @media (max-width: 1000px) {
   .sheet { left: 16px; right: 16px; width: auto; top: calc(16px + env(safe-area-inset-top, 0px)); bottom: 16px; max-height: none; padding: 18px 16px 20px; }
   .era-cards { grid-template-columns: repeat(2, 1fr); }

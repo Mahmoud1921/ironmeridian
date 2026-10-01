@@ -1300,6 +1300,8 @@ async function menuRun(browser) {
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await page.evaluate(() => { try { localStorage.clear(); } catch (e) { } });
   check('menu: the painting is drawn behind the menu', await page.evaluate(() => { const c = document.getElementById('bg-paint'), d = c.getContext('2d').getImageData(960, 700, 1, 1).data; return !c.hidden && d[3] > 0; }));
+  check('menu: the battle film plays behind the menu', await waitFor(page, () => { const v = document.getElementById('bg-video'); return !v.hidden && !v.paused && v.currentTime > 0.2 && v.classList.contains('on'); }, null, 8000), await page.evaluate(() => { const v = document.getElementById('bg-video'); return JSON.stringify({ hidden: v.hidden, paused: v.paused, t: v.currentTime, src: v.currentSrc, err: v.error && v.error.code, ready: v.readyState }); }));
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/menu-film.png') });
   await clickEl(page, '#mm-join');
   check('menu: Join game opens the online play sheet', await waitFor(page, () => !!document.getElementById('mp-code') || /web version/.test(document.getElementById('sheet').textContent), null, 1500));
   await page.keyboard.press('Escape');
@@ -1311,9 +1313,9 @@ async function menuRun(browser) {
   await clickEl(page, '[data-otab="graphics"]');
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==', 'base64');
   await page.setInputFiles('#opt-bg', { name: 'bg.png', mimeType: 'image/png', buffer: png });
-  check('menu: your own picture replaces the painting', await waitFor(page, () => !document.getElementById('bg-img').hidden && document.getElementById('bg-paint').hidden && /^data:image/.test(document.getElementById('bg-img').src), null, 2000));
+  check('menu: your own picture replaces the painting', await waitFor(page, () => !document.getElementById('bg-img').hidden && document.getElementById('bg-paint').hidden && document.getElementById('bg-video').hidden && /^data:image/.test(document.getElementById('bg-img').src), null, 2000));
   await clickEl(page, '#opt-paint');
-  check('menu: Painting brings the painting back', await waitFor(page, () => document.getElementById('bg-img').hidden && !document.getElementById('bg-paint').hidden));
+  check('menu: Battle film brings the film back', await waitFor(page, () => document.getElementById('bg-img').hidden && !document.getElementById('bg-paint').hidden && !document.getElementById('bg-video').hidden && !document.getElementById('bg-video').paused, null, 2000));
   await page.evaluate(() => { const r = document.getElementById('opt-ui'); r.value = 115; r.dispatchEvent(new Event('change')); });
   check('menu: interface size is kept', await page.evaluate(() => Menu.prefs().uiSize === 115 && document.getElementById('hud').style.zoom === '1.15' && JSON.parse(localStorage.getItem('ironmeridian.prefs')).uiSize === 115));
   await page.evaluate(() => Menu.setPref('uiSize', 100));

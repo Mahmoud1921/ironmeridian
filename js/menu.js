@@ -36,6 +36,25 @@ const Menu = (function () {
     if (!img) try { img = localStorage.getItem(BG_KEY); } catch (e) { img = null; }
     $('#bg-img').hidden = !img; $('#bg-paint').hidden = !!img;
     if (img && $('#bg-img').src !== img) $('#bg-img').src = img;
+    film(!img);
+  }
+  // the battle film made in Blender: the painting shows until it plays, and stays if it cannot
+  const FILM = ['media/menu-battle.webm', 'media/menu-battle.mp4', '../media/menu-battle.webm', '../media/menu-battle.mp4'];
+  let filmSet = false;
+  function film(want) {
+    const v = $('#bg-video'); if (!v) return;
+    const still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!want || still || $('#menu').hidden) { v.hidden = !want || still; if (!v.paused) v.pause(); return; }
+    v.hidden = false;
+    if (!filmSet) {
+      filmSet = true;
+      v.innerHTML = FILM.map(src => `<source src="${src}" type="video/${src.endsWith('.mp4') ? 'mp4' : 'webm'}">`).join('');
+      v.addEventListener('playing', () => v.classList.add('on'));
+      v.load();
+      // stop playing once the menu is gone, so the game gets the computer to itself
+      setInterval(() => { if ($('#menu').hidden && !v.paused) v.pause(); }, 1000);
+    }
+    const p = v.play(); if (p && p.catch) p.catch(() => {});
   }
   function useImage(file) {
     const r = new FileReader();
@@ -66,7 +85,7 @@ const Menu = (function () {
     $('#mm-eras').innerHTML = list.map((e, i) => `<div style="left:${n ? i / n * 100 : 0}%"><b>${esc(e.label || yearLabel(e))}</b><span>${esc(e.name)}</span></div>`).join('');
     open(sheet || null);
   }
-  function hide() { $('#menu').hidden = true; open(null); }
+  function hide() { $('#menu').hidden = true; open(null); film(false); }
   let current = null, pickedEra = null, optTab = 'controls';
   function open(id) {
     current = id;
@@ -137,8 +156,8 @@ const Menu = (function () {
         <div class="k">Open a side bar tab</div><div class="keys"><kbd>1</kbd> to <kbd>9</kbd></div>
         <div class="k">Close panels</div><div class="keys"><kbd>Esc</kbd></div>
         <div class="k">Pause, and game speed</div><div class="keys"><kbd>Space</kbd><kbd>+</kbd><kbd>−</kbd></div>`,
-      graphics: `<div class="k">Menu background<small>The painting of soldiers from all six eras, or a picture of your own</small></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ${hasImage() ? '' : 'primary'}" id="opt-paint">Painting</button><label class="btn sm upload ${hasImage() ? 'primary' : ''}">Use my image<input type="file" id="opt-bg" accept="image/*"></label></div>
+      graphics: `<div class="k">Menu background<small>The battle film of all six eras (the painting shows while it loads), or a picture of your own</small></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ${hasImage() ? '' : 'primary'}" id="opt-paint">Battle film</button><label class="btn sm upload ${hasImage() ? 'primary' : ''}">Use my image<input type="file" id="opt-bg" accept="image/*"></label></div>
         <div class="k">Interface size<small>${p.uiSize}%</small></div><input type="range" id="opt-ui" min="85" max="125" step="5" value="${p.uiSize}" aria-label="Interface size">
         <div class="k">3D troop figures<small>Off shows plain counters, which is faster on old computers</small></div>${seg('figures', 'On', 'Off')}`,
       game: `<div class="k">Autosave<small>Once a game month, and when you leave the page</small></div>${seg('autosave', 'On', 'Off')}
