@@ -117,6 +117,7 @@ const UI = (function () {
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
     Sim.hooks.notify = (text, prov, kind) => toast(text, prov, kind);
+    Sim.hooks.lost = (prov, by) => lostBanner(prov, by);
     netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
@@ -340,6 +341,28 @@ const UI = (function () {
     while (box.children.length > 4) box.lastChild.remove();
     setTimeout(() => el.remove(), 7000);
     if (sel.tab === 'gov') renderRight();
+  }
+
+  // ---------- lost land: a red, pulsing banner (provinces lost close together share one) ----------
+  const lost = { provs: [], by: [], t: 0, timer: 0 };
+  function lostBanner(prov, by) {
+    const G = Sim.G, now = performance.now();
+    if (now - lost.t > 8000) { lost.provs = []; lost.by = []; }
+    lost.t = now;
+    if (!lost.provs.includes(prov)) lost.provs.push(prov);
+    if (!lost.by.includes(by)) lost.by.push(by);
+    Render.state.flash = (Render.state.flash || []).filter(f => f.prov !== prov).concat([{ prov, t: now }]).slice(-12);
+    let el = $('#lossbar');
+    if (!el) { el = document.createElement('button'); el.id = 'lossbar'; el.type = 'button'; $('#toasts').before(el); }
+    const names = lost.provs.map(id => MAP.provs[id].name), n = names.length;
+    const what = n === 1 ? names[0] + ' has fallen' : n + ' provinces lost: ' + names.slice(-3).reverse().join(', ') + (n > 3 ? ' and ' + (n - 3) + ' more' : '');
+    const who = lost.by.map(t => G.countries[t] ? G.countries[t].name : t).slice(0, 2).join(' and ') + (lost.by.length > 2 ? ' and others' : '');
+    el.innerHTML = `<svg class="i"><use href="#i-swords"/></svg><span><b>${esc(what)}</b><small>Taken by ${esc(who)} · ${esc(Sim.dateStr(G.hour))} · click to look</small></span>`;
+    el.hidden = false;
+    el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
+    el.onclick = () => { const p = MAP.provs[lost.provs[lost.provs.length - 1]]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, Render.minZoom() * 3)); selectProvince(p.id); el.hidden = true; };
+    clearTimeout(lost.timer);
+    lost.timer = setTimeout(() => { el.hidden = true; }, 8000);
   }
 
   // ---------- left panel: province & country ----------
@@ -1521,7 +1544,7 @@ const UI = (function () {
   function backToStart() {
     if (Net.active()) Net.stop();
     netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
-    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; if ($('#lossbar')) $('#lossbar').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);

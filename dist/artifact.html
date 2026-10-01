@@ -243,6 +243,17 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 .toast { pointer-events: none; padding: 7px 12px; background: rgba(23,28,25,.96); border: 1px solid var(--line); border-left: 4px solid var(--info); font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.5); animation: tin .25s ease-out; width: 100%; }
 .toast.war, .toast.loss, .toast.cap { border-left-color: var(--bad); }
 .toast.win { border-left-color: var(--good); }
+/* lost land: red banner above the notices, pulsing as it arrives */
+#lossbar { position: absolute; left: 50%; transform: translateX(-50%); top: calc(var(--top, 48px) + 8px); z-index: 19; display: flex; align-items: center; gap: 10px; width: min(480px, calc(100% - 32px)); padding: 8px 14px; text-align: left; color: #fff1ea; cursor: pointer;
+  background: linear-gradient(90deg, #8f1f17, #b3291e 60%, #8f1f17); border: 1px solid #ff6b55; box-shadow: 0 0 0 0 rgba(255,80,60,.7), 0 6px 18px rgba(0,0,0,.55); font: inherit; }
+#lossbar svg.i { width: 22px; height: 22px; flex: none; }
+#lossbar b { display: block; font-size: 16px; letter-spacing: .02em; }
+#lossbar small { display: block; font-size: 12px; color: #ffd3c8; }
+#lossbar.pulse { animation: lossin .3s ease-out, losspulse 1s ease-out 3; }
+#lossbar:hover { filter: brightness(1.1); }
+@keyframes lossin { from { transform: translate(-50%, -14px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+@keyframes losspulse { 0% { box-shadow: 0 0 0 0 rgba(255,80,60,.75), 0 6px 18px rgba(0,0,0,.55); } 100% { box-shadow: 0 0 0 18px rgba(255,80,60,0), 0 6px 18px rgba(0,0,0,.55); } }
+#lossbar:not([hidden]) ~ #toasts { top: calc(var(--top, 48px) + 76px); }
 .toast.battle { border-left-color: var(--warn); }
 .toast .d { font-size: 11px; color: var(--muted); margin-right: 6px; }
 @keyframes tin { from { opacity: 0; transform: translateY(-6px); } }
@@ -4800,7 +4811,7 @@ const Sim = (function () {
   let MAP = null;   // generated map
   let G = null;     // game state (serialisable)
   let nbDist = [];  // km between adjacent provinces
-  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {} };
+  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {} };
 
   let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -5355,12 +5366,14 @@ const Sim = (function () {
     G.ownVer++;
     if (newOwner === G.player) G.stats.captured++;
     if (isHuman(prev)) {
-      if (prev === G.player) G.stats.lost++;
+      if (prev === G.player) { G.stats.lost++; hooks.lost(prov, newOwner); }   // the red banner and map flash, for every province
       if (p.capital || p.city) {
         // only the capital falling stops the clock; other losses are notices (unless the player asked for city pauses, once a day at most)
         const pause = (G.settings.pauseLoss && p.capital) || (G.settings.pauseCities && p.city && !(G.hour - (G.lossPauseAt ?? -99) < 24));
         if (pause) G.lossPauseAt = G.hour;
-        tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+        // the local player sees the banner instead of a toast; the log keeps the city
+        if (prev === G.player) { G.log.unshift({ hour: G.hour, text: p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, kind: 'loss', to: prev }); if (G.log.length > 80) G.log.pop(); if (pause && G.settings.autoPause && !G.paused) { G.paused = true; hooks.pause(); } }
+        else tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
       }
     }
     // capital relocation
@@ -12436,6 +12449,16 @@ const Render = (function () {
     const overlay = (id, fn) => { const p = MAP.provs[id]; ctx.save(); ctx.clip(lmClips[p.lm], 'evenodd'); fn(p); ctx.restore(); };
     if (state.frontEdges) { ctx.lineWidth = 4 / z; ctx.strokeStyle = 'rgba(214,176,82,0.9)'; ctx.lineCap = 'round'; ctx.stroke(state.frontEdges); }
     if (state.hover >= 0) overlay(state.hover, () => { ctx.fillStyle = 'rgba(255,245,210,0.16)'; ctx.fill(provPaths[state.hover]); });
+    // provinces just lost flash red for a few seconds
+    if (state.flash && state.flash.length) {
+      const now = performance.now();
+      state.flash = state.flash.filter(f => now - f.t < 4000);
+      for (const f of state.flash) overlay(f.prov, () => {
+        const k = (now - f.t) / 4000, pulse = 0.5 + 0.5 * Math.sin((now - f.t) / 1000 * Math.PI * 3);
+        ctx.fillStyle = `rgba(214,52,38,${(0.25 + 0.35 * pulse) * (1 - k)})`; ctx.fill(provPaths[f.prov]);
+        ctx.lineWidth = 3 / z; ctx.strokeStyle = `rgba(255,90,70,${0.9 * (1 - k)})`; ctx.stroke(provPaths[f.prov]);
+      });
+    }
     if (state.selProv >= 0) overlay(state.selProv, () => {
       ctx.fillStyle = 'rgba(255,240,190,0.22)'; ctx.fill(provPaths[state.selProv]);
       ctx.lineWidth = 2.2 / z; ctx.strokeStyle = 'rgba(255,236,170,0.95)'; ctx.stroke(provPaths[state.selProv]);
@@ -13558,6 +13581,7 @@ const UI = (function () {
     $('#mc-out').onclick = () => Render.zoomSmooth(Render.size[0] / 2, Render.size[1] / 2, 1 / 1.5);
     $('#mc-world').onclick = () => Render.fitWorld();
     Sim.hooks.notify = (text, prov, kind) => toast(text, prov, kind);
+    Sim.hooks.lost = (prov, by) => lostBanner(prov, by);
     netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
@@ -13781,6 +13805,28 @@ const UI = (function () {
     while (box.children.length > 4) box.lastChild.remove();
     setTimeout(() => el.remove(), 7000);
     if (sel.tab === 'gov') renderRight();
+  }
+
+  // ---------- lost land: a red, pulsing banner (provinces lost close together share one) ----------
+  const lost = { provs: [], by: [], t: 0, timer: 0 };
+  function lostBanner(prov, by) {
+    const G = Sim.G, now = performance.now();
+    if (now - lost.t > 8000) { lost.provs = []; lost.by = []; }
+    lost.t = now;
+    if (!lost.provs.includes(prov)) lost.provs.push(prov);
+    if (!lost.by.includes(by)) lost.by.push(by);
+    Render.state.flash = (Render.state.flash || []).filter(f => f.prov !== prov).concat([{ prov, t: now }]).slice(-12);
+    let el = $('#lossbar');
+    if (!el) { el = document.createElement('button'); el.id = 'lossbar'; el.type = 'button'; $('#toasts').before(el); }
+    const names = lost.provs.map(id => MAP.provs[id].name), n = names.length;
+    const what = n === 1 ? names[0] + ' has fallen' : n + ' provinces lost: ' + names.slice(-3).reverse().join(', ') + (n > 3 ? ' and ' + (n - 3) + ' more' : '');
+    const who = lost.by.map(t => G.countries[t] ? G.countries[t].name : t).slice(0, 2).join(' and ') + (lost.by.length > 2 ? ' and others' : '');
+    el.innerHTML = `<svg class="i"><use href="#i-swords"/></svg><span><b>${esc(what)}</b><small>Taken by ${esc(who)} · ${esc(Sim.dateStr(G.hour))} · click to look</small></span>`;
+    el.hidden = false;
+    el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
+    el.onclick = () => { const p = MAP.provs[lost.provs[lost.provs.length - 1]]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, Render.minZoom() * 3)); selectProvince(p.id); el.hidden = true; };
+    clearTimeout(lost.timer);
+    lost.timer = setTimeout(() => { el.hidden = true; }, 8000);
   }
 
   // ---------- left panel: province & country ----------
@@ -14962,7 +15008,7 @@ const UI = (function () {
   function backToStart() {
     if (Net.active()) Net.stop();
     netSeen = { hour: -1, texts: new Set() }; netLost = false; shownOffers.clear();
-    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
+    Sim.G = null; $('#modal').hidden = true; $('#evside').hidden = true; if ($('#lossbar')) $('#lossbar').hidden = true; $('#keyhint').hidden = true; sel.armies = []; sel.prov = -1; sel.battle = 0; sel.fleet = 0; sel.wing = 0; sel.zone = -1; pending = null; showHint();
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);

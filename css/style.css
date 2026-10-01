@@ -239,6 +239,17 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 .toast { pointer-events: none; padding: 7px 12px; background: rgba(23,28,25,.96); border: 1px solid var(--line); border-left: 4px solid var(--info); font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.5); animation: tin .25s ease-out; width: 100%; }
 .toast.war, .toast.loss, .toast.cap { border-left-color: var(--bad); }
 .toast.win { border-left-color: var(--good); }
+/* lost land: red banner above the notices, pulsing as it arrives */
+#lossbar { position: absolute; left: 50%; transform: translateX(-50%); top: calc(var(--top, 48px) + 8px); z-index: 19; display: flex; align-items: center; gap: 10px; width: min(480px, calc(100% - 32px)); padding: 8px 14px; text-align: left; color: #fff1ea; cursor: pointer;
+  background: linear-gradient(90deg, #8f1f17, #b3291e 60%, #8f1f17); border: 1px solid #ff6b55; box-shadow: 0 0 0 0 rgba(255,80,60,.7), 0 6px 18px rgba(0,0,0,.55); font: inherit; }
+#lossbar svg.i { width: 22px; height: 22px; flex: none; }
+#lossbar b { display: block; font-size: 16px; letter-spacing: .02em; }
+#lossbar small { display: block; font-size: 12px; color: #ffd3c8; }
+#lossbar.pulse { animation: lossin .3s ease-out, losspulse 1s ease-out 3; }
+#lossbar:hover { filter: brightness(1.1); }
+@keyframes lossin { from { transform: translate(-50%, -14px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+@keyframes losspulse { 0% { box-shadow: 0 0 0 0 rgba(255,80,60,.75), 0 6px 18px rgba(0,0,0,.55); } 100% { box-shadow: 0 0 0 18px rgba(255,80,60,0), 0 6px 18px rgba(0,0,0,.55); } }
+#lossbar:not([hidden]) ~ #toasts { top: calc(var(--top, 48px) + 76px); }
 .toast.battle { border-left-color: var(--warn); }
 .toast .d { font-size: 11px; color: var(--muted); margin-right: 6px; }
 @keyframes tin { from { opacity: 0; transform: translateY(-6px); } }

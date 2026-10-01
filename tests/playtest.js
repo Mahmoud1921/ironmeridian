@@ -1253,6 +1253,15 @@ async function politicsRun(browser) {
     if (fight.chased) check('orders: hunting a marching army heads for where it is going', fight.aim === fight.next, JSON.stringify(fight));
   }
 
+  // losing land: no pause, but a red banner (one for several provinces) and the provinces flash on the map
+  const lostP = await G(() => { const S = Sim.G; S.paused = false; S.settings.autoPause = true; S.settings.pauseLoss = true; if (!Sim.atWar('ITA', 'ETH')) Sim.declareWar('ITA', 'ETH', true); const ps = Sim.MAP.provs.filter(p => S.owner[p.id] === 'ITA' && !p.capital).slice(0, 2).map(p => p.id); ps.forEach(id => Sim.capture(id, 'ETH')); return { ps, paused: S.paused }; });
+  check('war: losing provinces does not pause the clock', !lostP.paused);
+  check('war: lost provinces show one red banner and flash on the map', await waitFor(page, ps => { const b = document.getElementById('lossbar'); return b && !b.hidden && /2 provinces lost/.test(b.textContent) && ps.every(id => (Render.state.flash || []).some(f => f.prov === id)); }, lostP.ps, 1500), await G(() => { const b = document.getElementById('lossbar'); return b ? b.textContent : 'no banner'; }));
+  await page.screenshot({ path: path.resolve(__dirname, 'shots/lost-banner.png') });
+  await clickEl(page, '#lossbar');
+  check('war: clicking the banner shows the lost province', await waitFor(page, ps => Render.state.selProv === ps[ps.length - 1] && document.getElementById('lossbar').hidden, lostP.ps, 1500));
+  await G(ps => ps.forEach(id => Sim.capture(id, 'ITA')), lostP.ps);
+
   // the peace conference
   await G(() => { Sim.G.settings.autoPause = false; const S = Sim.G; if (!Sim.atWar('ITA', 'ETH')) Sim.declareWar('ITA', 'ETH', true); const eth = Sim.MAP.provs.filter(p => p.core === 'ETH' && p.home); eth.slice(0, Math.ceil(eth.length * 0.7)).forEach(p => { S.owner[p.id] = 'ITA'; }); S.ownVer++; for (let i = 0; i < 24; i++) Sim.hourTick(); });
   check('peace: a capitulation opens the peace conference', await waitFor(page, () => !!Sim.G.peace && !!document.querySelector('#modal .pz') && document.querySelectorAll('#modal [data-pz]').length >= 3, null, 2000));

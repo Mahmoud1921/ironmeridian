@@ -334,6 +334,16 @@ const Render = (function () {
     const overlay = (id, fn) => { const p = MAP.provs[id]; ctx.save(); ctx.clip(lmClips[p.lm], 'evenodd'); fn(p); ctx.restore(); };
     if (state.frontEdges) { ctx.lineWidth = 4 / z; ctx.strokeStyle = 'rgba(214,176,82,0.9)'; ctx.lineCap = 'round'; ctx.stroke(state.frontEdges); }
     if (state.hover >= 0) overlay(state.hover, () => { ctx.fillStyle = 'rgba(255,245,210,0.16)'; ctx.fill(provPaths[state.hover]); });
+    // provinces just lost flash red for a few seconds
+    if (state.flash && state.flash.length) {
+      const now = performance.now();
+      state.flash = state.flash.filter(f => now - f.t < 4000);
+      for (const f of state.flash) overlay(f.prov, () => {
+        const k = (now - f.t) / 4000, pulse = 0.5 + 0.5 * Math.sin((now - f.t) / 1000 * Math.PI * 3);
+        ctx.fillStyle = `rgba(214,52,38,${(0.25 + 0.35 * pulse) * (1 - k)})`; ctx.fill(provPaths[f.prov]);
+        ctx.lineWidth = 3 / z; ctx.strokeStyle = `rgba(255,90,70,${0.9 * (1 - k)})`; ctx.stroke(provPaths[f.prov]);
+      });
+    }
     if (state.selProv >= 0) overlay(state.selProv, () => {
       ctx.fillStyle = 'rgba(255,240,190,0.22)'; ctx.fill(provPaths[state.selProv]);
       ctx.lineWidth = 2.2 / z; ctx.strokeStyle = 'rgba(255,236,170,0.95)'; ctx.stroke(provPaths[state.selProv]);

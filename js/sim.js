@@ -4,7 +4,7 @@ const Sim = (function () {
   let MAP = null;   // generated map
   let G = null;     // game state (serialisable)
   let nbDist = [];  // km between adjacent provinces
-  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {} };
+  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {} };
 
   let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -559,12 +559,14 @@ const Sim = (function () {
     G.ownVer++;
     if (newOwner === G.player) G.stats.captured++;
     if (isHuman(prev)) {
-      if (prev === G.player) G.stats.lost++;
+      if (prev === G.player) { G.stats.lost++; hooks.lost(prov, newOwner); }   // the red banner and map flash, for every province
       if (p.capital || p.city) {
         // only the capital falling stops the clock; other losses are notices (unless the player asked for city pauses, once a day at most)
         const pause = (G.settings.pauseLoss && p.capital) || (G.settings.pauseCities && p.city && !(G.hour - (G.lossPauseAt ?? -99) < 24));
         if (pause) G.lossPauseAt = G.hour;
-        tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
+        // the local player sees the banner instead of a toast; the log keeps the city
+        if (prev === G.player) { G.log.unshift({ hour: G.hour, text: p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, kind: 'loss', to: prev }); if (G.log.length > 80) G.log.pop(); if (pause && G.settings.autoPause && !G.paused) { G.paused = true; hooks.pause(); } }
+        else tell(prev, p.name + ' has fallen to ' + G.countries[tag].name + '.', prov, 'loss', pause);
       }
     }
     // capital relocation
