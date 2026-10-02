@@ -31,7 +31,19 @@ const ERA_GOVS = {
   'Colony':                  { stab: 0.50, ws: 0.15, bloc: 'Neutral' },
   'Company rule':            { stab: 0.55, ws: 0.30, bloc: 'Neutral' },
   'Revolutionary':           { stab: 0.45, ws: 0.55, bloc: 'Neutral' },
-  'Unclaimed':               { stab: 0.50, ws: 0.00, bloc: 'Neutral' }
+  'Unclaimed':               { stab: 0.50, ws: 0.00, bloc: 'Neutral' },
+  // 1917 and 2026
+  'Provisional government':  { stab: 0.45, ws: 0.35, bloc: 'Democratic' },
+  'Federal republic':        { stab: 0.68, ws: 0.25, bloc: 'Democratic' },
+  'Parliamentary republic':  { stab: 0.66, ws: 0.25, bloc: 'Democratic' },
+  'Presidential republic':   { stab: 0.62, ws: 0.30, bloc: 'Democratic' },
+  'Authoritarian republic':  { stab: 0.60, ws: 0.45, bloc: 'Authoritarian' },
+  'One-party state':         { stab: 0.66, ws: 0.45, bloc: 'Communist' },
+  'Absolute monarchy':       { stab: 0.64, ws: 0.40, bloc: 'Authoritarian' },
+  'Islamic republic':        { stab: 0.55, ws: 0.55, bloc: 'Authoritarian' },
+  'Military junta':          { stab: 0.45, ws: 0.50, bloc: 'Authoritarian' },
+  'Transitional government': { stab: 0.40, ws: 0.40, bloc: 'Neutral' },
+  'Rebel movement':          { stab: 0.40, ws: 0.60, bloc: 'Neutral' }
 };
 
 const Eras = (function () {
@@ -164,6 +176,16 @@ const Eras = (function () {
       if (tag === UNC) unclaimed++; else owned[tag] = (owned[tag] || 0) + 1;
     }
 
+    // --- 2b. wartime occupation: provinces of `of` within reach of the listed points are held by `by`.
+    // The core does not change, so the land shows striped and goes back in a peace. Capitals are never occupied.
+    for (const [by, of, pts] of (E.occupied || [])) {
+      if (!owned[by] || !owned[of]) continue;
+      for (const p of map.provs) {
+        if (p.core !== of || p.capital) continue;
+        if (pts.some(([lon, lat, km]) => haversineKm(lon, lat, p.lon, p.lat) <= km)) { p.owner = by; owned[by]++; }
+      }
+    }
+
     // --- 3. nation definitions for the sim ---
     const defs = nations.filter(n => !dropped.includes(n.tag) && owned[n.tag]).map(n => {
       const d = Object.assign({}, n);
@@ -194,8 +216,8 @@ const Eras = (function () {
       if (p.city) continue;
       if (p.terrain === 'urban') p.terrain = 'plains';
       let base = null, bd = Infinity;
-      if (p.owner !== UNC) {
-        for (const c of cityProvs) { if (c.owner !== p.owner) continue; const d = haversineKm(c.lon, c.lat, p.lon, p.lat); if (d < bd) { bd = d; base = c; } }
+      if (p.core !== UNC) {
+        for (const c of cityProvs) { if (c.core !== p.core) continue; const d = haversineKm(c.lon, c.lat, p.lon, p.lat); if (d < bd) { bd = d; base = c; } }
       }
       let name;
       if (base && bd < 900) {
@@ -218,7 +240,7 @@ const Eras = (function () {
 
     // --- 5. population, infrastructure and workshops (same model as mapgen.js) ---
     const byOwner = {};
-    map.provs.forEach(p => { (byOwner[p.owner] = byOwner[p.owner] || []).push(p); });
+    map.provs.forEach(p => { (byOwner[p.core] = byOwner[p.core] || []).push(p); });
     for (const c of defs) {
       const list = byOwner[c.tag] || [];
       if (!list.length) continue;
@@ -271,7 +293,8 @@ const Eras = (function () {
   function unitsFor(tag) {
     return Object.keys(UNIT_TYPES).filter(t => {
       const u = UNIT_TYPES[t];
-      if (u.only && !u.only.includes(tag)) return false;
+      // a national speciality can still be opened to others by a technology (Tech unlock)
+      if (u.only && !u.only.includes(tag) && !(typeof Tech !== 'undefined' && typeof Sim !== 'undefined' && Sim.G && Sim.G.countries[tag] && Tech.unlocked(tag, t))) return false;
       if (u.not && u.not.includes(tag)) return false;
       return true;
     });
@@ -287,6 +310,15 @@ const Eras = (function () {
     return mix.length ? mix[0][0] : Object.keys(UNIT_TYPES)[0];
   }
   function wars() { return era ? (era.wars || []) : null; }
+  // alliances already standing on the first day: [name, [members, leader first]]
+  function factions() { return era ? (era.factions || []) : []; }
+  // technologies a nation already has on the first day (ids from the era's tech tree)
+  function startTechs(tag) { if (!era || !era.startTechs) return []; const s = era.startTechs; return (s[tag] || []).concat(s.all || []); }
+  // trench warfare: how deep troops dig in standing still, and how many days it takes
+  function trench() { return (era && era.trench) || { max: 0.25, days: 10 }; }
+  // how much a nation's technology level weighs in battle (power is multiplied by level ^ weight)
+  function techWeight() { return (era && era.techWeight) || 1; }
+  function researchSlots() { return (era && era.researchSlots) || 2; }
   function flagFor(tag) {
     if (!era) return null;
     const n = era.nations.find(x => x.tag === tag);
@@ -314,15 +346,19 @@ const Eras = (function () {
     ballista: 'engine', trebuchet: 'engine', siege: 'engine',
     cannon: 'cannon', horseartillery: 'cannon', fieldgun: 'cannon', howitzer: 'cannon',
     armoredcar: 'car', landship: 'tank',
+    // 1917 (Blender models in models.js)
+    mark4: 'mark4', renaultft: 'renaultft', gastroops: 'gastroops', stormtroop: 'gastroops', railgun: 'railgun',
+    // 2026 (Blender models in models.js)
+    modern: 'modern', mbt: 'mbt', ifv: 'ifv', spg: 'spg', mlrs: 'mlrs', sam: 'sam', drone: 'drone', heli: 'heli', militia: 'militia',
   };
   function figureKind(unitType, available) {
     const u = UNIT_TYPES[unitType];
     if (!u) return 'soldiers';
     let k = u.look && LOOK_KIND[u.look];
-    if (!k) { const y = era ? era.year : 1936; k = y < 1500 ? 'warband' : y < 1880 ? 'musket' : 'soldiers'; }
-    if (available && !available.includes(k)) k = k === 'cannon' || k === 'engine' ? 'gun' : k === 'car' ? 'car' : 'soldiers';
+    if (!k) { const y = era ? era.year : 1936; k = y < 1500 ? 'warband' : y < 1880 ? 'musket' : y < 1990 ? 'soldiers' : 'modern'; }
+    if (available && !available.includes(k)) k = k === 'cannon' || k === 'engine' || k === 'railgun' || k === 'spg' || k === 'mlrs' ? 'gun' : k === 'car' || k === 'ifv' || k === 'sam' ? 'car' : k === 'mark4' || k === 'renaultft' || k === 'mbt' ? 'tank' : 'soldiers';
     return k;
   }
 
-  return { list, get, apply, info, isBase, startTime, yearLabel, rankFor, unitsFor, pickUnitType, wars, flagFor, figureKind, govClass, factionNames, haversineKm, BASE_ID };
+  return { list, get, apply, info, isBase, startTime, yearLabel, rankFor, unitsFor, pickUnitType, wars, factions, startTechs, trench, techWeight, researchSlots, flagFor, figureKind, govClass, factionNames, haversineKm, BASE_ID };
 })();

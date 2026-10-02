@@ -17,10 +17,11 @@ const Tech = (function () {
   let index = {}, indexEra = null;
   function tiersToIndex(branchId, tiers, kind) {
     let prev = [];
+    const D = data(), cost = (D && D.tierCost) || TIER_COST;   // an era can set longer trees (2026 has six tiers)
     tiers.forEach((tier, i) => {
       const list = Array.isArray(tier) ? tier : [tier];
       for (const t of list) {
-        index[t.id] = { t, branch: branchId, tier: i, alt: list.length > 1 ? list.find(x => x !== t).id : null, prev: prev.slice(), cost: TIER_COST[Math.min(i, 3)], kind };
+        index[t.id] = { t, branch: branchId, tier: i, alt: list.length > 1 ? list.find(x => x !== t).id : null, prev: prev.slice(), cost: cost[Math.min(i, cost.length - 1)], kind };
       }
       prev = list.map(t => t.id);
     });
@@ -33,6 +34,7 @@ const Tech = (function () {
     if (!D) return;
     for (const b of D.branches) tiersToIndex(b.id, b.tiers, 'era');
     for (const tag in (D.national || {})) tiersToIndex('nat:' + tag, D.national[tag].techs, 'nat');
+    for (const k in (D.areas || {})) tiersToIndex('area:' + k, D.areas[k].techs, 'area');
     if (typeof TECH_CULTURE !== 'undefined') for (const k in TECH_CULTURE) tiersToIndex('cul:' + k, TECH_CULTURE[k].techs, 'cul');
   }
   function cultureGroup(tag) {
@@ -45,6 +47,11 @@ const Tech = (function () {
   function ownBranch(tag) {
     const D = data();
     if (D && D.national && D.national[tag]) return { id: 'nat:' + tag, name: D.national[tag].name || G().countries[tag].name, tiers: D.national[tag].techs, national: true };
+    // eras with regional branches (2026: European Union, Gulf, Africa...) use them instead of the old culture branches
+    if (D && D.areas) {
+      const k = (D.areaOf && D.areaOf[tag]) || D.areaDefault;
+      return k && D.areas[k] ? { id: 'area:' + k, name: D.areas[k].name, tiers: D.areas[k].techs, national: false } : null;
+    }
     const cg = cultureGroup(tag);
     if (cg && typeof TECH_CULTURE !== 'undefined' && TECH_CULTURE[cg]) return { id: 'cul:' + cg, name: TECH_CULTURE[cg].name, tiers: TECH_CULTURE[cg].techs, national: false };
     return null;
@@ -145,6 +152,7 @@ const Tech = (function () {
     })));
     D.branches.forEach(b => scan(b.tiers));
     for (const k in D.national || {}) scan(D.national[k].techs);
+    for (const k in D.areas || {}) scan(D.areas[k].techs);
     if (typeof LAND_TYPES !== 'undefined') { LAND_TYPES.length = 0; Object.keys(UNIT_TYPES).forEach(k => LAND_TYPES.push(k)); }
   }
 
@@ -152,8 +160,15 @@ const Tech = (function () {
   function setup() {
     buildIndex();
     fxGame = null;
-    for (const c of Object.values(G().countries)) { c.techs = []; c.rs = { slots: new Array(SLOTS).fill(null), saved: {} }; }
+    const n = typeof Eras !== 'undefined' ? Eras.researchSlots() : SLOTS;
+    for (const c of Object.values(G().countries)) {
+      c.techs = []; c.rs = { slots: new Array(n).fill(null), saved: {} };
+      // what the nation already fields on the first day (1917 tanks and gas, 2026 drones and networks)
+      if (typeof Eras !== 'undefined') for (const id of Eras.startTechs(c.tag)) if (index[id] && inBranchOf(c.tag, index[id]) && !c.techs.includes(id)) c.techs.push(id);
+    }
   }
+  // technology level used in battle: the nation's starting level plus what research has added
+  function level(tag) { const c = G().countries[tag]; return Math.max(0.2, (c ? c.tech : 1) + modFast(tag, 'techLevel', '', -1)); }
   function has(tag, id) { const c = G().countries[tag]; return !!(c.techs && c.techs.includes(id)); }
   function researching(tag, id) { const c = G().countries[tag]; return !!(c.rs && c.rs.slots.some(s => s && s.id === id)); }
   function inBranchOf(tag, x) {
@@ -258,5 +273,5 @@ const Tech = (function () {
     }
     if (best) start(c.tag, best.id, free);
   }
-  return { setup, daily, mod, modFast, unlocked, registerUnlocks, branchesFor, ownBranch, state, info, start, stop, rate, fromLabel, dateReady, unitClass, invalidate, TIER_COST, SLOTS };
+  return { setup, daily, mod, modFast, unlocked, level, registerUnlocks, branchesFor, ownBranch, state, info, start, stop, rate, fromLabel, dateReady, unitClass, invalidate, TIER_COST, SLOTS };
 })();

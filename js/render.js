@@ -935,8 +935,9 @@ const Render = (function () {
     'rome-117': { w: 3.8, col: '#cbc3b1', edge: '#4a4339', stones: '#8b8374' },
     'medieval-1200': { w: 3.2, col: '#a17f55', edge: 'rgba(46,32,18,.65)', ruts: '#6f5434' },
     'napoleonic-1805': { w: 3.5, col: '#cfbb92', edge: '#56462f' },
-    'greatwar-1914': { w: 3.8, col: '#8c8980', edge: '#2d2b27' },
-    'ww2-1936': { w: 4.2, col: '#3d3d3b', edge: '#171716', centre: '#e6ddbb' }
+    'greatwar-1917': { w: 3.8, col: '#8c8980', edge: '#2d2b27' },
+    'ww2-1936': { w: 4.2, col: '#3d3d3b', edge: '#171716', centre: '#e6ddbb' },
+    'modern-2026': { w: 4.8, col: '#33363a', edge: '#121315', centre: '#f2f0e6' }
   };
   const LAY_MS = 2200, STAGGER_MS = 380;
   const rGeo = new Map(), rAnim = new Map();
@@ -1033,7 +1034,7 @@ const Render = (function () {
   function vLorry(cab, bed) { vRect(-6, -2.2, 7, 4.4, bed); vLine(-6, -2.2, 7, 4.4); vRect(1.4, -2, 3.2, 4, cab); vLine(1.4, -2, 3.2, 4); vRect(3.2, -1.6, 0.8, 3.2, 'rgba(170,190,200,.7)'); }
   function vehicle(era, war, pick, col, ph) {
     if (war) {
-      if (era === 'greatwar-1914' || era === 'ww2-1936') return vLorry('#4d5634', '#667046');
+      if (era === 'greatwar-1917' || era === 'ww2-1936' || era === 'modern-2026') return vLorry('#4d5634', '#667046');
       vCart('#6b5436', '#b8ae8a'); vAnimal(3.5, -1, '#5a3c26', ph); vAnimal(3.5, 1.1, '#4a3120', ph + 1); return;
     }
     if (era === 'greece-431bc') { vCart('#8a6a3c'); vAnimal(3.6, -1.1, '#d6c8ad', ph * 0.6); vAnimal(3.6, 1.1, '#c2b394', ph * 0.6 + 1); return; }
@@ -1043,9 +1044,9 @@ const Render = (function () {
       if (pick < 0.5) { vRect(-7, -2.4, 6.4, 4.8, '#2d2620'); vRect(-6.4, -1.8, 5.2, 3.6, col % 2 ? '#6b2a24' : '#2b3f5a'); vLine(-7, -2.4, 6.4, 4.8); vAnimal(3.4, -1.1, '#3a2a1c', ph); vAnimal(3.4, 1.1, '#5b3f28', ph + 1); return; }
       vCart('#7b5f3d', '#e2d8bd'); vAnimal(3.6, -1, '#6b4a2e', ph); vAnimal(3.6, 1.1, '#4a3120', ph + 1); return;
     }
-    if (era === 'greatwar-1914') { if (pick < 0.5) { vCart('#6d5a3a'); vAnimal(3.6, 0, '#5b3f28', ph); return; } return vLorry('#4a4a44', '#8a8570'); }
-    if (pick < 0.3) return vLorry('#5a5f55', '#8e8c80');
-    const cols = ['#a8382c', '#2f4c78', '#1e1e1e', '#d6c79d', '#3c6848'];
+    if (era === 'greatwar-1917') { if (pick < 0.5) { vCart('#6d5a3a'); vAnimal(3.6, 0, '#5b3f28', ph); return; } return vLorry('#4a4a44', '#8a8570'); }
+    if (pick < 0.3) return era === 'modern-2026' ? vLorry('#d8d8d4', '#9aa4ac') : vLorry('#5a5f55', '#8e8c80');
+    const cols = era === 'modern-2026' ? ['#c8ccd0', '#2a2d33', '#8a1f24', '#f2f2ef', '#3a5a8a'] : ['#a8382c', '#2f4c78', '#1e1e1e', '#d6c79d', '#3c6848'];
     ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(-4, -1.9, 8, 3.8, 1.4); else ctx.rect(-4, -1.9, 8, 3.8);
     ctx.fillStyle = cols[col % 5]; ctx.fill(); ctx.strokeStyle = 'rgba(8,8,8,.8)'; ctx.lineWidth = 0.5; ctx.stroke();
     vRect(-1.4, -1.5, 3, 3, 'rgba(20,24,28,.7)'); vRect(1.8, -1.5, 0.8, 3, 'rgba(160,190,210,.8)');
@@ -1132,7 +1133,7 @@ const Render = (function () {
         if (r.rail && Math.random() < 0.5) rSparks.push({ x: q.x, y: q.y, vx: (Math.random() - 0.5) * 30, vy: -Math.random() * 25, a: 1 });
         ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.ang); ctx.scale(1.35 * f, 1.35 * f);
         if (r.rail) { vRect(-5, -2.2, 6, 4.4, '#4a4036'); vLine(-5, -2.2, 6, 4.4); vRect(-4.4, -1.6, 4.8, 1.2, '#8a6a44'); vRect(-4.4, 0.4, 4.8, 1.2, '#8a6a44'); }
-        else if (era === 'greatwar-1914' || era === 'ww2-1936') vLorry('#6a5a3a', '#9a8a60');
+        else if (era === 'greatwar-1917' || era === 'ww2-1936' || era === 'modern-2026') vLorry('#6a5a3a', '#9a8a60');
         else { vCart('#7a5c38'); vAnimal(3.6, 0, '#5b3f28', now / 140); }
         ctx.restore();
       } else if (A.flash && now - A.flash < 900 && !cutNow) {
@@ -1184,7 +1185,7 @@ const Render = (function () {
       }
       const I = G.ind, busy = [r.a, r.b].reduce((n, p) => n + (I[p] ? Object.values(I[p]).reduce((x, y) => x + y, 0) : 0), 0);
       const n = Math.max(1, Math.min(5, Math.round(r.km / 110) + Math.floor(busy / 3)));
-      const speed = era === 'greatwar-1914' || era === 'ww2-1936' ? 16 : 7;
+      const speed = era === 'modern-2026' ? 24 : era === 'greatwar-1917' || era === 'ww2-1936' ? 16 : 7;
       for (let i = 0; i < n; i++) {
         const h = ((r.id * 2654435761 + i * 40503) >>> 0) / 4294967296;
         const vs = speed * (0.8 + h * 0.4), per = r.km / vs;

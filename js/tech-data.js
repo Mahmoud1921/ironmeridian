@@ -454,40 +454,43 @@ const TECH_DATA = {
     }
   },
 
-  // ================================================================ 1914
-  'greatwar-1914': {
+  // ================================================================ 1917
+  'greatwar-1917': {
     branches: [
       { id: 'mil', name: 'Military', tiers: [
         { id: 'mil1', name: 'Machine Guns', desc: 'Infantry +15% defence.', fx: [{ mod: 'defence', value: 0.15, cls: 'infantry' }] },
-        { id: 'mil2', name: 'Trench Systems', desc: 'Defence +20% after 10 days in one place (in game: defence +15%).', fx: [{ mod: 'defence', value: 0.15 }] },
+        { id: 'mil2', name: 'Defence in Depth', desc: 'Defence +15%: thin front lines, strongpoints and counterattack divisions behind them.', fx: [{ mod: 'defence', value: 0.15 }] },
         [
-          { id: 'mil3a', name: 'Heavy Artillery', desc: 'Artillery +20% attack.', fx: [{ mod: 'attack', value: 0.20, cls: 'artillery' }] },
-          { id: 'mil3b', name: 'Infiltration Tactics', desc: 'Infantry +20% attack.', fx: [{ mod: 'attack', value: 0.20, cls: 'infantry' }] }
+          { id: 'mil3a', name: 'Hurricane Bombardment', desc: 'Artillery +20% attack, gas troops +15% attack.', fx: [{ mod: 'attack', value: 0.20, cls: 'artillery' }, { mod: 'attack', value: 0.15, unit: ['gastroops'] }] },
+          { id: 'mil3b', name: 'Infiltration Tactics', desc: 'Any army can raise Stormtroopers; infantry +10% attack.', fx: [{ mod: 'unlock', unit: 'stormtroops' }, { mod: 'attack', value: 0.10, cls: 'infantry' }] }
         ],
-        { id: 'mil4', name: 'Landships', desc: 'Available from September 1916, unlocks Tanks for nations with at least 20 arsenals.', from: [1916, 9, 15], fx: [{ mod: 'unlock', unit: 'landships', def: {
-          name: 'Landships', short: 'TNK', atk: 26, def: 14, speed: 3, org: 40, supply: 2.0, mp: 4000, eq: 600, days: 80, symbol: 'arm', look: 'landship', armor: true,
-          note: 'Rhomboid British Mark I tanks first went into action at Flers-Courcelette on 15 September 1916: slow, unreliable, but able to cross trenches and wire.' } }] }
+        { id: 'mil4', name: 'Mustard Gas', desc: 'From July 1917 (Ypres): gas troops +30% attack, infantry +5% attack.', from: [1917, 7, 12], fx: [{ mod: 'attack', value: 0.30, unit: ['gastroops'] }, { mod: 'attack', value: 0.05, cls: 'infantry' }] },
+        { id: 'mil5', name: 'Combined Arms', desc: 'From July 1918 (Hamel and Amiens): tanks +25% attack, infantry and artillery +10% attack, organisation +10%.', from: [1918, 7, 4],
+          fx: [{ mod: 'attack', value: 0.25, cls: 'armor' }, { mod: 'attack', value: 0.10, cls: 'infantry' }, { mod: 'attack', value: 0.10, cls: 'artillery' }, { mod: 'org', value: 0.10 }] }
       ] },
-      { id: 'ind', name: 'Industry', tiers: [
-        { id: 'ind1', name: 'Electrification', desc: 'Workshops +20%.', fx: [{ mod: 'workshops', value: 0.20 }] },
-        { id: 'ind2', name: 'Assembly Lines', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+      { id: 'ind', name: 'War Industry', tiers: [
+        { id: 'ind1', name: 'Shell Production', desc: 'Arsenals +20%: the shell crises of 1915 are over.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+        { id: 'ind2', name: 'Women in the Factories', desc: 'Workshops and arsenals +10%, manpower +10%.', fx: [{ mod: 'workshops', value: 0.10 }, { mod: 'arsenals', value: 0.10 }, { mod: 'manpower', value: 0.10 }] },
         [
           { id: 'ind3a', name: 'Synthetic Nitrates', desc: 'Nitrate works can be built without a deposit.', fx: [{ mod: 'synthetic', value: 1, good: 'strategic' }] },
           { id: 'ind3b', name: 'Open-Hearth Steel', desc: 'Mines +30%.', fx: [{ mod: 'mines', value: 0.30 }] }
         ],
-        { id: 'ind4', name: 'War Economy', desc: 'Turn workshops into arsenals while at war (in game: at war, arsenals +20% and workshops -10%).', fx: [{ mod: 'arsenals', value: 0.20, when: 'war' }, { mod: 'workshops', value: -0.10, when: 'war' }] }
+        { id: 'ind4', name: 'Tank Factories', desc: 'From March 1918: any nation can build Heavy Tanks, and they cost 15% less.', from: [1918, 3, 1], fx: [{ mod: 'unlock', unit: 'landships' }, { mod: 'recruitCost', value: -0.15, unit: ['landships'] }] },
+        { id: 'ind5', name: 'Light Tanks', desc: 'From May 1918: unlocks Light Tanks (Renault FT and Whippet) for every nation.', from: [1918, 5, 31], fx: [{ mod: 'unlock', unit: 'lighttanks', def: {
+          name: 'Light Tanks', short: 'LTK', atk: 18, def: 10, speed: 5, org: 50, supply: 1.6, mp: 2500, eq: 380, days: 50, symbol: 'arm', look: 'renaultft', armor: true, breach: 0.35,
+          note: 'The two-man Renault FT, the first tank with a fully turning turret, and the British Whippet. Built by the thousand in 1918.' } }] }
       ] },
-      { id: 'trade', name: 'Trade', tiers: [
-        { id: 'trade1', name: 'Telegraph Cables', desc: '+1 trade slot.', fx: [{ mod: 'tradeSlots', value: 1 }] },
-        { id: 'trade2', name: 'Gold Standard', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
+      { id: 'trade', name: 'Trade and Shipping', tiers: [
+        { id: 'trade1', name: 'Wireless Telegraphy', desc: '+1 trade slot.', fx: [{ mod: 'tradeSlots', value: 1 }] },
+        { id: 'trade2', name: 'War Loans', desc: 'Tax +10%, +15% more while at war.', fx: [{ mod: 'tax', value: 0.10 }, { mod: 'tax', value: 0.15, when: 'war' }] },
         [
-          { id: 'trade3a', name: 'Convoys', desc: 'Convoy losses to raiders halved, stockpiles hold 30 more days.', fx: [{ mod: 'convoyLoss', value: -0.5 }, { mod: 'stockDays', value: 30 }] },
+          { id: 'trade3a', name: 'Convoys', desc: 'From May 1917: convoy losses to U-boats halved, stockpiles hold 30 more days.', from: [1917, 5, 10], fx: [{ mod: 'convoyLoss', value: -0.5 }, { mod: 'stockDays', value: 30 }] },
           { id: 'trade3b', name: 'Neutral Shipping', desc: '+15% trade bonus while you are at peace.', fx: [{ mod: 'tradeBonus', value: 0.15, when: 'peace' }] }
         ],
-        { id: 'trade4', name: 'Refrigerated Ships', desc: 'Food deals deliver 20% more (in game: food need -10%).', fx: [{ mod: 'foodNeed', value: -0.10 }] }
+        { id: 'trade4', name: 'Refrigerated Ships', desc: 'Food need -10%.', fx: [{ mod: 'foodNeed', value: -0.10 }] }
       ] },
       { id: 'state', name: 'Statecraft', tiers: [
-        { id: 'state1', name: 'Mass Conscription', desc: 'Manpower +25%.', fx: [{ mod: 'manpower', value: 0.25 }] },
+        { id: 'state1', name: 'Conscription', desc: 'Manpower +25%.', fx: [{ mod: 'manpower', value: 0.25 }] },
         { id: 'state2', name: 'Propaganda', desc: 'War support +15%.', fx: [{ mod: 'warSupport', value: 0.15 }] },
         [
           { id: 'state3a', name: 'Total War', desc: 'All industries +15%, stability -10%.', fx: [{ mod: 'industry', value: 0.15 }, { mod: 'stability', value: -0.10 }] },
@@ -498,99 +501,101 @@ const TECH_DATA = {
     ],
     national: {
       GER: { name: 'German Empire', techs: [
-        { id: 'ger1', name: 'Krupp Works', desc: 'Arsenals +20%, heavy artillery +10%.', fx: [{ mod: 'arsenals', value: 0.20 }, { mod: 'attack', value: 0.10, unit: ['heavyart'] }] },
-        { id: 'ger2', name: 'Schlieffen Plan', desc: 'Speed +20% for the first 60 days of a war (in game: speed +10% at war).', fx: [{ mod: 'speed', value: 0.10, when: 'war' }] },
+        { id: 'ger1', name: 'Hindenburg Programme', desc: 'Arsenals +25%, heavy artillery +10%.', fx: [{ mod: 'arsenals', value: 0.25 }, { mod: 'attack', value: 0.10, unit: ['heavyart', 'railguns'] }] },
+        { id: 'ger2', name: 'Unrestricted U-boat Warfare', desc: 'Raiders +40% against enemy convoys.', fx: [{ mod: 'raiding', value: 0.40 }] },
         { id: 'ger3', name: 'Haber Process', desc: 'Synthetic nitrates without taking the Industry choice.', fx: [{ mod: 'synthetic', value: 1, good: 'strategic' }] },
-        { id: 'ger4', name: 'Stormtroopers', desc: 'Available from 1917: infantry +15% attack.', fx: [{ mod: 'attack', value: 0.15, cls: 'infantry' }], from: [1917, 1, 1] }
+        { id: 'ger4', name: 'A7V Sturmpanzerwagen', desc: 'From March 1918: Germany can build Heavy Tanks.', from: [1918, 3, 21], fx: [{ mod: 'unlock', unit: 'landships' }] },
+        { id: 'ger5', name: 'Kaiserschlacht', desc: 'From March 1918: stormtroopers +20% attack, speed +10% at war.', from: [1918, 3, 21], fx: [{ mod: 'attack', value: 0.20, unit: ['stormtroops'] }, { mod: 'speed', value: 0.10, when: 'war' }] }
       ] },
       AUH: { name: 'Austria-Hungary', techs: [
         { id: 'auh1', name: 'Škoda Works', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
         { id: 'auh2', name: 'Danube Grain', desc: 'Farms +20%.', fx: [{ mod: 'farms', value: 0.20 }] },
         { id: 'auh3', name: 'Alpine Warfare', desc: 'Mountain troops +20%.', fx: [{ mod: 'attack', value: 0.20, unit: ['mountain'] }] },
-        { id: 'auh4', name: 'Dual Monarchy Compromise', desc: 'Stability +10%.', fx: [{ mod: 'stability', value: 0.10 }] }
+        { id: 'auh4', name: 'Sixtus Letters', desc: 'Emperor Karl\'s secret peace feelers: stability +10%, war support -5%.', fx: [{ mod: 'stability', value: 0.10 }, { mod: 'warSupport', value: -0.05 }] }
       ] },
       OTT: { name: 'Ottoman Empire', techs: [
-        { id: 'ott1', name: 'Straits Control', desc: 'Can close the Dardanelles: cuts every Black Sea sea deal (in game: +10% trade bonus, +20% defence around the Straits).', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.20, region: [25.5, 39.5, 30, 41.7] }] },
-        { id: 'ott2', name: 'Berlin to Baghdad Railway', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
-        { id: 'ott3', name: 'Arab Provinces', desc: 'Manpower +15%.', fx: [{ mod: 'manpower', value: 0.15 }] },
-        { id: 'ott4', name: 'Young Turk Reforms', desc: 'Organisation +10%.', fx: [{ mod: 'org', value: 0.10 }] }
+        { id: 'ott1', name: 'Straits Control', desc: 'Defence +20% around the Straits, +10% trade bonus.', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'defence', value: 0.20, region: [25.5, 39.5, 30, 41.7] }] },
+        { id: 'ott2', name: 'Hejaz Railway', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
+        { id: 'ott3', name: 'Yildirim Army Group', desc: 'Organisation +10%, attack +5% with German advisers.', fx: [{ mod: 'org', value: 0.10 }, { mod: 'attack', value: 0.05 }] },
+        { id: 'ott4', name: 'Army of Islam', desc: 'Manpower +15%, irregulars +15%.', fx: [{ mod: 'manpower', value: 0.15 }, { mod: 'attack', value: 0.15, unit: ['irregulars', 'irregcav'] }] }
       ] },
       FRA: { name: 'France', techs: [
-        { id: 'fra1', name: 'Lorraine Iron', desc: 'Mines +30%.', fx: [{ mod: 'mines', value: 0.30 }] },
+        { id: 'fra1', name: 'The Sacred Way', desc: 'Supply +15%, defence +10% in your own land.', fx: [{ mod: 'supply', value: 0.15 }, { mod: 'defence', value: 0.10, where: 'home' }] },
         { id: 'fra2', name: 'The 75mm Gun', desc: 'Field artillery +20%.', fx: [{ mod: 'attack', value: 0.20, unit: ['fieldart'] }] },
-        { id: 'fra3', name: 'Colonial Levies', desc: 'Colonial troops +20%.', fx: [{ mod: 'attack', value: 0.20, unit: ['colonial'] }] },
-        { id: 'fra4', name: 'Sacred Union', desc: 'Stability +10% while at war.', fx: [{ mod: 'stability', value: 0.10, when: 'war' }] }
+        { id: 'fra3', name: 'Pétain\'s Reforms', desc: 'From May 1917, after the mutinies: organisation +15%, stability +5%.', from: [1917, 5, 15], fx: [{ mod: 'org', value: 0.15 }, { mod: 'stability', value: 0.05 }] },
+        { id: 'fra4', name: 'Renault FT', desc: 'From May 1918: light tanks for France, 20% cheaper.', from: [1918, 5, 31], fx: [{ mod: 'unlock', unit: 'lighttanks' }, { mod: 'recruitCost', value: -0.20, unit: ['lighttanks'] }] }
       ] },
       GBR: { name: 'United Kingdom', techs: [
-        { id: 'gbr1', name: 'Empire Grain', desc: 'Food deals with your dominions and colonies are free of the trade slot limit (in game: +1 trade slot).', fx: [{ mod: 'tradeSlots', value: 1 }] },
+        { id: 'gbr1', name: 'Ministry of Munitions', desc: 'Arsenals +25%.', fx: [{ mod: 'arsenals', value: 0.25 }] },
         { id: 'gbr2', name: 'Royal Navy Blockade', desc: 'Warships +15% in battle, raiders +30% against enemy convoys, +10% trade bonus.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'raiding', value: 0.30 }, { mod: 'tradeBonus', value: 0.10 }] },
-        { id: 'gbr3', name: 'Ministry of Munitions', desc: 'Available from 1915: arsenals +25%.', fx: [{ mod: 'arsenals', value: 0.25 }], from: [1915, 6, 9] },
-        { id: 'gbr4', name: 'Landships Committee', desc: 'Landships 20% cheaper.', fx: [{ mod: 'recruitCost', value: -0.20, unit: ['landships'] }] }
+        { id: 'gbr3', name: 'Tank Corps', desc: 'Heavy tanks +20% attack and 20% cheaper.', fx: [{ mod: 'attack', value: 0.20, unit: ['landships'] }, { mod: 'recruitCost', value: -0.20, unit: ['landships'] }] },
+        { id: 'gbr4', name: 'Royal Air Force', desc: 'From April 1918: aircraft +15%.', from: [1918, 4, 1], fx: [{ mod: 'air', value: 0.15 }] }
       ] },
       RAJ: { name: 'British India', techs: [
         { id: 'raj1', name: 'Indian Army Expansion', desc: 'Manpower +25%.', fx: [{ mod: 'manpower', value: 0.25 }] },
         { id: 'raj2', name: 'Jute and Cotton', desc: 'Luxuries +30%.', fx: [{ mod: 'luxuries', value: 0.30 }] },
         { id: 'raj3', name: 'Bombay Mills', desc: 'Workshops +20%.', fx: [{ mod: 'workshops', value: 0.20 }] },
-        { id: 'raj4', name: 'Frontier Scouts', desc: 'Irregular warfare +15%.', fx: [{ mod: 'attack', value: 0.15, unit: ['irregulars', 'colonial'] }] }
+        { id: 'raj4', name: 'Mesopotamian Expedition', desc: 'Desert and river fighting +15%.', fx: [{ mod: 'attack', value: 0.15, terrain: ['desert', 'marsh'] }] }
       ] },
-      RUS: { name: 'Russian Empire', techs: [
+      RUS: { name: 'Russia', techs: [
         { id: 'rus1', name: 'Ukrainian Grain', desc: 'Farms +25%.', fx: [{ mod: 'farms', value: 0.25 }] },
         { id: 'rus2', name: 'Trans-Siberian Railway', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
-        { id: 'rus3', name: 'Steamroller', desc: 'Manpower +30%.', fx: [{ mod: 'manpower', value: 0.30 }] },
-        { id: 'rus4', name: 'Brusilov Offensive', desc: 'Available from 1916: attack +15% for 30 days after an offensive order (in game: attack +10% at war).', fx: [{ mod: 'attack', value: 0.10, when: 'war' }], from: [1916, 6, 4] }
+        { id: 'rus3', name: 'Shock Battalions', desc: 'Infantry +10% attack, organisation +5%.', fx: [{ mod: 'attack', value: 0.10, cls: 'infantry' }, { mod: 'org', value: 0.05 }] },
+        { id: 'rus4', name: 'Kerensky Offensive', desc: 'From July 1917: attack +10% at war.', fx: [{ mod: 'attack', value: 0.10, when: 'war' }], from: [1917, 7, 1] }
       ] },
       SRB: { name: 'Serbia', techs: [
-        { id: 'srb1', name: 'Balkan Veterans', desc: 'Organisation +15%.', fx: [{ mod: 'org', value: 0.15 }] },
+        { id: 'srb1', name: 'Veterans of the Retreat', desc: 'Organisation +15%.', fx: [{ mod: 'org', value: 0.15 }] },
         { id: 'srb2', name: 'Mountain Defence', desc: 'Mountain defence +25%.', fx: [{ mod: 'defence', value: 0.25, terrain: ['mountains'] }] },
-        { id: 'srb3', name: 'Peasant Levy', desc: 'Manpower +20%.', fx: [{ mod: 'manpower', value: 0.20 }] },
-        { id: 'srb4', name: 'Salonika Front', desc: 'Allied units in your land get full supply (in game: supply +20% in your own land).', fx: [{ mod: 'supply', value: 0.20, where: 'home' }] }
+        { id: 'srb3', name: 'Yugoslav Volunteers', desc: 'Manpower +20%.', fx: [{ mod: 'manpower', value: 0.20 }] },
+        { id: 'srb4', name: 'Salonika Front', desc: 'Supply +20% in your own land.', fx: [{ mod: 'supply', value: 0.20, where: 'home' }] }
       ] },
       JAP: { name: 'Empire of Japan', techs: [
         { id: 'jap1', name: 'Zaibatsu', desc: 'Workshops and arsenals +15%.', fx: [{ mod: 'workshops', value: 0.15 }, { mod: 'arsenals', value: 0.15 }] },
-        { id: 'jap2', name: 'Anglo-Japanese Alliance', desc: 'Relations with Britain +30 (in game: relations grow 30% faster).', fx: [{ mod: 'relGrowth', value: 0.30 }] },
+        { id: 'jap2', name: 'Anglo-Japanese Alliance', desc: 'Relations grow 30% faster.', fx: [{ mod: 'relGrowth', value: 0.30 }] },
         { id: 'jap3', name: 'Kwantung Railway', desc: 'Supply +10%.', fx: [{ mod: 'supply', value: 0.10 }] },
-        { id: 'jap4', name: 'Naval Shipyards', desc: 'Marines +20%.', fx: [{ mod: 'attack', value: 0.20, cls: 'marines' }] }
+        { id: 'jap4', name: 'Mediterranean Squadron', desc: 'Warships +10% in battle, convoy losses -20%.', fx: [{ mod: 'naval', value: 0.10 }, { mod: 'convoyLoss', value: -0.2 }] }
       ] },
       ITA: { name: 'Italy', techs: [
         { id: 'ita1', name: 'Northern Industry', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
-        { id: 'ita2', name: 'Alpini', desc: 'Mountain troops +20%.', fx: [{ mod: 'attack', value: 0.20, unit: ['mountain'] }] },
-        { id: 'ita3', name: 'Emigrant Remittances', desc: 'Gold +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
-        { id: 'ita4', name: 'The Isonzo Line', desc: 'Defence +20% in the northeast.', fx: [{ mod: 'defence', value: 0.20, region: [11.5, 45, 14.5, 47.2] }] }
+        { id: 'ita2', name: 'Arditi', desc: 'From July 1917: Italy can raise Stormtroopers, mountain troops +15%.', from: [1917, 7, 29], fx: [{ mod: 'unlock', unit: 'stormtroops' }, { mod: 'attack', value: 0.15, unit: ['mountain'] }] },
+        { id: 'ita3', name: 'Emigrant Remittances', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
+        { id: 'ita4', name: 'The Piave Line', desc: 'Defence +20% in the northeast.', fx: [{ mod: 'defence', value: 0.20, region: [11.5, 45, 14.5, 47.2] }] }
       ] },
       PER: { name: 'Persia', techs: [
-        { id: 'per1', name: 'Oil Concession', desc: 'Oil fields give gold (in game: +1 gold per day, fuel sells for 20% more).', fx: [{ mod: 'goldPerDay', value: 1 }, { mod: 'sellPrice', value: 0.20, good: 'fuel' }] },
+        { id: 'per1', name: 'Oil Concession', desc: '+1 gold per day, fuel sells for 20% more.', fx: [{ mod: 'goldPerDay', value: 1 }, { mod: 'sellPrice', value: 0.20, good: 'fuel' }] },
         { id: 'per2', name: 'Cossack Brigade', desc: 'Cavalry +20%.', fx: [{ mod: 'attack', value: 0.20, cls: 'cavalry' }] },
         { id: 'per3', name: 'Tribal Confederacies', desc: 'Manpower +15%.', fx: [{ mod: 'manpower', value: 0.15 }] },
         { id: 'per4', name: 'Neutral Crossroads', desc: '+2 trade slots while at peace.', fx: [{ mod: 'tradeSlots', value: 2, when: 'peace' }] }
       ] },
       CHN: { name: 'Republic of China', techs: [
         { id: 'chn1', name: 'Hanyang Arsenal', desc: 'Arsenals +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
-        { id: 'chn2', name: 'Beiyang Army', desc: 'Organisation +10%.', fx: [{ mod: 'org', value: 0.10 }] },
-        { id: 'chn3', name: 'Treaty Ports', desc: '+2 sea trade slots, stability -5%.', fx: [{ mod: 'tradeSlots', value: 2 }, { mod: 'stability', value: -0.05 }] },
+        { id: 'chn2', name: 'Chinese Labour Corps', desc: 'Relations with the Entente grow faster, +10% trade bonus.', fx: [{ mod: 'relGrowth', value: 0.20 }, { mod: 'tradeBonus', value: 0.10 }] },
+        { id: 'chn3', name: 'Treaty Ports', desc: '+2 trade slots, stability -5%.', fx: [{ mod: 'tradeSlots', value: 2 }, { mod: 'stability', value: -0.05 }] },
         { id: 'chn4', name: 'Warlord Levies', desc: 'Manpower +25%.', fx: [{ mod: 'manpower', value: 0.25 }] }
       ] },
       USA: { name: 'United States', techs: [
         { id: 'usa1', name: 'Neutral Trade Boom', desc: 'Trade bonus +25% while at peace.', fx: [{ mod: 'tradeBonus', value: 0.25, when: 'peace' }] },
-        { id: 'usa2', name: 'Ford Assembly Line', desc: 'Arsenals +25%.', fx: [{ mod: 'arsenals', value: 0.25 }] },
-        { id: 'usa3', name: 'Liberty Bonds', desc: 'Gold +15% while at war.', fx: [{ mod: 'tax', value: 0.15, when: 'war' }] },
-        { id: 'usa4', name: 'American Expeditionary Force', desc: 'Available from 1917: organisation +15%.', fx: [{ mod: 'org', value: 0.15 }], from: [1917, 4, 6] }
+        { id: 'usa2', name: 'Selective Service Act', desc: 'From May 1917: manpower +40%.', from: [1917, 5, 18], fx: [{ mod: 'manpower', value: 0.40 }] },
+        { id: 'usa3', name: 'Liberty Bonds', desc: 'Tax +15% while at war.', fx: [{ mod: 'tax', value: 0.15, when: 'war' }] },
+        { id: 'usa4', name: 'Emergency Fleet', desc: 'Arsenals +25%, convoy losses -20%.', fx: [{ mod: 'arsenals', value: 0.25 }, { mod: 'convoyLoss', value: -0.2 }] },
+        { id: 'usa5', name: 'American Expeditionary Forces', desc: 'From June 1917: organisation +15%.', fx: [{ mod: 'org', value: 0.15 }], from: [1917, 6, 26] }
       ] },
-      MEX: { name: 'Mexico (Federal)', techs: [
-        { id: 'mex1', name: 'Tampico Oil', desc: 'Gold from oil fields (in game: +1 gold per day, fuel sells for 20% more).', fx: [{ mod: 'goldPerDay', value: 1 }, { mod: 'sellPrice', value: 0.20, good: 'fuel' }] },
-        { id: 'mex2', name: 'Rurales', desc: 'Irregular horse +15%.', fx: [{ mod: 'attack', value: 0.15, unit: ['irregcav'] }] },
-        { id: 'mex3', name: 'Federal Railways', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
-        { id: 'mex4', name: 'Federal Army Reform', desc: 'Organisation +10%.', fx: [{ mod: 'org', value: 0.10 }] }
+      MEX: { name: 'Mexico', techs: [
+        { id: 'mex1', name: 'Tampico Oil', desc: '+1 gold per day, fuel sells for 20% more.', fx: [{ mod: 'goldPerDay', value: 1 }, { mod: 'sellPrice', value: 0.20, good: 'fuel' }] },
+        { id: 'mex2', name: 'Constitution of 1917', desc: 'Stability +15%.', fx: [{ mod: 'stability', value: 0.15 }] },
+        { id: 'mex3', name: 'National Railways', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
+        { id: 'mex4', name: 'Obregón\'s Army', desc: 'Organisation +10%, cavalry +10%.', fx: [{ mod: 'org', value: 0.10 }, { mod: 'attack', value: 0.10, cls: 'cavalry' }] }
       ] },
-      CNS: { name: 'Constitutionalists', techs: [
-        { id: 'cns1', name: 'Plan of Guadalupe', desc: 'Stability +15%.', fx: [{ mod: 'stability', value: 0.15 }] },
-        { id: 'cns2', name: 'División del Norte', desc: 'Cavalry +20%.', fx: [{ mod: 'attack', value: 0.20, cls: 'cavalry' }] },
-        { id: 'cns3', name: 'Railway Raids', desc: 'Speed +15% along rail provinces (in game: speed +10%).', fx: [{ mod: 'speed', value: 0.10 }] },
-        { id: 'cns4', name: 'Sonora Ranches', desc: 'Horses and food +20% (in game: farms and strategic output +20%).', fx: [{ mod: 'farms', value: 0.20 }, { mod: 'strategic', value: 0.20 }] }
+      VIL: { name: 'Villistas', techs: [
+        { id: 'vil1', name: 'Hit and Run', desc: 'Irregular horse +20%.', fx: [{ mod: 'attack', value: 0.20, unit: ['irregcav'] }] },
+        { id: 'vil2', name: 'División del Norte', desc: 'Cavalry +20%.', fx: [{ mod: 'attack', value: 0.20, cls: 'cavalry' }] },
+        { id: 'vil3', name: 'Railway Raids', desc: 'Speed +10%.', fx: [{ mod: 'speed', value: 0.10 }] },
+        { id: 'vil4', name: 'Sierra Hideouts', desc: 'Defence +25% in hills and mountains.', fx: [{ mod: 'defence', value: 0.25, terrain: ['hills', 'mountains'] }] }
       ] },
       BRA: { name: 'Brazil', techs: [
         { id: 'bra1', name: 'Coffee Exports', desc: 'Luxuries sell for 30% more.', fx: [{ mod: 'sellPrice', value: 0.30, good: 'luxuries' }] },
-        { id: 'bra2', name: 'Amazon Rubber', desc: 'Rubber is a Luxury, +25% (in game: Luxuries +25% in the Amazon, +10% elsewhere).', fx: [{ mod: 'luxuries', value: 0.25, region: [-75, -12, -48, 2] }, { mod: 'luxuries', value: 0.10 }] },
-        { id: 'bra3', name: 'Navy Programme', desc: 'Marines +15%.', fx: [{ mod: 'attack', value: 0.15, cls: 'marines' }] },
+        { id: 'bra2', name: 'Amazon Rubber', desc: 'Luxuries +25% in the Amazon, +10% elsewhere.', fx: [{ mod: 'luxuries', value: 0.25, region: [-75, -12, -48, 2] }, { mod: 'luxuries', value: 0.10 }] },
+        { id: 'bra3', name: 'Naval Division', desc: 'Warships +10%, marines +15%.', fx: [{ mod: 'naval', value: 0.10 }, { mod: 'attack', value: 0.15, cls: 'marines' }] },
         { id: 'bra4', name: 'Positivist Republic', desc: 'Stability +10%.', fx: [{ mod: 'stability', value: 0.10 }] }
       ] }
     }
@@ -722,6 +727,210 @@ const TECH_DATA = {
         { id: 'bel4', name: 'Armed Neutrality', desc: 'Stability +10% while at peace.', fx: [{ mod: 'stability', value: 0.10, when: 'peace' }] }
       ] }
     }
+  },
+  // ================================================================ 2026
+  // Six tiers, three research slots, and techLevel: every point of it counts twice in battle (power ~ level squared).
+  'modern-2026': {
+    tierCost: [60, 120, 200, 320, 450, 600],
+    branches: [
+      { id: 'mil', name: 'Military', tiers: [
+        { id: 'mil1', name: 'Precision-Guided Munitions', desc: 'Artillery and rockets +15% attack; technology level +0.03.', fx: [{ mod: 'attack', value: 0.15, unit: ['artillery', 'rockets'] }, { mod: 'techLevel', value: 0.03 }] },
+        { id: 'mil2', name: 'Battlefield Networks', desc: 'Every sensor feeds every shooter: technology level +0.05, organisation +5%.', fx: [{ mod: 'techLevel', value: 0.05 }, { mod: 'org', value: 0.05 }] },
+        [
+          { id: 'mil3a', name: 'Mass Drone Warfare', desc: 'Drone units +30% attack and 20% cheaper.', fx: [{ mod: 'attack', value: 0.30, unit: ['drones'] }, { mod: 'recruitCost', value: -0.20, unit: ['drones'] }] },
+          { id: 'mil3b', name: 'Layered Air Defence', desc: 'Jamming and interceptors: counter-drone +20%, air defence +20% defence, all units +5% defence.', fx: [{ mod: 'counterDrone', value: 0.20 }, { mod: 'defence', value: 0.20, unit: ['airdefence', 'ewar'] }, { mod: 'defence', value: 0.05 }] }
+        ],
+        { id: 'mil4', name: 'AI Targeting', desc: 'Machine vision finds and strikes targets in seconds: technology level +0.06, drones +15% and artillery +10% attack.', fx: [{ mod: 'techLevel', value: 0.06 }, { mod: 'attack', value: 0.15, unit: ['drones'] }, { mod: 'attack', value: 0.10, unit: ['artillery', 'rockets'] }] },
+        { id: 'mil5', name: 'Robotic Combat Vehicles', desc: 'From September 2026: unlocks Robotic Combat Vehicles, unmanned and hard to kill; technology level +0.03.', from: [2026, 9, 1], fx: [{ mod: 'techLevel', value: 0.03 }, { mod: 'unlock', unit: 'robots', def: {
+          name: 'Robotic Combat Vehicles', short: 'RCV', atk: 26, def: 22, speed: 9, org: 75, supply: 1.8, mp: 400, eq: 640, days: 60, symbol: 'arm', look: 'ifv', armor: true, chips: true, drone: true, breach: 0.2,
+          note: 'Remote-controlled and autonomous ground vehicles with cannon, missiles and mine ploughs: they go first, so soldiers do not have to.' } }] },
+        { id: 'mil6', name: 'Hypersonic Strike', desc: 'From June 2027: rocket artillery +30% attack; technology level +0.08.', from: [2027, 6, 1], fx: [{ mod: 'attack', value: 0.30, unit: ['rockets'] }, { mod: 'techLevel', value: 0.08 }] }
+      ] },
+      { id: 'ind', name: 'Industry', tiers: [
+        { id: 'ind1', name: 'Defence Industrial Base', desc: 'Defence plants +15%.', fx: [{ mod: 'arsenals', value: 0.15 }] },
+        { id: 'ind2', name: 'Drone Mass Production', desc: 'Drone units 25% cheaper; defence plants +10%.', fx: [{ mod: 'recruitCost', value: -0.25, unit: ['drones'] }, { mod: 'arsenals', value: 0.10 }] },
+        [
+          { id: 'ind3a', name: 'Domestic Chip Fabs', desc: 'Chip fabs can be built without a deposit; chip fabs +20%.', fx: [{ mod: 'synthetic', value: 1, good: 'strategic' }, { mod: 'stratworks', value: 0.20 }] },
+          { id: 'ind3b', name: 'Rare Earth Refining', desc: 'Mines +30%, and defence plants need 15% fewer inputs.', fx: [{ mod: 'mines', value: 0.30 }, { mod: 'arsenalInputs', value: -0.15, good: 'metal' }] }
+        ],
+        { id: 'ind4', name: 'Industrial Robotics', desc: 'All industries +15%; technology level +0.03.', fx: [{ mod: 'industry', value: 0.15 }, { mod: 'techLevel', value: 0.03 }] },
+        { id: 'ind5', name: 'Combat Lasers', desc: 'Directed-energy weapons burn drones out of the sky for a few dollars a shot: counter-drone +20%, air defence +20% defence.', fx: [{ mod: 'counterDrone', value: 0.20 }, { mod: 'defence', value: 0.20, unit: ['airdefence'] }] },
+        { id: 'ind6', name: 'Quantum Computing', desc: 'From January 2028: research +25%, technology level +0.06.', from: [2028, 1, 1], fx: [{ mod: 'research', value: 0.25 }, { mod: 'techLevel', value: 0.06 }] }
+      ] },
+      { id: 'trade', name: 'Trade and Finance', tiers: [
+        { id: 'trade1', name: 'Global Supply Chains', desc: '+1 trade slot.', fx: [{ mod: 'tradeSlots', value: 1 }] },
+        { id: 'trade2', name: 'Digital Finance', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
+        [
+          { id: 'trade3a', name: 'Friend-Shoring', desc: '+15% trade bonus, stockpiles hold 30 more days.', fx: [{ mod: 'tradeBonus', value: 0.15 }, { mod: 'stockDays', value: 30 }] },
+          { id: 'trade3b', name: 'Shadow Fleet', desc: 'Sanctions leak: convoy losses -30%, +10% trade bonus while at war.', fx: [{ mod: 'convoyLoss', value: -0.3 }, { mod: 'tradeBonus', value: 0.10, when: 'war' }] }
+        ],
+        { id: 'trade4', name: 'LNG Terminals', desc: 'Oil and gas fields +20%.', fx: [{ mod: 'fuelworks', value: 0.20 }] },
+        { id: 'trade5', name: 'Satellite Internet', desc: 'Supply +15% (Starlink-style terminals at the front); technology level +0.02.', fx: [{ mod: 'supply', value: 0.15 }, { mod: 'techLevel', value: 0.02 }] },
+        { id: 'trade6', name: 'Undersea Cable Security', desc: '+1 trade slot, stability +5%.', fx: [{ mod: 'tradeSlots', value: 1 }, { mod: 'stability', value: 0.05 }] }
+      ] },
+      { id: 'state', name: 'Statecraft', tiers: [
+        { id: 'state1', name: 'Reserve Mobilisation', desc: 'Manpower +20%.', fx: [{ mod: 'manpower', value: 0.20 }] },
+        { id: 'state2', name: 'Information Warfare', desc: 'War support +10%, stability +5%.', fx: [{ mod: 'warSupport', value: 0.10 }, { mod: 'stability', value: 0.05 }] },
+        [
+          { id: 'state3a', name: 'War Economy', desc: 'All industries +15%, defence plants +15%, stability -10%.', fx: [{ mod: 'industry', value: 0.15 }, { mod: 'arsenals', value: 0.15 }, { mod: 'stability', value: -0.10 }] },
+          { id: 'state3b', name: 'Resilience Doctrine', desc: 'Stability +15%, all units +5% defence.', fx: [{ mod: 'stability', value: 0.15 }, { mod: 'defence', value: 0.05 }] }
+        ],
+        { id: 'state4', name: 'Cyber Command', desc: 'Technology level +0.04, research +10%.', fx: [{ mod: 'techLevel', value: 0.04 }, { mod: 'research', value: 0.10 }] },
+        { id: 'state5', name: 'National AI Programme', desc: 'Research +20%, technology level +0.04.', fx: [{ mod: 'research', value: 0.20 }, { mod: 'techLevel', value: 0.04 }] },
+        { id: 'state6', name: 'Missile Shield', desc: 'From January 2027: air defence +25% defence, counter-drone +10%.', from: [2027, 1, 1], fx: [{ mod: 'defence', value: 0.25, unit: ['airdefence'] }, { mod: 'counterDrone', value: 0.10 }] }
+      ] }
+    ],
+    national: {
+      USA: { name: 'United States', techs: [
+        { id: 'usa1', name: 'Department of War', desc: 'All units +5% attack, war support +5%.', fx: [{ mod: 'attack', value: 0.05 }, { mod: 'warSupport', value: 0.05 }] },
+        { id: 'usa2', name: 'Defence Tech Start-ups', desc: 'Research +15%, drone units 15% cheaper.', fx: [{ mod: 'research', value: 0.15 }, { mod: 'recruitCost', value: -0.15, unit: ['drones'] }] },
+        { id: 'usa3', name: 'Golden Dome', desc: 'Counter-drone +15%, air defence +20% defence.', fx: [{ mod: 'counterDrone', value: 0.15 }, { mod: 'defence', value: 0.20, unit: ['airdefence'] }] },
+        { id: 'usa4', name: 'Collaborative Combat Aircraft', desc: 'Robot wingmen: air power +20%, technology level +0.04.', fx: [{ mod: 'air', value: 0.20 }, { mod: 'techLevel', value: 0.04 }] },
+        { id: 'usa5', name: 'Replicator', desc: 'Thousands of cheap autonomous systems: drones +25% attack and 20% cheaper.', fx: [{ mod: 'attack', value: 0.25, unit: ['drones'] }, { mod: 'recruitCost', value: -0.20, unit: ['drones'] }] }
+      ] },
+      CHN: { name: 'China', techs: [
+        { id: 'chn1', name: 'Military-Civil Fusion', desc: 'Defence plants +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+        { id: 'chn2', name: 'Rare Earth Leverage', desc: 'Mines +25%, metals sell for 15% more.', fx: [{ mod: 'mines', value: 0.25 }, { mod: 'sellPrice', value: 0.15, good: 'metal' }] },
+        { id: 'chn3', name: 'Anti-Access Missiles', desc: 'Rocket artillery +20% attack, navy +15%.', fx: [{ mod: 'attack', value: 0.20, unit: ['rockets'] }, { mod: 'naval', value: 0.15 }] },
+        { id: 'chn4', name: 'Drone Swarms', desc: 'Drones +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['drones'] }] },
+        { id: 'chn5', name: 'Intelligentised Warfare', desc: 'From 2027, the PLA centenary: technology level +0.06.', from: [2027, 8, 1], fx: [{ mod: 'techLevel', value: 0.06 }] }
+      ] },
+      RUS: { name: 'Russia', techs: [
+        { id: 'rus1', name: 'Glide Bombs', desc: 'Air power +15%, artillery +10% attack.', fx: [{ mod: 'air', value: 0.15 }, { mod: 'attack', value: 0.10, unit: ['artillery'] }] },
+        { id: 'rus2', name: 'Fibre-Optic Drones', desc: 'Unjammable drones: drones +20% attack, counter-drone +10%.', fx: [{ mod: 'attack', value: 0.20, unit: ['drones'] }, { mod: 'counterDrone', value: 0.10 }] },
+        { id: 'rus3', name: 'Total Mobilisation of Industry', desc: 'Defence plants +25%, stability -5%.', fx: [{ mod: 'arsenals', value: 0.25 }, { mod: 'stability', value: -0.05 }] },
+        { id: 'rus4', name: 'Rubikon Drone Centre', desc: 'Drone units 20% cheaper, organisation +5%.', fx: [{ mod: 'recruitCost', value: -0.20, unit: ['drones'] }, { mod: 'org', value: 0.05 }] },
+        { id: 'rus5', name: 'Oreshnik', desc: 'Rocket artillery +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['rockets'] }] }
+      ] },
+      UKR: { name: 'Ukraine', techs: [
+        { id: 'ukr1', name: 'Army of Drones', desc: 'Drones +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['drones'] }] },
+        { id: 'ukr2', name: 'Brave1 Defence Cluster', desc: 'Research +15%, drone units 20% cheaper.', fx: [{ mod: 'research', value: 0.15 }, { mod: 'recruitCost', value: -0.20, unit: ['drones'] }] },
+        { id: 'ukr3', name: 'Sea Drones', desc: 'Navy +25%, raiders +25%.', fx: [{ mod: 'naval', value: 0.25 }, { mod: 'raiding', value: 0.25 }] },
+        { id: 'ukr4', name: 'Interceptor Drones', desc: 'Counter-drone +20%.', fx: [{ mod: 'counterDrone', value: 0.20 }] },
+        { id: 'ukr5', name: 'Long-Range Strike', desc: 'Flamingo and Neptune missiles: rocket artillery +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['rockets'] }] }
+      ] },
+      ISR: { name: 'Israel', techs: [
+        { id: 'isr1', name: 'Iron Dome', desc: 'Counter-drone +15%, air defence +20% defence.', fx: [{ mod: 'counterDrone', value: 0.15 }, { mod: 'defence', value: 0.20, unit: ['airdefence'] }] },
+        { id: 'isr2', name: 'Unit 8200', desc: 'Technology level +0.05.', fx: [{ mod: 'techLevel', value: 0.05 }] },
+        { id: 'isr3', name: 'Iron Beam', desc: 'Laser air defence: counter-drone +15%.', fx: [{ mod: 'counterDrone', value: 0.15 }] },
+        { id: 'isr4', name: 'Precision Strike', desc: 'All units +10% attack, air power +10%.', fx: [{ mod: 'attack', value: 0.10 }, { mod: 'air', value: 0.10 }] }
+      ] },
+      TWN: { name: 'Taiwan', techs: [
+        { id: 'twn1', name: 'TSMC', desc: 'Chip fabs +30%, research +10%.', fx: [{ mod: 'stratworks', value: 0.30 }, { mod: 'research', value: 0.10 }] },
+        { id: 'twn2', name: 'Porcupine Strategy', desc: 'All units +20% defence.', fx: [{ mod: 'defence', value: 0.20 }] },
+        { id: 'twn3', name: 'T-Dome', desc: 'Air defence +20% defence, counter-drone +10%.', fx: [{ mod: 'defence', value: 0.20, unit: ['airdefence'] }, { mod: 'counterDrone', value: 0.10 }] },
+        { id: 'twn4', name: 'Silicon Shield', desc: 'Stability +10%, relations grow faster.', fx: [{ mod: 'stability', value: 0.10 }, { mod: 'relGrowth', value: 0.25 }] }
+      ] },
+      KOR: { name: 'South Korea', techs: [
+        { id: 'kor1', name: 'K-Defence Exports', desc: 'Defence plants +20%; weapons sell for 15% more.', fx: [{ mod: 'arsenals', value: 0.20 }, { mod: 'sellPrice', value: 0.15, good: 'arms' }] },
+        { id: 'kor2', name: 'Memory Chips', desc: 'Chip fabs +25%.', fx: [{ mod: 'stratworks', value: 0.25 }] },
+        { id: 'kor3', name: 'Kill Chain', desc: 'Rocket artillery +20% attack.', fx: [{ mod: 'attack', value: 0.20, unit: ['rockets'] }] },
+        { id: 'kor4', name: 'KF-21 Boramae', desc: 'Air power +20%.', fx: [{ mod: 'air', value: 0.20 }] }
+      ] },
+      JPN: { name: 'Japan', techs: [
+        { id: 'jpn1', name: 'Counterstrike Capability', desc: 'Rocket artillery +20% attack.', fx: [{ mod: 'attack', value: 0.20, unit: ['rockets'] }] },
+        { id: 'jpn2', name: 'Defence Budget Doubling', desc: 'Defence plants +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+        { id: 'jpn3', name: 'Rapidus Fabs', desc: 'Chip fabs +20%.', fx: [{ mod: 'stratworks', value: 0.20 }] },
+        { id: 'jpn4', name: 'GCAP Fighter', desc: 'Air power +20%, technology level +0.03.', fx: [{ mod: 'air', value: 0.20 }, { mod: 'techLevel', value: 0.03 }] }
+      ] },
+      IND: { name: 'India', techs: [
+        { id: 'bha1', name: 'Make in India', desc: 'Defence plants +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+        { id: 'bha2', name: 'BrahMos', desc: 'Rocket artillery +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['rockets'] }] },
+        { id: 'bha3', name: 'Akash and S-400', desc: 'Air defence +20% defence, counter-drone +10%.', fx: [{ mod: 'defence', value: 0.20, unit: ['airdefence'] }, { mod: 'counterDrone', value: 0.10 }] },
+        { id: 'bha4', name: 'Semiconductor Mission', desc: 'Chip fabs +20%, research +10%.', fx: [{ mod: 'stratworks', value: 0.20 }, { mod: 'research', value: 0.10 }] }
+      ] },
+      IRN: { name: 'Iran', techs: [
+        { id: 'irn1', name: 'Shahed Drones', desc: 'Drones +25% attack and 25% cheaper.', fx: [{ mod: 'attack', value: 0.25, unit: ['drones'] }, { mod: 'recruitCost', value: -0.25, unit: ['drones'] }] },
+        { id: 'irn2', name: 'Missile Cities', desc: 'Rocket artillery +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['rockets'] }] },
+        { id: 'irn3', name: 'Mosaic Defence', desc: 'All units +15% defence.', fx: [{ mod: 'defence', value: 0.15 }] },
+        { id: 'irn4', name: 'Basij', desc: 'Manpower +25%, stability +5%.', fx: [{ mod: 'manpower', value: 0.25 }, { mod: 'stability', value: 0.05 }] }
+      ] },
+      TUR: { name: 'Turkey', techs: [
+        { id: 'tur1', name: 'Bayraktar', desc: 'Drones +25% attack.', fx: [{ mod: 'attack', value: 0.25, unit: ['drones'] }] },
+        { id: 'tur2', name: 'Steel Dome', desc: 'Air defence +20% defence.', fx: [{ mod: 'defence', value: 0.20, unit: ['airdefence'] }] },
+        { id: 'tur3', name: 'KAAN Fighter', desc: 'Air power +20%.', fx: [{ mod: 'air', value: 0.20 }] },
+        { id: 'tur4', name: 'Altay Tank', desc: 'Tanks +15% attack.', fx: [{ mod: 'attack', value: 0.15, unit: ['tanks'] }] }
+      ] },
+      PRK: { name: 'North Korea', techs: [
+        { id: 'prk1', name: 'Artillery Wall', desc: 'Artillery and rockets +20% attack.', fx: [{ mod: 'attack', value: 0.20, unit: ['artillery', 'rockets'] }] },
+        { id: 'prk2', name: 'Lessons from Kursk', desc: 'Drones +20% attack, organisation +5%.', fx: [{ mod: 'attack', value: 0.20, unit: ['drones'] }, { mod: 'org', value: 0.05 }] },
+        { id: 'prk3', name: 'Hwasong Missiles', desc: 'Rocket artillery +20% attack.', fx: [{ mod: 'attack', value: 0.20, unit: ['rockets'] }] },
+        { id: 'prk4', name: 'Military First', desc: 'Manpower +25%.', fx: [{ mod: 'manpower', value: 0.25 }] }
+      ] }
+    },
+    // regional branches for everyone else (the old culture branches do not fit 2026)
+    areaDefault: 'south',
+    areaOf: (function () {
+      const o = {}, put = (k, l) => l.forEach(t => { o[t] = k; });
+      put('eu', ['GBR', 'FRA', 'DEU', 'ITA', 'ESP', 'PRT', 'NLD', 'BEL', 'LUX', 'IRL', 'DNK', 'NOR', 'SWE', 'FIN', 'ISL', 'EST', 'LVA', 'LTU', 'POL', 'CZE', 'SVK', 'HUN', 'SVN', 'HRV', 'AUT', 'CHE',
+        'GRC', 'CYP', 'BGR', 'ROU', 'MDA', 'ALB', 'MKD', 'MNE', 'SRB', 'BIH', 'XKX']);
+      put('anglo', ['CAN', 'AUS', 'NZL']);
+      put('gulf', ['SAU', 'ARE', 'QAT', 'KWT', 'OMN']);
+      put('mideast', ['SYR', 'AES', 'LBN', 'JOR', 'IRQ', 'YEM', 'HOU', 'PSE', 'EGY', 'LBY', 'LNA', 'TUN', 'DZA', 'MAR', 'AFG', 'PAK']);
+      put('eurasia', ['BLR', 'KAZ', 'UZB', 'TKM', 'KGZ', 'TJK', 'GEO', 'ARM', 'AZE', 'MNG']);
+      put('asean', ['VNM', 'THA', 'MYS', 'SGP', 'IDN', 'PHL', 'KHM', 'LAO', 'MMR', 'NUG', 'ARA', 'TLS', 'PNG', 'SLB', 'FJI']);
+      put('latam', ['MEX', 'GTM', 'HND', 'NIC', 'SLV', 'CRI', 'PAN', 'CUB', 'HTI', 'DOM', 'JAM', 'COL', 'VEN', 'GUY', 'SUR', 'ECU', 'PER', 'BOL', 'BRA', 'PRY', 'URY', 'ARG', 'CHL']);
+      put('africa', ['MRT', 'MLI', 'NER', 'TCD', 'SDN', 'RSF', 'SSD', 'ERI', 'ETH', 'DJI', 'SOM', 'SML', 'KEN', 'UGA', 'RWA', 'BDI', 'TZA', 'COD', 'M23', 'COG', 'GAB', 'GNQ', 'CMR', 'CAF',
+        'NGA', 'BEN', 'TGO', 'GHA', 'CIV', 'BFA', 'LBR', 'SLE', 'GIN', 'GNB', 'SEN', 'GMB', 'AGO', 'ZMB', 'MWI', 'MOZ', 'ZWE', 'BWA', 'NAM', 'ZAF', 'LSO', 'SWZ', 'MDG']);
+      return o;
+    })(),
+    areas: {
+      eu: { name: 'European Rearmament', techs: [
+        { id: 'eu1', name: 'ReArm Europe', desc: 'Defence plants +20%.', fx: [{ mod: 'arsenals', value: 0.20 }] },
+        { id: 'eu2', name: 'European Sky Shield', desc: 'Air defence +15% defence, counter-drone +10%.', fx: [{ mod: 'defence', value: 0.15, unit: ['airdefence'] }, { mod: 'counterDrone', value: 0.10 }] },
+        { id: 'eu3', name: 'Ammunition Initiative', desc: 'Artillery +10% attack, all units 10% cheaper.', fx: [{ mod: 'attack', value: 0.10, unit: ['artillery', 'rockets'] }, { mod: 'recruitCost', value: -0.10 }] },
+        { id: 'eu4', name: 'Galileo and IRIS²', desc: 'Supply +10%, technology level +0.03.', fx: [{ mod: 'supply', value: 0.10 }, { mod: 'techLevel', value: 0.03 }] },
+        { id: 'eu5', name: 'Drone Wall', desc: 'A sensor and interceptor belt on the eastern border: counter-drone +15%, defence +5%.', fx: [{ mod: 'counterDrone', value: 0.15 }, { mod: 'defence', value: 0.05 }] }
+      ] },
+      anglo: { name: 'Five Eyes', techs: [
+        { id: 'anglo1', name: 'Five Eyes Intelligence', desc: 'Technology level +0.03.', fx: [{ mod: 'techLevel', value: 0.03 }] },
+        { id: 'anglo2', name: 'Critical Minerals Deals', desc: 'Mines +25%.', fx: [{ mod: 'mines', value: 0.25 }] },
+        { id: 'anglo3', name: 'AUKUS', desc: 'Navy +15%, research +10%.', fx: [{ mod: 'naval', value: 0.15 }, { mod: 'research', value: 0.10 }] },
+        { id: 'anglo4', name: 'Arctic and Outback Logistics', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] }
+      ] },
+      gulf: { name: 'Gulf Monarchies', techs: [
+        { id: 'gulf1', name: 'Sovereign Wealth', desc: '+2 gold a day.', fx: [{ mod: 'goldPerDay', value: 2 }] },
+        { id: 'gulf2', name: 'Bought Air Defence', desc: 'Air defence +15% defence, counter-drone +10%.', fx: [{ mod: 'defence', value: 0.15, unit: ['airdefence'] }, { mod: 'counterDrone', value: 0.10 }] },
+        { id: 'gulf3', name: 'AI Data Centres', desc: 'Research +15%, technology level +0.02.', fx: [{ mod: 'research', value: 0.15 }, { mod: 'techLevel', value: 0.02 }] },
+        { id: 'gulf4', name: 'Desalination', desc: 'Farms +25%.', fx: [{ mod: 'farms', value: 0.25 }] }
+      ] },
+      mideast: { name: 'Middle East and North Africa', techs: [
+        { id: 'mena1', name: 'Oil and Gas Rents', desc: 'Oil and gas fields +20%.', fx: [{ mod: 'fuelworks', value: 0.20 }] },
+        { id: 'mena2', name: 'Drone Imports', desc: 'Drones +15% attack.', fx: [{ mod: 'attack', value: 0.15, unit: ['drones'] }] },
+        { id: 'mena3', name: 'Urban Warfare', desc: 'All units +10% defence.', fx: [{ mod: 'defence', value: 0.10 }] },
+        { id: 'mena4', name: 'Rocket Arsenals', desc: 'Rocket artillery +15% attack.', fx: [{ mod: 'attack', value: 0.15, unit: ['rockets'] }] }
+      ] },
+      eurasia: { name: 'Eurasian Heartland', techs: [
+        { id: 'eura1', name: 'Soviet Stockpiles', desc: 'Defence plants +15%.', fx: [{ mod: 'arsenals', value: 0.15 }] },
+        { id: 'eura2', name: 'Steppe Logistics', desc: 'Supply +15%.', fx: [{ mod: 'supply', value: 0.15 }] },
+        { id: 'eura3', name: 'Pipelines East and West', desc: 'Oil and gas fields +20%.', fx: [{ mod: 'fuelworks', value: 0.20 }] },
+        { id: 'eura4', name: 'Conscript Reserves', desc: 'Manpower +20%.', fx: [{ mod: 'manpower', value: 0.20 }] }
+      ] },
+      asean: { name: 'Southeast Asia', techs: [
+        { id: 'sea1', name: 'Factory Asia', desc: 'Tech industry +15%.', fx: [{ mod: 'workshops', value: 0.15 }] },
+        { id: 'sea2', name: 'Maritime Militia', desc: 'Navy +10%, coastal provinces +10% defence.', fx: [{ mod: 'naval', value: 0.10 }, { mod: 'defence', value: 0.10, where: 'coast' }] },
+        { id: 'sea3', name: 'Chip Packaging', desc: 'Chip fabs +20%.', fx: [{ mod: 'stratworks', value: 0.20 }] },
+        { id: 'sea4', name: 'Jungle Warfare', desc: '+20% defence in jungle and mountains.', fx: [{ mod: 'defence', value: 0.20, terrain: ['jungle', 'mountains'] }] }
+      ] },
+      latam: { name: 'Latin America', techs: [
+        { id: 'lat1', name: 'Commodity Boom', desc: 'Mines +20%.', fx: [{ mod: 'mines', value: 0.20 }] },
+        { id: 'lat2', name: 'Agribusiness', desc: 'Farms +25%.', fx: [{ mod: 'farms', value: 0.25 }] },
+        { id: 'lat3', name: 'Mercosur', desc: '+10% trade bonus, +1 trade slot.', fx: [{ mod: 'tradeBonus', value: 0.10 }, { mod: 'tradeSlots', value: 1 }] },
+        { id: 'lat4', name: 'Jungle and Andes Warfare', desc: '+20% defence in jungle and mountains.', fx: [{ mod: 'defence', value: 0.20, terrain: ['jungle', 'mountains'] }] }
+      ] },
+      africa: { name: 'African Union', techs: [
+        { id: 'afr1', name: 'Critical Minerals', desc: 'Mines +25%.', fx: [{ mod: 'mines', value: 0.25 }] },
+        { id: 'afr2', name: 'Mobile Money', desc: 'Tax +10%.', fx: [{ mod: 'tax', value: 0.10 }] },
+        { id: 'afr3', name: 'Peacekeeping Missions', desc: 'Organisation +10%.', fx: [{ mod: 'org', value: 0.10 }] },
+        { id: 'afr4', name: 'Bush Warfare', desc: 'Infantry and militia +15% defence.', fx: [{ mod: 'defence', value: 0.15, unit: ['infantry', 'militia'] }] }
+      ] },
+      south: { name: 'Global South', techs: [
+        { id: 'gs1', name: 'Demographic Dividend', desc: 'Manpower +15%.', fx: [{ mod: 'manpower', value: 0.15 }] },
+        { id: 'gs2', name: 'IT Services', desc: 'Research +10%.', fx: [{ mod: 'research', value: 0.10 }] },
+        { id: 'gs3', name: 'Green Revolution', desc: 'Farms +20%.', fx: [{ mod: 'farms', value: 0.20 }] },
+        { id: 'gs4', name: 'Non-Alignment', desc: '+10% trade bonus.', fx: [{ mod: 'tradeBonus', value: 0.10 }] }
+      ] }
+    }
   }
 };
 
@@ -845,8 +1054,8 @@ const TECH_CULTURE_OVERRIDE = {
     HOL: 'germanic', WAL: 'latin', MOL: 'latin', EGY: 'arab', ALG: 'arab', TUN: 'arab', TRI: 'arab', MOR: 'arab', SAU: 'arab', YEM: 'arab', OMA: 'arab',
     KAZ: 'steppe', AFG: 'persian', KLT: 'persian', JOS: 'eastasian', JAP: 'eastasian', VIE: 'eastasian', HAI: 'african', PER: 'persian'
   },
-  'greatwar-1914': {
-    OTT: 'turkic', PER: 'persian', AFG: 'persian', BUK: 'turkic', KHI: 'turkic', DAR: 'african', GRE: 'greek', ALB: 'greek',
+  'greatwar-1917': {
+    OTT: 'turkic', PER: 'persian', AFG: 'persian', BUK: 'turkic', KHI: 'turkic', GRE: 'greek', NDG: 'greek', HEJ: 'arab', VIL: 'americas',
     ETH: 'african', LIB: 'african', HAI: 'african', MON: 'steppe', JAP: 'eastasian', NEP: 'indian', SIA: 'indian', RAJ: 'indian', NED: 'germanic'
   },
   'ww2-1936': {
@@ -1062,7 +1271,7 @@ const ERA_DEPOSITS = {
     ['food', 20.0, 47.0, 10, 'Hungarian plain'],
     ['food', 10.0, 45.2, 8, 'Po valley']
   ],
-  'greatwar-1914': [
+  'greatwar-1917': [
     // strategic: nitrates
     ['strategic', -69.8, -20.2, 30, 'Tarapacá nitrates'],
     ['strategic', -69.9, -23.3, 20, 'Antofagasta nitrates'],
@@ -1150,5 +1359,44 @@ const ERA_DEPOSITS = {
     ['luxuries', 31.0, 30.8, 8, 'Egyptian cotton'],
     ['luxuries', -89.0, 32.5, 12, 'Cotton Belt'],
     ['luxuries', -4.83, 38.77, 8, 'Almadén mercury']
+  ],
+  'modern-2026': [
+    // strategic: microchips (leading-edge fabs, memory, packaging and the machines that make chips)
+    ['strategic', 121.0, 24.8, 40, 'Hsinchu and Tainan fabs (TSMC)'],
+    ['strategic', 127.1, 37.2, 26, 'Pyeongtaek and Icheon memory fabs'],
+    ['strategic', 121.5, 31.2, 16, 'Shanghai fabs (SMIC)'],
+    ['strategic', 114.1, 22.6, 10, 'Shenzhen electronics'],
+    ['strategic', 114.3, 30.6, 8, 'Wuhan memory fabs'],
+    ['strategic', -112.1, 33.5, 12, 'Arizona fabs'],
+    ['strategic', -122.0, 37.4, 8, 'Silicon Valley design houses'],
+    ['strategic', -97.7, 30.3, 8, 'Texas fabs'],
+    ['strategic', -73.8, 42.9, 6, 'Upstate New York fabs'],
+    ['strategic', 130.7, 32.8, 10, 'Kumamoto fabs'],
+    ['strategic', 141.4, 43.1, 4, 'Hokkaido fabs (Rapidus)'],
+    ['strategic', 5.4, 51.4, 10, 'Veldhoven lithography (ASML)'],
+    ['strategic', 13.7, 51.0, 8, 'Silicon Saxony'],
+    ['strategic', -6.5, 53.4, 4, 'Leixlip fabs'],
+    ['strategic', 34.8, 31.6, 6, 'Kiryat Gat fabs'],
+    ['strategic', 100.3, 5.4, 8, 'Penang chip packaging'],
+    ['strategic', 103.8, 1.35, 6, 'Singapore fabs'],
+    ['strategic', 72.6, 23.0, 4, 'Gujarat chip plants'],
+    ['strategic', 37.6, 55.7, 3, 'Zelenograd fabs'],
+    // metal: rare earths, lithium, cobalt, copper, nickel
+    ['metal', 109.9, 40.6, 24, 'Bayan Obo rare earths'],
+    ['metal', 115.0, 25.8, 10, 'Ganzhou rare earths'],
+    ['metal', -115.5, 35.5, 6, 'Mountain Pass rare earths'],
+    ['metal', 122.0, -28.8, 8, 'Mount Weld rare earths'],
+    ['metal', 25.5, -10.7, 18, 'Katanga copper and cobalt'],
+    ['metal', -68.9, -22.3, 16, 'Atacama copper'],
+    ['metal', -67.5, -20.5, 10, 'Uyuni lithium'],
+    ['metal', 118.7, -22.5, 14, 'Pilbara iron and lithium'],
+    ['metal', 122.4, -3.7, 12, 'Sulawesi nickel'],
+    ['metal', 88.2, 69.3, 8, 'Norilsk nickel and palladium'],
+    ['metal', 27.5, -25.5, 10, 'Bushveld platinum'],
+    // luxuries: consumer electronics and brands
+    ['luxuries', 113.5, 23.0, 14, 'Pearl River Delta consumer goods'],
+    ['luxuries', 106.0, 21.0, 8, 'Hanoi phone factories'],
+    ['luxuries', 2.35, 48.85, 6, 'Paris luxury houses'],
+    ['luxuries', 9.2, 45.5, 6, 'Milan fashion and design']
   ]
 };

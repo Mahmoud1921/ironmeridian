@@ -45,7 +45,7 @@ const EVENT_DEFS = [
     ] },
 
   { id: 'ev_workers_strike', title: 'Strike in the Workshops',
-    era: ['napoleonic-1805', 'greatwar-1914', 'ww2-1936'],
+    era: ['napoleonic-1805', 'greatwar-1917', 'ww2-1936', 'modern-2026'],
     text: 'Workers in the manufactories around {capital} have laid down their tools, demanding higher pay and shorter hours. Output is slowing.',
     mtth: 900, cond: { minProvs: 3 },
     options: [
@@ -244,7 +244,7 @@ const EVENT_DEFS = [
     ] },
 
   { id: 'ev_fuel_shortage', title: 'Shortage of {fuel}',
-    era: ['napoleonic-1805', 'greatwar-1914', 'ww2-1936'],
+    era: ['napoleonic-1805', 'greatwar-1917', 'ww2-1936', 'modern-2026'],
     text: 'Stocks of {fuel} are running out. Factories and transport in {name} are grinding to a halt.',
     mtth: 200, repeat: 900, cond: { short: 'fuel' },
     options: [
@@ -451,107 +451,209 @@ const EVENT_DEFS = [
     ] },
 
   // =====================================================================
-  // 1914: THE GREAT WAR
+  // 1917: THE GREAT WAR (starts 1 February 1917)
   // =====================================================================
 
-  { id: 'h14_japan', era: 'greatwar-1914', tag: 'JAP', date: [1914, 8, 23], until: [1915, 6, 1], news: true,
-    title: 'Japan and the German Concessions',
-    text: 'Britain asks its Japanese ally for help against German shipping in the Pacific. The German base at Tsingtao lies within reach.',
-    cond: { exists: 'GER', notWarWith: 'GER' },
-    options: [
-      { text: 'Declare war on Germany', ai: 4, fx: { war: { on: 'GER', name: 'Siege of Tsingtao' }, rel: { GBR: 20 } } },
-      { text: 'Stay out of Europe\'s war', ai: 1, fx: { pp: 20, rel: { GBR: -10 } } }
-    ] },
-
-  { id: 'h14_marne', era: 'greatwar-1914', tag: 'GER', date: [1914, 9, 9], until: [1914, 12, 31], news: true,
-    title: 'Crisis on the Marne',
-    text: 'French and British counterattacks have opened a gap between the German armies east of Paris. The Chief of Staff must decide.',
-    cond: { warWith: 'FRA' },
-    options: [
-      { text: 'Fall back to the Aisne', ai: 3, fx: { ws: -0.03, mod: { name: 'Entrenched Line', days: 365, fx: [{ mod: 'defence', value: 0.10 }] } } },
-      { text: 'Press on toward Paris', ai: 1, fx: { mod: { name: 'Exhausted Armies', days: 180, fx: [{ mod: 'attack', value: 0.05 }, { mod: 'org', value: -0.10 }] } } }
-    ] },
-
-  { id: 'h14_ottoman', era: 'greatwar-1914', tag: 'OTT', date: [1914, 10, 29], until: [1915, 12, 31], news: true,
-    title: 'The Ottoman Decision',
-    text: 'German warships flying the Ottoman flag have shelled Russian ports on the Black Sea. The government must decide whether to stand behind them.',
-    cond: { exists: 'RUS', notWarWith: 'RUS' },
-    options: [
-      { text: 'Enter the war beside Germany', ai: 3, fx: { war: { on: 'RUS', name: 'Caucasus Campaign' }, rel: { GER: 30, AUH: 20 } } },
-      { text: 'Disown the attack', ai: 1, fx: { pp: -20, rel: { RUS: 10, GBR: 10, GER: -20 } } }
-    ] },
-
-  { id: 'h14_italy', era: 'greatwar-1914', tag: 'ITA', date: [1915, 5, 23], until: [1916, 12, 31], news: true,
-    title: 'The Treaty of London',
-    text: 'The Entente has promised Italy the Trentino, Trieste and more if it enters the war against Austria-Hungary.',
-    cond: { exists: 'AUH', notWarWith: 'AUH' },
-    options: [
-      { text: 'Declare war on Austria-Hungary', ai: 3, fx: { war: { on: 'AUH', name: 'Italian Front' }, ws: 0.05, rel: { FRA: 20, GBR: 20 } } },
-      { text: 'Remain neutral', ai: 1, fx: { pp: 25, stab: 0.02 } },
-      { text: 'Honour the Triple Alliance', ai: 0.3, fx: { join: 'GER', rel: { AUH: 20, FRA: -30 } } }
-    ] },
-
-  { id: 'h14_lusitania', era: 'greatwar-1914', tag: 'USA', date: [1915, 5, 7], until: [1915, 12, 31],
-    title: 'The Lusitania Sunk',
-    text: 'A German submarine has sunk a British liner off Ireland. More than a hundred Americans are among the dead.',
+  { id: 'h17_zimmermann', era: 'greatwar-1917', tag: 'USA', date: [1917, 3, 1], until: [1917, 12, 31], news: true,
+    title: 'The Zimmermann Telegram',
+    text: 'British code-breakers have handed Washington a German telegram offering Mexico Texas, New Mexico and Arizona if it attacks the United States. The newspapers print it today, while U-boats sink American ships.',
     cond: { notWarWith: 'GER' },
     options: [
-      { text: 'Send a stern protest', ai: 3, fx: { ws: 0.05, rel: { GER: -20, GBR: 10 } } },
-      { text: 'Keep strict neutrality', ai: 1, fx: { pp: 15, rel: { GER: 5 } } }
+      { text: 'Arm the merchant ships', ai: 4, fx: { ws: 0.10, rel: { GER: -40, GBR: 15, MEX: -10 }, flag: 'usa_outraged' } },
+      { text: 'Keep the peace at any price', ai: 1, fx: { pp: 20, ws: -0.05, rel: { GER: 10, GBR: -15 } } }
     ] },
 
-  { id: 'h14_bulgaria', era: 'greatwar-1914', tag: 'BUL', date: [1915, 10, 14], until: [1916, 12, 31], news: true,
-    title: 'Bulgaria Chooses a Side',
-    text: 'Berlin and Vienna offer Bulgaria Serbian Macedonia if it joins their attack on Serbia.',
-    cond: { exists: 'SRB', notWarWith: 'SRB' },
-    options: [
-      { text: 'Attack Serbia', ai: 3, fx: { war: { on: 'SRB', name: 'Serbian Campaign' }, rel: { GER: 25, AUH: 25 } } },
-      { text: 'Stay neutral', ai: 1, fx: { stab: 0.03, rel: { RUS: 10 } } }
-    ] },
-
-  { id: 'h14_romania', era: 'greatwar-1914', tag: 'ROM', date: [1916, 8, 27], until: [1917, 6, 1], news: true,
-    title: 'Romania Enters the War',
-    text: 'The Entente promises Transylvania if Romania strikes at Austria-Hungary while Russia presses in Galicia.',
-    cond: { exists: 'AUH', notWarWith: 'AUH' },
-    options: [
-      { text: 'Invade Transylvania', ai: 3, fx: { war: { on: 'AUH', name: 'Romanian Campaign' }, ws: 0.05 } },
-      { text: 'Keep out of the war', ai: 1, fx: { pp: 20, rel: { RUS: -10 } } }
-    ] },
-
-  { id: 'h14_zimmermann_mex', era: 'greatwar-1914', tag: 'MEX', date: [1917, 1, 20], until: [1917, 12, 31],
+  { id: 'h17_zimmermann_mex', era: 'greatwar-1917', tag: 'MEX', date: [1917, 3, 2], until: [1917, 12, 31],
     title: 'A Telegram from Berlin',
-    text: 'Germany secretly offers Mexico an alliance and the return of Texas, New Mexico and Arizona if it goes to war with the United States.',
+    text: 'Germany offers Mexico an alliance and its lost northern lands if it goes to war with the United States. General Obregón says the army is in no state to fight.',
     cond: { exists: 'USA', notWarWith: 'USA' },
     options: [
-      { text: 'Reject the offer', ai: 5, fx: { rel: { USA: 15, GER: -10 } } },
-      { text: 'Accept the alliance', ai: 0.3, fx: { war: { on: 'USA', name: 'Mexican Border War' }, rel: { GER: 30 } } }
+      { text: 'Reject the offer', ai: 6, fx: { rel: { USA: 15, GER: -10 }, stab: 0.02 } },
+      { text: 'Accept the alliance', ai: 0.2, fx: { war: { on: 'USA', name: 'Mexican-American War' }, rel: { GER: 30 } } }
     ] },
 
-  { id: 'h14_usa_entry', era: 'greatwar-1914', tag: 'USA', date: [1917, 4, 6], until: [1918, 6, 1], news: true,
-    title: 'The Zimmermann Telegram',
-    text: 'A German offer of alliance to Mexico has been published, just as unrestricted submarine warfare resumes in the Atlantic.',
+  { id: 'h17_usa_entry', era: 'greatwar-1917', tag: 'USA', date: [1917, 4, 6], until: [1918, 9, 1], news: true,
+    title: 'America Goes to War',
+    text: 'President Wilson asks Congress for war "to make the world safe for democracy". The United States has a small army but the greatest industry on earth.',
     cond: { exists: 'GER', notWarWith: 'GER' },
     options: [
-      { text: 'Declare war on Germany', ai: 4, fx: { war: { on: 'GER', name: 'American Expeditionary Force' }, ws: 0.10, rel: { GBR: 20, FRA: 20 } } },
-      { text: 'Arm merchant ships only', ai: 1, fx: { ws: 0.03, mod: { name: 'Armed Neutrality', days: 365, fx: [{ mod: 'naval', value: 0.10 }] } } }
+      { text: 'Declare war on Germany', ai: 5, fx: { join: 'FRA', war: { on: 'GER', name: 'Great War' }, ws: 0.10, army: { divs: 4 }, rel: { GBR: 20, FRA: 20 } } },
+      { text: 'Armed neutrality only', ai: 1, fx: { ws: 0.03, mod: { name: 'Armed Neutrality', days: 365, fx: [{ mod: 'naval', value: 0.10 }] } } }
     ] },
 
-  { id: 'h14_february', era: 'greatwar-1914', tag: 'RUS', date: [1917, 3, 8], until: [1917, 12, 31], news: true,
+  // the American Expeditionary Forces land in France in waves (about 2 million men by November 1918)
+  { id: 'h18_aef1', era: 'greatwar-1917', tag: 'USA', date: [1918, 1, 20], until: [1918, 10, 1], news: true,
+    title: 'The Yanks Are Coming',
+    text: 'General Pershing\'s American Expeditionary Forces take over a quiet sector near Toul. A quarter of a million doughboys are in France, with ten thousand more landing every day.',
+    cond: { warWith: 'GER', exists: 'FRA' },
+    options: [{ text: 'Into the line in Lorraine', ai: 1, fx: { army: { divs: 6, at: [5.9, 48.68] }, ws: 0.05 } }] },
+  { id: 'h18_aef2', era: 'greatwar-1917', tag: 'USA', date: [1918, 5, 28], until: [1918, 10, 15], news: true,
+    title: 'Cantigny and Belleau Wood',
+    text: 'American divisions go into battle at Cantigny and help stop the German drive on the Marne at Château-Thierry and Belleau Wood. The convoys bring 300,000 men a month.',
+    cond: { warWith: 'GER', exists: 'FRA' },
+    options: [{ text: 'Send them to the Marne', ai: 1, fx: { army: { divs: 8, at: [3.4, 49.05] }, ws: 0.05 } }] },
+  { id: 'h18_aef3', era: 'greatwar-1917', tag: 'USA', date: [1918, 9, 12], until: [1918, 11, 11], news: true,
+    title: 'Saint-Mihiel and the Meuse-Argonne',
+    text: 'The US First Army, more than half a million men with French tanks and guns, wipes out the Saint-Mihiel salient and opens the Meuse-Argonne offensive, the largest battle in American history.',
+    cond: { warWith: 'GER', exists: 'FRA' },
+    options: [{ text: 'Attack in the Argonne', ai: 1, fx: { army: { divs: 10, at: [5.0, 49.2] }, ws: 0.05 } }] },
+  { id: 'h17_february', era: 'greatwar-1917', tag: 'RUS', date: [1917, 3, 8], until: [1917, 12, 31], news: true,
     title: 'Revolution in Petrograd',
-    text: 'Bread riots in the capital have turned into revolt, and the garrison has joined the crowds. The Tsar\'s ministers have lost control.',
+    text: 'Bread riots in the capital have become a revolt, and the garrison has joined the crowds. A Duma committee and the Petrograd Soviet both claim power. The generals tell the Tsar he must go.',
     cond: { war: true },
     options: [
-      { text: 'The Tsar abdicates', ai: 3, fx: { gov: 'Republic', stab: -0.10, ws: -0.08, flag: 'rus_provisional' } },
-      { text: 'Crush the revolt', ai: 1, fx: { stab: -0.12, ws: -0.05, manpower: -20000 } }
+      { text: 'The Tsar abdicates', ai: 4, fx: { gov: 'Provisional government', stab: -0.10, ws: -0.08, flag: 'rus_provisional' } },
+      { text: 'Send troops to crush the revolt', ai: 1, fx: { stab: -0.15, ws: -0.06, manpower: -40000, flag: 'rus_crushed' } }
     ] },
 
-  { id: 'h14_october', era: 'greatwar-1914', tag: 'RUS', date: [1917, 11, 7], until: [1918, 12, 31], news: true,
+  { id: 'h17_february2', era: 'greatwar-1917', tag: 'RUS', date: [1917, 3, 20], until: [1917, 12, 31], news: true, cond: { flag: 'rus_crushed' },
+    title: 'The Army Will Not Shoot',
+    text: 'The regiments sent against Petrograd have gone over to the revolution. Nicholas II has no army left to command.',
+    options: [
+      { text: 'The Tsar abdicates after all', ai: 1, fx: { gov: 'Provisional government', stab: -0.08, ws: -0.05, flag: 'rus_provisional' } }
+    ] },
+
+  { id: 'h17_nivelle', era: 'greatwar-1917', tag: 'FRA', date: [1917, 4, 16], until: [1917, 8, 1], news: true,
+    title: 'The Nivelle Offensive',
+    text: 'General Nivelle promised to break the German line on the Chemin des Dames in forty-eight hours. Ten days later 130,000 men are dead or wounded, and whole regiments refuse to go back into the line.',
+    cond: { warWith: 'GER' },
+    options: [
+      { text: 'Replace Nivelle with Pétain', ai: 4, fx: { ws: -0.03, stab: -0.03, mod: { name: 'No More Offensives', days: 240, fx: [{ mod: 'defence', value: 0.10 }, { mod: 'attack', value: -0.10 }] } } },
+      { text: 'Punish the mutineers and attack again', ai: 1, fx: { stab: -0.08, manpower: -60000, mod: { name: 'Army Mutinies', days: 120, fx: [{ mod: 'org', value: -0.15 }] } } }
+    ] },
+
+  { id: 'h17_greece', era: 'greatwar-1917', tag: 'GRE', date: [1917, 6, 11], until: [1918, 6, 1], news: true,
+    title: 'King Constantine Leaves',
+    text: 'The Allies demand the king\'s abdication and land troops at Piraeus. Venizelos is ready to bring his Salonika government back to Athens and lead a united Greece into the war.',
+    cond: { exists: 'NDG' },
+    options: [
+      { text: 'Unite under Venizelos and join the Allies', ai: 4, fx: { annex: 'NDG', join: 'FRA', war: { on: 'BUL', name: 'Macedonian Front' }, ws: 0.05 } },
+      { text: 'Stay neutral', ai: 1, fx: { stab: -0.05, rel: { GBR: -25, FRA: -25 } } }
+    ] },
+
+  { id: 'h17_siam', era: 'greatwar-1917', tag: 'SIA', date: [1917, 7, 22], until: [1918, 6, 1], news: true,
+    title: 'Siam Joins the Allies',
+    text: 'King Vajiravudh sees a chance to win equal treaties at the peace table by sending a small force to France.',
+    cond: { exists: 'GER', notWarWith: 'GER' },
+    options: [
+      { text: 'Declare war on Germany', ai: 3, fx: { join: 'FRA', war: { on: 'GER', name: 'Great War' }, rel: { GBR: 15, FRA: 15 } } },
+      { text: 'Stay neutral', ai: 1, fx: { stab: 0.03 } }
+    ] },
+
+  { id: 'h17_china', era: 'greatwar-1917', tag: 'CHN', date: [1917, 8, 14], until: [1918, 6, 1], news: true,
+    title: 'China Declares War',
+    text: 'Premier Duan Qirui wants a seat at the peace conference to win back Shandong. Already 100,000 Chinese labourers dig trenches in France.',
+    cond: { exists: 'GER', notWarWith: 'GER' },
+    options: [
+      { text: 'Declare war on Germany', ai: 3, fx: { join: 'FRA', war: { on: 'GER', name: 'Great War' }, stab: -0.03 } },
+      { text: 'Keep out of Europe\'s war', ai: 1, fx: { pp: 15 } }
+    ] },
+
+  { id: 'h17_brazil', era: 'greatwar-1917', tag: 'BRA', date: [1917, 10, 26], until: [1918, 9, 1], news: true,
+    title: 'Brazilian Ships Sunk',
+    text: 'German U-boats have sunk another Brazilian freighter. Crowds in Rio attack German shops.',
+    cond: { exists: 'GER', notWarWith: 'GER' },
+    options: [
+      { text: 'Declare war on Germany', ai: 3, fx: { join: 'FRA', war: { on: 'GER', name: 'Great War' }, ws: 0.05 } },
+      { text: 'Protest and stay neutral', ai: 1, fx: { rel: { GER: -15 } } }
+    ] },
+
+  { id: 'h17_caporetto', era: 'greatwar-1917', tag: 'ITA', date: [1917, 10, 24], until: [1918, 6, 1], news: true,
+    title: 'Disaster at Caporetto',
+    text: 'German and Austrian stormtroops have broken through on the upper Isonzo with gas and fog. The Second Army is in rout, and 250,000 men have been taken prisoner.',
+    cond: { warWith: 'AUH' },
+    options: [
+      { text: 'Fall back to the Piave and replace Cadorna', ai: 4, fx: { manpower: -150000, stab: -0.05, mod: { name: 'Stand on the Piave', days: 365, fx: [{ mod: 'defence', value: 0.15 }] } } },
+      { text: 'Hold the Tagliamento at all costs', ai: 1, fx: { manpower: -250000, ws: -0.08 } }
+    ] },
+
+  { id: 'h17_cambrai', era: 'greatwar-1917', tag: 'GBR', date: [1917, 11, 20], until: [1918, 6, 1],
+    title: 'Tanks at Cambrai',
+    text: 'Nearly 400 tanks have torn a hole through the Hindenburg Line without a preliminary bombardment. The church bells ring in London for the first time in the war.',
+    cond: { warWith: 'GER' },
+    options: [
+      { text: 'Build tanks above all', ai: 3, fx: { mod: { name: 'Lessons of Cambrai', days: 540, fx: [{ mod: 'attack', value: 0.15, cls: 'armor' }, { mod: 'recruitCost', value: -0.15, unit: ['landships'] }] } } },
+      { text: 'Trust the guns and the infantry', ai: 1, fx: { mod: { name: 'Artillery War', days: 540, fx: [{ mod: 'attack', value: 0.10, cls: 'artillery' }] } } }
+    ] },
+
+  { id: 'h17_october', era: 'greatwar-1917', tag: 'RUS', date: [1917, 11, 7], until: [1918, 12, 31], news: true,
     title: 'The October Revolution',
-    text: 'The Bolsheviks have seized the Winter Palace and promise peace, land and bread. The Provisional Government has collapsed.',
+    text: 'The Bolsheviks have stormed the Winter Palace and promise peace, land and bread. Kerensky has fled, and the army is melting away.',
     cond: { flag: 'rus_provisional' },
     options: [
-      { text: 'Make peace with the Central Powers', ai: 3, fx: { gov: 'Communist', peace: 'GER', stab: -0.05, ws: -0.10 } },
-      { text: 'Fight on under the Provisional Government', ai: 1, fx: { stab: -0.10, ws: -0.05 } }
+      { text: 'Lenin takes power', ai: 4, fx: { gov: 'Communist', stab: -0.08, ws: -0.15, flag: 'rus_bolshevik' } },
+      { text: 'The Provisional Government holds on', ai: 1, fx: { stab: -0.12, ws: -0.08 } }
+    ] },
+
+  { id: 'h18_brest', era: 'greatwar-1917', tag: 'RUS', date: [1918, 3, 3], until: [1918, 12, 31], news: true,
+    title: 'The Treaty of Brest-Litovsk',
+    text: 'German armies are marching on Petrograd again. The Central Powers demand Poland, the Baltic lands and Ukraine as the price of peace. Lenin says Russia has no army left to refuse.',
+    cond: { flag: 'rus_bolshevik', warWith: 'GER' },
+    options: [
+      { text: 'Sign the peace', ai: 4, fx: { leave: true, yieldTo: 'GER', stab: 0.05, ws: -0.10 } },
+      { text: 'Neither war nor peace', ai: 1, fx: { stab: -0.08, manpower: -100000 } }
+    ] },
+
+  { id: 'h18_romania', era: 'greatwar-1917', tag: 'ROM', date: [1918, 5, 7], until: [1918, 10, 31], news: true,
+    title: 'The Treaty of Bucharest',
+    text: 'With Russia out of the war, Romania stands alone. The Central Powers offer peace at the price of the Dobruja and the oil fields.',
+    cond: { warWith: 'GER', losing: true },
+    options: [
+      { text: 'Sign the peace', ai: 3, fx: { leave: true, yieldTo: 'GER', stab: -0.05 } },
+      { text: 'Fight on from Moldavia', ai: 1, fx: { ws: -0.05, stab: -0.05 } }
+    ] },
+
+  { id: 'h18_michael', era: 'greatwar-1917', tag: 'GER', date: [1918, 3, 21], until: [1918, 9, 1], news: true,
+    title: 'The Kaiser\'s Battle',
+    text: 'Divisions freed from the east give Germany its last chance to win before the Americans arrive in strength. Ludendorff wants one great offensive in the west.',
+    cond: { war: true },
+    options: [
+      { text: 'Launch Operation Michael', ai: 4, fx: { ws: 0.05, mod: { name: 'Spring Offensive', days: 120, fx: [{ mod: 'attack', value: 0.20 }, { mod: 'speed', value: 0.15 }] } } },
+      { text: 'Stand on the defensive and seek terms', ai: 1, fx: { ws: -0.08, stab: 0.05, mod: { name: 'Elastic Defence', days: 240, fx: [{ mod: 'defence', value: 0.15 }] } } }
+    ] },
+
+  { id: 'h18_flu', era: 'greatwar-1917', tag: ['GBR', 'FRA', 'GER', 'USA', 'ITA', 'AUH', 'RAJ', 'RUS', 'OTT', 'SPA', 'BRA', 'JAP', 'CAN', 'AST'], date: [1918, 9, 15], until: [1919, 6, 1],
+    title: 'The Influenza',
+    text: 'A deadly influenza is sweeping through the camps, the troopships and the cities. Young and healthy men die in days.',
+    options: [
+      { text: 'Close schools and theatres', ai: 2, fx: { manpower: -60000, stab: -0.02, mod: { name: 'Quarantine', days: 90, fx: [{ mod: 'workshops', value: -0.05 }] } } },
+      { text: 'Keep the news out of the papers', ai: 1, fx: { manpower: -120000, stab: -0.04 } }
+    ] },
+
+  { id: 'h18_bulgaria', era: 'greatwar-1917', tag: 'BUL', date: [1918, 9, 25], until: [1919, 6, 1], news: true,
+    title: 'Breakthrough at Dobro Pole',
+    text: 'Serbian and French troops have broken the mountain front, and Bulgarian soldiers are going home. The government asks the Allies for an armistice.',
+    cond: { warWith: 'FRA', losing: true },
+    options: [
+      { text: 'Sign the Armistice of Salonica', ai: 4, fx: { leave: true, yieldTo: 'FRA', stab: -0.05 } },
+      { text: 'Fight on', ai: 1, fx: { stab: -0.10, ws: -0.10 } }
+    ] },
+
+  { id: 'h18_ottoman', era: 'greatwar-1917', tag: 'OTT', date: [1918, 10, 30], until: [1919, 6, 1], news: true,
+    title: 'The Armistice of Mudros',
+    text: 'Damascus and Aleppo have fallen, and Bulgaria\'s surrender has cut the road from Germany. The Young Turk leaders have fled.',
+    cond: { warWith: 'GBR', losing: true },
+    options: [
+      { text: 'Sign the armistice', ai: 4, fx: { leave: true, yieldTo: 'GBR' } },
+      { text: 'Fight on', ai: 1, fx: { stab: -0.10, ws: -0.10 } }
+    ] },
+
+  { id: 'h18_austria', era: 'greatwar-1917', tag: 'AUH', date: [1918, 11, 3], until: [1919, 6, 1], news: true,
+    title: 'The Armistice of Villa Giusti',
+    text: 'The Italians have broken through at Vittorio Veneto. Czechs, Poles and South Slavs have declared independence, and the Dual Monarchy is falling apart.',
+    cond: { warWith: 'ITA', losing: true },
+    options: [
+      { text: 'Sign the armistice', ai: 4, fx: { leave: true, yieldTo: 'ITA', stab: -0.10 } },
+      { text: 'Fight on', ai: 1, fx: { stab: -0.15, ws: -0.10 } }
+    ] },
+
+  { id: 'h18_armistice', era: 'greatwar-1917', tag: 'GER', date: [1918, 11, 9], until: [1919, 12, 31], news: true,
+    title: 'Revolution in Germany',
+    text: 'The sailors at Kiel have mutinied, the Kaiser has fled to the Netherlands, and a republic has been proclaimed in Berlin. Ludendorff says the army cannot go on.',
+    cond: { war: true, losing: true },
+    options: [
+      { text: 'Sign the armistice at Compiègne', ai: 4, fx: { gov: 'Republic', yieldTo: 'FRA', stab: -0.10 } },
+      { text: 'Fight on to the last', ai: 1, fx: { stab: -0.20, ws: -0.15 } }
     ] },
 
   // =====================================================================
@@ -893,5 +995,160 @@ const EVENT_DEFS = [
     options: [
       { text: 'Fund Sparta', ai: 3, fx: { gold: -250, rel: { SPA: 25, ATH: -20 } } },
       { text: 'Let them wear each other out', ai: 2, fx: { pp: 20 } }
+    ] },
+
+  // =====================================================================
+  // 2026: THE DRONE AGE (modern-2026)
+  // =====================================================================
+
+  { id: 'ev26_cyberattack', era: 'modern-2026', title: 'Ransomware in the Ministries',
+    text: 'Hackers have locked the computers of hospitals, railways and tax offices across {name}. They want payment in cryptocurrency within three days.',
+    mtth: 1400,
+    options: [
+      { text: 'Pay quietly and restore the systems', ai: 1, fx: { gold: -200 } },
+      { text: 'Refuse and rebuild from backups', ai: 2, fx: { stab: -0.03, mod: { name: 'Systems Offline', days: 60, fx: [{ mod: 'industry', value: -0.08 }] } } },
+      { text: 'Fund a national cyber command', ai: 2, fx: { gold: -300, mod: { name: 'Cyber Command', days: 730, fx: [{ mod: 'research', value: 0.05 }] } } }
+    ] },
+
+  { id: 'ev26_chip_shortage', era: 'modern-2026', title: 'The Chip Queue',
+    text: 'Factories in {name} stand idle waiting for microchips. Every drone, radar and missile needs them, and the foundries of Taiwan and Korea are booked for a year.',
+    mtth: 1200, cond: { short: 'strategic' },
+    options: [
+      { text: 'Pay the premium for priority orders', ai: 2, fx: { gold: -250, goods: { strategic: 20 } } },
+      { text: 'Subsidise a domestic foundry', ai: 1, fx: { gold: -400, mod: { name: 'Foundry Programme', days: 1095, fx: [{ mod: 'industry', value: 0.05 }, { mod: 'research', value: 0.05 }] } } },
+      { text: 'Ration chips to the army first', ai: 1, fx: { stab: -0.03, mod: { name: 'Civilian Chip Rationing', days: 180, fx: [{ mod: 'workshops', value: -0.10 }] } } }
+    ] },
+
+  { id: 'h26_aid', era: 'modern-2026', tag: 'UKR', date: [2026, 2, 15], until: [2026, 12, 31], news: true,
+    title: 'Aid from the Coalition',
+    text: 'Ministers from fifty countries meet at Ramstein. They offer Ukraine air defence missiles, artillery shells and money to build its own long-range drones.',
+    cond: { warWith: 'RUS' },
+    options: [
+      { text: 'Ask for air defence first', ai: 3, fx: { army: { divs: 3, at: [30.5, 50.45] }, rel: { USA: 10, DEU: 10 }, mod: { name: 'Patriot Shield', days: 365, fx: [{ mod: 'defence', value: 0.10 }] } } },
+      { text: 'Ask for money for our drone makers', ai: 2, fx: { gold: 500, mod: { name: 'Drone Line', days: 365, fx: [{ mod: 'arsenals', value: 0.15 }, { mod: 'research', value: 0.05 }] } } }
+    ] },
+
+  { id: 'h26_talks', era: 'modern-2026', tag: 'UKR', date: [2026, 4, 1], until: [2026, 12, 31], news: true,
+    title: 'Talks in Istanbul',
+    text: 'Envoys offer a ceasefire along the present front. Russia would keep the land it holds; Ukraine would keep its army and its road to the West.',
+    cond: { warWith: 'RUS' },
+    options: [
+      { text: 'Fight on with Western help', ai: 3, fx: { ws: 0.05, stab: -0.03, rel: { POL: 10, GBR: 10 } } },
+      { text: 'Accept a ceasefire on the current lines', ai: 0, fx: { yieldTo: 'RUS', stab: 0.05, ws: -0.10 } }
+    ] },
+
+  { id: 'h26_ru_mobilise', era: 'modern-2026', tag: 'RUS', date: [2026, 3, 1], until: [2026, 12, 31],
+    title: 'Another Wave of Recruits',
+    text: 'Bonuses for signing a contract have doubled again. Recruiters work the prisons and the poor regions. The war economy runs hot, and so does inflation.',
+    cond: { warWith: 'UKR' },
+    options: [
+      { text: 'Pay more for volunteers', ai: 3, fx: { gold: -400, army: { divs: 4 } } },
+      { text: 'Partial mobilisation', ai: 1, fx: { stab: -0.08, army: { divs: 8 } } },
+      { text: 'Save the money', ai: 1, fx: { stab: 0.02 } }
+    ] },
+
+  { id: 'h26_drone_wall', era: 'modern-2026', tag: 'POL', date: [2026, 3, 20], until: [2026, 12, 31],
+    title: 'A Wall of Drones',
+    text: 'Stray drones keep crossing into the eastern villages. The frontline states propose sensors, jammers and interceptor drones along the whole border, from Finland to Romania.',
+    options: [
+      { text: 'Build the drone wall', ai: 3, fx: { gold: -300, mod: { name: 'Drone Wall', days: 1095, fx: [{ mod: 'defence', value: 0.12, where: 'border' }] }, rel: { FIN: 10, EST: 10, LVA: 10, LTU: 10, ROU: 10 } } },
+      { text: 'Rely on NATO aircraft', ai: 1, fx: { pp: 20 } }
+    ] },
+
+  { id: 'h26_rearm', era: 'modern-2026', tag: 'DEU', date: [2026, 2, 10], until: [2026, 12, 31],
+    title: 'The Turning Point',
+    text: 'The debt brake is loosened for defence. Germany can build the largest conventional army in Europe, if its factories can learn to make shells and tanks quickly again.',
+    options: [
+      { text: 'Rearm on a war footing', ai: 3, fx: { gold: -500, mod: { name: 'Rearmament', days: 1095, fx: [{ mod: 'arsenals', value: 0.20 }, { mod: 'industry', value: 0.05 }] } } },
+      { text: 'Spend it on roads and rail', ai: 1, fx: { gold: -300, mod: { name: 'Infrastructure Fund', days: 1095, fx: [{ mod: 'construction', value: 0.15 }] } } }
+    ] },
+
+  { id: 'h26_export_controls', era: 'modern-2026', tag: 'USA', date: [2026, 3, 10], until: [2026, 12, 31], news: true,
+    title: 'Controls on Chips',
+    text: 'Washington debates new limits on selling advanced chips and chip-making machines to China. The chip makers want the sales; the generals want the lead.',
+    cond: { exists: 'CHN' },
+    options: [
+      { text: 'Tighten the controls', ai: 3, fx: { rel: { CHN: -20, TWN: 10, NLD: -5 }, mod: { name: 'Technology Lead', days: 730, fx: [{ mod: 'research', value: 0.08 }] } } },
+      { text: 'Sell to whoever pays', ai: 1, fx: { gold: 400, rel: { CHN: 15 } } }
+    ] },
+
+  { id: 'h26_ai_buildout', era: 'modern-2026', tag: 'USA', date: [2026, 5, 1], until: [2026, 12, 31],
+    title: 'The Data Centre Boom',
+    text: 'Gigawatt data centres rise in the deserts and the plains to train ever larger AI models. They need chips, power plants and transmission lines faster than anyone can build them.',
+    options: [
+      { text: 'Fast-track the power plants', ai: 3, fx: { gold: -400, mod: { name: 'AI Build-out', days: 1095, fx: [{ mod: 'research', value: 0.12 }, { mod: 'industry', value: 0.05 }] } } },
+      { text: 'Regulate and go slow', ai: 1, fx: { stab: 0.03 } }
+    ] },
+
+  { id: 'h26_silicon_shield', era: 'modern-2026', tag: 'TWN', date: [2026, 4, 10], until: [2026, 12, 31],
+    title: 'The Silicon Shield',
+    text: 'The world depends on the foundries of Hsinchu. Washington asks for new fabs in Arizona; some in Taipei fear that moving the factories moves the reason to defend the island.',
+    options: [
+      { text: 'Build fabs in America', ai: 2, fx: { gold: -300, rel: { USA: 25, JPN: 10 } } },
+      { text: 'Keep the best fabs at home', ai: 2, fx: { rel: { USA: -5 }, mod: { name: 'Silicon Shield', days: 1095, fx: [{ mod: 'research', value: 0.08 }, { mod: 'workshops', value: 0.05 }] } } }
+    ] },
+
+  { id: 'h26_strait', era: 'modern-2026', tag: 'CHN', date: [2026, 5, 20], until: [2026, 12, 31], news: true,
+    title: 'Drills around Taiwan',
+    text: 'Warships and bombers circle the island in exercises named Strait Thunder. Staff officers have drawn up plans for a blockade, and for more than a blockade.',
+    cond: { exists: 'TWN', notWarWith: 'TWN' },
+    options: [
+      { text: 'Show of force, then stand down', ai: 3, fx: { ws: 0.05, rel: { TWN: -20, USA: -10, JPN: -10 } } },
+      { text: 'Invade Taiwan', ai: 0, fx: { war: { on: 'TWN', name: 'Taiwan Strait War' }, ws: 0.10, rel: { USA: -60, JPN: -40, KOR: -20 } } },
+      { text: 'Quietly court Taipei instead', ai: 1, fx: { rel: { TWN: 15, USA: 5 } } }
+    ] },
+
+  { id: 'h26_iran_talks', era: 'modern-2026', tag: 'IRN', date: [2026, 3, 15], until: [2026, 12, 31], news: true,
+    title: 'Uranium and Sanctions',
+    text: 'Inspectors have lost track of Iran\'s enriched uranium. The West offers sanctions relief for a verifiable deal; hardliners say only a bomb will keep the country safe.',
+    options: [
+      { text: 'Sign a deal and open the inspectors\' doors', ai: 2, fx: { gold: 400, stab: 0.04, rel: { USA: 25, ISR: 5, SAU: 10 } } },
+      { text: 'Enrich in secret', ai: 2, fx: { rel: { USA: -25, ISR: -40, SAU: -10 }, mod: { name: 'Secret Programme', days: 730, fx: [{ mod: 'research', value: 0.05 }, { mod: 'tax', value: -0.05 }] } } }
+    ] },
+
+  { id: 'h26_isr_iran', era: 'modern-2026', tag: 'ISR', date: [2026, 6, 15], until: [2026, 12, 31],
+    title: 'The Mountain Sites',
+    text: 'Intelligence says Iran is rebuilding centrifuges deep under the mountains at Fordow. The air force has plans and the bunker-busters need American help.',
+    cond: { exists: 'IRN', relBelow: { tag: 'IRN', v: -30 } },
+    options: [
+      { text: 'Strike the sites from the air', ai: 2, fx: { ws: 0.05, rel: { IRN: -40, SAU: -5, TUR: -10 }, mod: { name: 'Missile Alerts', days: 120, fx: [{ mod: 'stability', value: -0.03 }] } } },
+      { text: 'Sabotage and wait', ai: 2, fx: { pp: -20, rel: { USA: 5 } } }
+    ] },
+
+  { id: 'h26_greenland', era: 'modern-2026', tag: 'USA', date: [2026, 2, 1], until: [2026, 12, 31], news: true,
+    title: 'The Greenland Question',
+    text: 'The White House talks again of buying Greenland, for its bases, its sea lanes and the rare earths under its ice. Copenhagen and Nuuk answer that it is not for sale.',
+    cond: { exists: 'DNK' },
+    options: [
+      { text: 'Drop the idea, deepen the bases deal', ai: 3, fx: { rel: { DNK: 10 } } },
+      { text: 'Press Denmark hard', ai: 1, fx: { pp: 25, rel: { DNK: -40, NOR: -10, DEU: -10, FRA: -10, CAN: -15 } } }
+    ] },
+
+  { id: 'h26_venezuela', era: 'modern-2026', tag: 'USA', date: [2026, 1, 3], until: [2026, 12, 31],
+    title: 'Pressure on Caracas',
+    text: 'Warships gather in the Caribbean. Washington accuses the government in Caracas of drug trafficking and stolen elections, and its oil lies under the largest proven reserves on earth.',
+    cond: { exists: 'VEN', notWarWith: 'VEN' },
+    options: [
+      { text: 'Blockade and sanctions', ai: 3, fx: { rel: { VEN: -40, COL: -5, BRA: -5 }, gold: 100 } },
+      { text: 'Invade Venezuela', ai: 0, fx: { war: { on: 'VEN', name: 'Caribbean War' }, rel: { BRA: -30, MEX: -30, COL: -20 } } },
+      { text: 'Negotiate an oil deal', ai: 1, fx: { rel: { VEN: 20 }, goods: { fuel: 20 } } }
+    ] },
+
+  { id: 'h26_korea', era: 'modern-2026', tag: 'PRK', date: [2026, 4, 15], until: [2026, 12, 31],
+    title: 'The Day of the Sun',
+    text: 'For the leader\'s grandfather\'s birthday the generals want a new missile over the Sea of Japan. Moscow pays well for shells and soldiers; Beijing wants calm.',
+    options: [
+      { text: 'Launch the missile', ai: 2, fx: { ws: 0.05, rel: { KOR: -20, JPN: -25, USA: -15, CHN: -5 } } },
+      { text: 'Sell shells and troops to Russia', ai: 2, fx: { gold: 300, rel: { RUS: 25, KOR: -15 }, arms: -100 } },
+      { text: 'Keep quiet this year', ai: 1, fx: { rel: { CHN: 10 } } }
+    ] },
+
+  { id: 'h26_sudan_truce', era: 'modern-2026', tag: 'SDN', date: [2026, 5, 1], until: [2026, 12, 31], news: true,
+    title: 'A Truce for Sudan?',
+    text: 'After three years of war and famine the Quad offers a humanitarian truce. The Rapid Support Forces would keep Darfur for now.',
+    cond: { warWith: 'RSF' },
+    options: [
+      { text: 'Fight on to retake Darfur', ai: 2, fx: { ws: 0.05, army: { divs: 2 } } },
+      { text: 'Accept the truce', ai: 1, fx: { yieldTo: 'RSF', stab: 0.05, rel: { USA: 10, EGY: 5, SAU: 10 } } }
     ] }
 ];

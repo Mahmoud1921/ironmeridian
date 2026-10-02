@@ -1055,23 +1055,22 @@ async function erasRun(browser) {
     const nv = await page.evaluate(() => ({ fleets: Sim.G.fleets.length, ships: Sim.G.fleets.reduce((s, f) => s + f.ships.length, 0), types: [...new Set(Sim.G.fleets.flatMap(f => f.ships.map(s => Navy.typeName(s.type))))], wings: Sim.G.wings.length, air: Air.available(), ports: (Sim.G.inf || []).filter(I => I && I.port).length }));
     check(`eras: ${era.label} has period navies${nv.air ? ' and aircraft' : ''}`, nv.fleets > 3 && nv.ports > 20 && (nv.air ? nv.wings > 0 : nv.wings === 0), `${nv.ships} ships in ${nv.fleets} fleets: ${nv.types.join(', ')}; ${nv.wings} air wings; ${nv.ports} ports`);
     if (era.id.startsWith('greatwar')) {
-      // Landships wait for September 1916 even when fully researched
-      const gate = await page.evaluate(() => {
-        const me = Sim.G.player, c = Sim.G.countries[me];
-        const land = Tech.branchesFor(me)[0].tiers[3];
-        const x = Tech.info(land.id);
-        c.techs.push(...Tech.branchesFor(me)[0].tiers.slice(0, 3).map(t => Array.isArray(t) ? t[0].id : t.id)); Tech.invalidate(me);
-        c.rs.slots = [{ id: land.id, pts: x.cost }, null];
-        Tech.daily();
-        const waits = c.rs.slots[0] && c.rs.slots[0].id === land.id && !c.techs.includes(land.id);
-        Sim.G.hour += Math.ceil((Date.UTC(1916, 8, 16) - Sim.dateTime()) / 3600e3);
-        Tech.daily();
-        return { name: land.name, waits, done: c.techs.includes(land.id), unit: Sim.canRecruit(me, 'landships') || Tech.unlocked(me, 'landships') };
+      // 1917: tanks and gas troops are already in service, and their figures are the Blender models
+      const ww1 = await page.evaluate(() => ({ tanks: Sim.G.armies.some(a => a.units.some(u => u.type === 'landships')), gas: !!UNIT_TYPES.gastroops,
+        kinds: ['landships', 'gastroops', 'railguns'].map(t => Figures.kindOf(t)), war: Sim.G.wars.some(w => w.attackers.includes('GER') || w.defenders.includes('GER')) }));
+      check('eras: 1917 fields tanks, gas troops and railway guns at war', ww1.tanks && ww1.gas && ww1.war && ww1.kinds.join() === 'mark4,gastroops,railgun', JSON.stringify(ww1));
+    }
+    if (era.id.startsWith('modern')) {
+      // 2026: technology counts twice over, drones and air defence exist, chips are the strategic good
+      const m = await page.evaluate(() => {
+        const A = Sim.G.armies.find(a => a.units.length > 3), lvl = Tech.level(A.owner);
+        return { weight: Eras.techWeight(), drones: !!UNIT_TYPES.drones, sam: !!(UNIT_TYPES.airdefence && UNIT_TYPES.airdefence.aa), chips: Economy.goodName('strategic'),
+          kinds: ['infantry', 'tanks', 'drones', 'airdefence'].map(t => Figures.kindOf(t)), ukr: Sim.G.wars.some(w => w.attackers.includes('RUS') && w.defenders.includes('UKR')) };
       });
-      check('eras: a date-gated tech waits for its date', gate.waits && gate.done && gate.unit, JSON.stringify(gate));
+      check('eras: 2026 runs on technology, drones and chips', m.weight === 2 && m.drones && m.sam && /chip/i.test(m.chips) && m.ukr && m.kinds.join() === 'modern,mbt,drone,sam', JSON.stringify(m));
     }
     check(`eras: ${era.label} plays`, picked && started && res.days > 5 && res.armies > 0 && res.flag, `${res.date}, ${res.armies} armies`);
-    if (!era.id.startsWith('greatwar')) check(`eras: ${era.label} has only period units`, bad.length === 0, bad.join(', '));
+    if (!era.id.startsWith('greatwar') && !era.id.startsWith('modern')) check(`eras: ${era.label} has only period units`, bad.length === 0, bad.join(', '));
   }
   check('eras: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await page.close();

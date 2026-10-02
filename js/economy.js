@@ -32,7 +32,8 @@ const Economy = (function () {
   const INFRA_KEYS = Object.keys(INFRA);
   const INFRA_NAMES = {
     'ww2-1936': { port: 'Port', dock: 'Naval dockyard', air: 'Airbase', hub: 'Supply hub', fort: 'Fort', radar: 'Radar station' },
-    'greatwar-1914': { port: 'Harbour', dock: 'Naval dockyard', air: 'Airfield', hub: 'Railhead depot', fort: 'Fortress' },
+    'modern-2026': { port: 'Port', dock: 'Naval shipyard', air: 'Air base', hub: 'Logistics hub', fort: 'Defensive line', radar: 'Air-defence radar' },
+    'greatwar-1917': { port: 'Harbour', dock: 'Naval dockyard', air: 'Airfield', hub: 'Railhead depot', fort: 'Trench line' },
     'napoleonic-1805': { port: 'Harbour', dock: 'Naval yard', hub: 'Supply depot', fort: 'Fortress' },
     'medieval-1200': { port: 'Harbour', dock: 'Shipyard', hub: 'Supply depot', fort: 'Castle' },
     'rome-117': { port: 'Harbour', dock: 'Navalia', hub: 'Supply depot', fort: 'Fort' },
@@ -59,12 +60,17 @@ const Economy = (function () {
     'napoleonic-1805': { foodPerM: 1.0, taxK: 0.3, coin: 'ducats', year: 1805, arsenalStrat: 0.25, stratUnits: 'guns',
       goods: { food: 'Grain', metal: 'Iron', fuel: 'Coal and timber', strategic: 'Saltpetre', luxuries: 'Sugar, tea and textiles', arms: 'Muskets and cannon' },
       kinds: { farm: 'Farm', mine: 'Mine', fuel: 'Coal pit', strat: 'Saltpetre works', shop: 'Manufactory', arsenal: 'Arsenal' } },
-    'greatwar-1914': { foodPerM: 0.6, taxK: 0.2, coin: 'marks', year: 1914, arsenalStrat: 0.25, stratUnits: 'guns',
+    'greatwar-1917': { foodPerM: 0.6, taxK: 0.2, coin: 'marks', year: 1917, arsenalStrat: 0.25, stratUnits: 'guns',
       goods: { food: 'Grain and meat', metal: 'Steel', fuel: 'Coal', strategic: 'Nitrates', luxuries: 'Consumer goods', arms: 'Rifles and shells' },
       kinds: { farm: 'Farm', mine: 'Mine', fuel: 'Coal pit', strat: 'Nitrate works', shop: 'Factory', arsenal: 'Munitions works' } },
     'ww2-1936': { foodPerM: 0.5, taxK: 0.15, coin: 'dollars', year: 1936, stratUnits: 'motor', oilFuel: true,
       goods: { food: 'Food', metal: 'Steel', fuel: 'Oil', strategic: 'Rubber', luxuries: 'Consumer goods', arms: 'Equipment' },
-      kinds: { farm: 'Farm', mine: 'Mine', fuel: 'Oil wells', strat: 'Rubber plantation', shop: 'Civilian factory', arsenal: 'Military factory' } }
+      kinds: { farm: 'Farm', mine: 'Mine', fuel: 'Oil wells', strat: 'Rubber plantation', shop: 'Civilian factory', arsenal: 'Military factory' } },
+    // 2026: microchips are the strategic good. Every modern weapon and most units need them, and the
+    // defence plants that build arms eat them too, so a nation cut off from chips cannot fight for long.
+    'modern-2026': { foodPerM: 0.3, taxK: 0.1, coin: 'dollars', year: 2026, stratUnits: 'chips', arsenalStrat: 0.5, oilFuel: true,
+      goods: { food: 'Food', metal: 'Metals and rare earths', fuel: 'Oil and gas', strategic: 'Microchips', luxuries: 'Consumer goods', arms: 'Weapons systems' },
+      kinds: { farm: 'Agribusiness', mine: 'Mine', fuel: 'Oil and gas field', strat: 'Chip fab', shop: 'Tech industry', arsenal: 'Defence plant' } }
   };
   // how self-sufficient in food a nation starts in 1936 (1 = exactly fed); other eras follow the land
   const FOOD_1936 = { ENG: 0.55, BEL: 0.6, SWI: 0.6, NOR: 0.7, GER: 0.85, JAP: 0.8, ITA: 0.9, GRE: 0.8, HOL: 1.4, DEN: 1.5, USA: 1.3, CAN: 1.6, ARG: 2.0, URU: 1.6, AST: 1.6, NZL: 1.8,
@@ -75,6 +81,8 @@ const Economy = (function () {
   const goodName = g => g === 'gold' ? 'Gold' : (E().goods[g] || g);
   const kindName = k => INFRA[k] ? ((INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936'])[k] || k) : (E().kinds[k] || k);
   const coin = () => E().coin;
+  // eras where motor vehicles and aircraft run on oil, and slow down without it
+  const oilEra = () => !!E().oilFuel;
   const mod = (tag, name, ctx) => typeof Tech !== 'undefined' ? Tech.mod(tag, name, ctx) : 0;
 
   // ---------- static map facts: coasts and deposits ----------
@@ -109,11 +117,11 @@ const Economy = (function () {
     for (const p of M.provs) {
       const r = p.res || {}, d = p.id;
       if (r.steel) add(d, 'metal', r.steel);
-      if (id === 'ww2-1936') {
+      if (id === 'ww2-1936' || id === 'modern-2026') {
         if (r.aluminium) add(d, 'metal', r.aluminium);
         if (r.rare) add(d, 'metal', r.rare);
         if (r.oil) add(d, 'fuel', r.oil);
-        if (r.rubber) add(d, 'strategic', r.rubber);
+        if (r.rubber && id === 'ww2-1936') add(d, 'strategic', r.rubber);
       }
       if (r.coal) add(d, 'fuel', r.coal);
       if (e.forestFuel && p.terrain === 'forest') add(d, 'fuel', 2);
@@ -223,7 +231,7 @@ const Economy = (function () {
       const d = COUNTRY_BY_TAG[g.owner[p.id]];
       if (!d || d.unclaimed) continue;
       if (p.city && coast(p.id)) setInfra(p.id, 'port', p.capital ? 2 : 1);
-      if (p.capital && id !== 'ww2-1936' && id !== 'greatwar-1914') setInfra(p.id, 'fort', id === 'napoleonic-1805' ? 1 : 2);
+      if (p.capital && id !== 'ww2-1936' && id !== 'greatwar-1917' && id !== 'modern-2026') setInfra(p.id, 'fort', id === 'napoleonic-1805' ? 1 : 2);
     }
     // nations with a coast but no coastal city still get one harbour
     const hasPort = new Set();
@@ -235,7 +243,18 @@ const Economy = (function () {
     }
     const wall = (tag, vs, lvl) => { for (const p of M.provs) if (g.owner[p.id] === tag && p.home && p.nb.some(n => g.owner[n] === vs)) setInfra(p.id, 'fort', lvl); };
     if (id === 'ww2-1936') { wall('FRA', 'GER', 3); wall('CZE', 'GER', 2); wall('GER', 'FRA', 1); wall('FIN', 'SOV', 2); wall('BEL', 'GER', 1); }
-    if (id === 'greatwar-1914') { wall('FRA', 'GER', 2); wall('BEL', 'GER', 2); wall('GER', 'FRA', 1); wall('RUS', 'GER', 1); wall('AUH', 'ITA', 1); }
+    // a front: every province one side holds next to the other's, home soil or occupied, is dug in
+    const front = (a, b, lvl) => { wall(a, b, lvl); for (const p of M.provs) if (g.owner[p.id] === a && p.nb.some(n => g.owner[n] === b)) setInfra(p.id, 'fort', Math.max(infra(p.id, 'fort'), lvl)); };
+    if (id === 'greatwar-1917') {
+      // the Western Front after two and a half years of digging, the Hindenburg Line behind it
+      front('GER', 'FRA', 3); front('FRA', 'GER', 3); front('GER', 'BEL', 3); front('BEL', 'GER', 3);
+      front('GER', 'RUS', 1); front('RUS', 'GER', 1); front('AUH', 'RUS', 1); front('RUS', 'AUH', 1);
+      front('AUH', 'ITA', 2); front('ITA', 'AUH', 2); front('BUL', 'SRB', 2); front('SRB', 'BUL', 2); front('GER', 'ROM', 1); front('ROM', 'GER', 1);
+    }
+    if (id === 'modern-2026') {
+      front('RUS', 'UKR', 3); front('UKR', 'RUS', 3);
+      wall('KOR', 'PRK', 3); wall('PRK', 'KOR', 3); wall('IND', 'PAK', 1); wall('PAK', 'IND', 1); wall('ISR', 'LBN', 1); wall('ISR', 'SYR', 1);
+    }
   }
   function seedDeals() {
     const g = G();
@@ -303,6 +322,7 @@ const Economy = (function () {
     const rule = E().stratUnits;
     if (rule === 'mounted') return (u.symbol === 'rec' || u.symbol === 'arm') && u.look !== 'elephant';
     if (rule === 'guns') return u.symbol === 'art' && u.look !== 'archer' && u.look !== 'crossbow';
+    if (rule === 'chips') return !!u.chips;
     if (rule === 'motor') return ['motorized', 'mechanized', 'tanks', 'recon'].includes(type) || u.symbol === 'mot' || u.symbol === 'mec';
     return false;
   }
@@ -863,6 +883,6 @@ const Economy = (function () {
     restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
-    endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId
+    endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId, oilEra
   };
 })();

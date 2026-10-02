@@ -53,8 +53,9 @@ const Sim = (function () {
         civ: d.civ, mil: d.mil, capital: capital ? capital.id : -1, alive: true, queue: [], armySeq: 0, baseDivs: d.divs
       };
     }
-    for (const d of COUNTRY_DEFS) spawnInitialArmies(d);
-    if (typeof Eras !== 'undefined' && !Eras.isBase()) {
+    const eraWars = typeof Eras !== 'undefined' && !Eras.isBase();
+    if (!eraWars) for (const d of COUNTRY_DEFS) spawnInitialArmies(d);
+    if (eraWars) {
       // the era's opening wars: [attacker, defender, attacker allies, defender allies, name]
       for (const [a, d, aAll, dAll, name] of Eras.wars()) {
         const w = G.countries[a] && G.countries[d] && declareWar(a, d, true);
@@ -63,6 +64,16 @@ const Sim = (function () {
           for (const t of list) if (G.countries[t]) for (const x of coalition(t)) if (!w.attackers.includes(x) && !w.defenders.includes(x)) side.push(x);
         if (name) w.name = name;
       }
+      // alliances already standing on the first day (after the wars, so a member's war does not drag in the rest)
+      for (const [name, members] of Eras.factions()) {
+        const live = members.filter(t => G.countries[t] && !G.dip.facOf[t]);
+        if (live.length < 2) continue;
+        const f = { id: G.dip.nextFac++, name, leader: live[0], members: live, since: 0 };
+        G.dip.factions.push(f);
+        for (const t of live) G.dip.facOf[t] = f.id;
+      }
+      // armies are placed once the wars are known, so nations already at war start on their fronts
+      for (const d of COUNTRY_DEFS) spawnInitialArmies(d);
     } else declareWar('ITA', 'ETH', true);
     if (typeof Tech !== 'undefined') Tech.setup();
     if (typeof Economy !== 'undefined') Economy.setup();
@@ -125,6 +136,35 @@ const Sim = (function () {
       if (prov && take.length) newArmy(d.tag, prov.id, take.map(t => makeUnit(t))).entrench = 0.1;
     }
     const nd = types.length;
+    // already at war (a historical start in mid-war): hold every province that faces the enemy, occupied land included
+    const foes = enemiesOf(d.tag);
+    if (foes.size) {
+      const front = MAP.provs.filter(p => G.owner[p.id] === d.tag && p.nb.some(q => foes.has(G.owner[q])))
+        .map(p => ({ p, w: (p.nb.reduce((s, q) => s + (foes.has(G.owner[q]) ? (G.countries[G.owner[q]].mil + 1) : 0), 0) + (p.capital ? 20 : 0) + rng() * 2) *
+          (distKm(p.id, c.capital) < 2500 ? 1 : 0.08) }))   // far-off colonial fronts get small garrisons, not field armies
+        .sort((a, b) => b.w - a.w).map(o => o.p.id);
+      // expeditionary forces (the British in France, the Indian Army in Mesopotamia): d.deploy = [[lon, lat, share], ...]
+      for (const [lon, lat, share] of (d.deploy || [])) {
+        const n = Math.min(types.length - 1, Math.round(nd * share));
+        if (n <= 0) continue;
+        const spots = MAP.provs.filter(p => (G.owner[p.id] === d.tag || allied(d.tag, G.owner[p.id])) && !COUNTRY_BY_TAG[G.owner[p.id]]?.unclaimed)
+          .sort((a, b) => GEO.haversineKm(lon, lat, a.lon, a.lat) - GEO.haversineKm(lon, lat, b.lon, b.lat)).slice(0, Math.max(1, Math.ceil(n / 4)));
+        const take = types.splice(0, n);
+        spots.forEach((p, i) => { const part = take.slice(Math.floor(i * n / spots.length), Math.floor((i + 1) * n / spots.length)); if (part.length) newArmy(d.tag, p.id, part.map(t => makeUnit(t))).entrench = Eras.trench ? Eras.trench().max * 0.9 : 0.1; });
+      }
+      if (front.length) {
+        const nd2 = types.length, keep = Math.floor(nd2 * 0.15), field = nd2 - keep;
+        const nF = Math.min(front.length, Math.max(1, Math.ceil(field / 3)));
+        let k = 0;
+        for (let i = 0; i < nF; i++) {
+          const n = Math.floor((i + 1) * field / nF) - Math.floor(i * field / nF);
+          if (n > 0) newArmy(d.tag, front[i], types.slice(k, k + n).map(t => makeUnit(t))).entrench = Eras.trench ? Eras.trench().max * 0.9 : 0.1;
+          k += n;
+        }
+        if (k < nd2) newArmy(d.tag, c.capital, types.slice(k).map(t => makeUnit(t))).entrench = 0.1;
+        return;
+      }
+    }
     const nArmies = Math.ceil(nd / 8);
     const home = MAP.provs.filter(p => G.owner[p.id] === d.tag && p.home);
     const border = home.filter(p => p.nb.some(q => G.owner[q] !== d.tag))
@@ -194,10 +234,11 @@ const Sim = (function () {
   function declareWar(att, def, silent, opts) {
     if (att === def || atWar(att, def) || allied(att, def)) return null;
     if (hasPact(att, def) && !(opts && opts.breakPact)) return null;
-    const A = coalition(att), D = coalition(def).filter(t => !A.includes(t));
+    const A = coalition(att), D = coalition(def).filter(t => !A.includes(t)), D0 = D.slice();
     // guarantors of anyone attacked come to their defence
     for (const g of G.dip.guar) {
       if (!D.includes(g.of) || A.includes(g.by) || D.includes(g.by) || !G.countries[g.by]?.alive) continue;
+      if (D0.some(t => atWar(g.by, t))) continue;   // already fighting the side it would defend
       for (const t of coalition(g.by)) if (!A.includes(t) && !D.includes(t)) D.push(t);
     }
     // a war ends every pact between the two sides and sours relations
@@ -260,7 +301,7 @@ const Sim = (function () {
     if (slow && typeof Tech !== 'undefined') s *= 1 + Tech.modFast(a.owner, 'speed', slow, a.prov);
     // motor units crawl without fuel
     const eco = G.countries[a.owner].eco;
-    if (slow && eco && eco.sat && typeof Economy !== 'undefined' && Economy.eraId() === 'ww2-1936' && (Tech.unitClass(slow) === 'motorised' || UNIT_TYPES[slow].armor)) s *= 0.5 + 0.5 * eco.sat.fuel;
+    if (slow && eco && eco.sat && typeof Economy !== 'undefined' && Economy.oilEra() && (Tech.unitClass(slow) === 'motorised' || UNIT_TYPES[slow].armor)) s *= 0.5 + 0.5 * eco.sat.fuel;
     if (a.order === 'redeploy') s *= 2.5;
     if (a.retreating) s *= 1.3;
     return s;
@@ -270,7 +311,10 @@ const Sim = (function () {
     for (const u of a.units) { str += u.str; org += u.org; }
     return { str: divs ? str / divs : 0, org: divs ? org / divs : 0, divs };
   }
-  function armyPower(a, role, terrain) {
+  // opt (battles only): breach = share of the defenders' trenches and forts the attackers' tanks, gas and
+  // stormtroops cancel; drone = how much of their drones' strike gets through the enemy's jamming and air defence
+  function armyPower(a, role, terrain, opt) {
+    opt = opt || {};
     let v = 0;
     const T = TERRAIN[terrain];
     const TX = typeof Tech !== 'undefined';
@@ -279,13 +323,16 @@ const Sim = (function () {
       const m = TX ? 1 + Tech.modFast(a.owner, role === 'atk' ? 'attack' : 'defence', u.type, a.prov) : 1;
       // storming a beach from the boats: marines are trained for it
       const land = a.landing && role === 'atk' ? (u.type === 'marines' || t.symbol === 'mar' ? 0.85 : 0.5) : 1;
-      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1) * m * land;
+      const dr = t.drone && opt.drone !== undefined ? opt.drone : 1;
+      if (role === 'atk') v += t.atk * u.str * (0.3 + 0.7 * u.org) * T.atk * (t.armor ? T.armor : 1) * m * land * dr;
       else v += t.def * u.str * (0.4 + 0.6 * u.org) * m;
     }
     const c = G.countries[a.owner];
     const skill = a.commander.skill + (TX ? Tech.modFast(a.owner, 'commander', '', -1) : 0);
-    v *= c.tech * (1 + 0.05 * skill) * (0.5 + 0.5 * a.supply);
-    if (role === 'def') v *= 1 + a.entrench + fortBonus(a.owner, a.prov);
+    // technology: in 2026 the level counts twice over (power ~ level squared), in other eras once
+    const lvl = TX ? Tech.level(a.owner) : c.tech, wt = typeof Eras !== 'undefined' ? Eras.techWeight() : 1;
+    v *= (wt === 1 ? lvl : Math.pow(lvl, wt)) * (1 + 0.05 * skill) * (0.5 + 0.5 * a.supply);
+    if (role === 'def') v *= 1 + (a.entrench + fortBonus(a.owner, a.prov)) * (1 - (opt.breach || 0));
     return v;
   }
   function fortBonus(tag, prov) {
@@ -448,18 +495,27 @@ const Sim = (function () {
     const fronts = new Set(atts.map(a => b.from[a.id])).size;
     const flank = 1 + 0.1 * (fronts - 1);
     const recon = atts.some(a => a.units.some(u => u.type === 'recon')) ? 1.08 : 1;
+    const kitA = battleKit(atts, b.atkTag), kitD = battleKit(defs, b.defTag);
+    // drones get through what the other side's jammers and air defence miss
+    const droneA = Math.max(0.25, 1 - kitD.counter), droneD = Math.max(0.25, 1 - kitA.counter);
     let A = 0, B = 0, D = 0, F = 0;
-    for (const a of atts) { A += armyPower(a, 'atk', prov.terrain); B += armyPower(a, 'def', prov.terrain) * 0.6; }
-    A *= flank * recon;
-    for (const d of defs) { D += armyPower(d, 'def', prov.terrain); F += armyPower(d, 'atk', 'plains') * 0.9; }
-    // aircraft overhead and warships off the coast
+    for (const a of atts) { A += armyPower(a, 'atk', prov.terrain, { drone: droneA }); B += armyPower(a, 'def', prov.terrain) * 0.6; }
+    // trench eras: only so many divisions fit on the stretch of front being attacked
+    const fw = frontageMul(atts, defs);
+    A *= flank * recon * fw; B *= fw;
+    for (const d of defs) { D += armyPower(d, 'def', prov.terrain, { breach: kitA.breach }); F += armyPower(d, 'atk', 'plains', { drone: droneD }) * 0.9; }
+    // aircraft overhead and warships off the coast; air defence on the ground blunts the enemy's planes
     const airA = typeof Air !== 'undefined' ? Air.battleBonus(b.atkTag, b.prov) : { mul: 1 }, airD = typeof Air !== 'undefined' ? Air.battleBonus(b.defTag, b.prov) : { mul: 1 };
+    if (airA.mul > 1) airA.mul = 1 + (airA.mul - 1) * (1 - kitD.aa);
+    if (airD.mul > 1) airD.mul = 1 + (airD.mul - 1) * (1 - kitA.aa);
     const navA = typeof Navy !== 'undefined' && G.fleets ? Navy.shoreSupport(b.atkTag, b.prov) : 0, navD = typeof Navy !== 'undefined' && G.fleets ? Navy.shoreSupport(b.defTag, b.prov) : 0;
     A *= airA.mul * (1 + navA); F *= airD.mul * (1 + navD);
     const landing = atts.some(a => a.landing), fort = fortBonus(b.defTag, b.prov);
     const ra = Math.max(0.1, Math.min(6, A / Math.max(D, 1)));
     const rd = Math.max(0.1, Math.min(6, F / Math.max(B, 1)));
-    const hitD = 0.014 * ra, hitA = 0.014 * rd;
+    // trench eras fight slower (Eras.trench().pace), so reserves can reach a threatened sector before it breaks
+    const pace = 0.014 * ((typeof Eras !== 'undefined' && Eras.trench().pace) || 1);
+    const hitD = pace * ra, hitA = pace * rd;
     const apply = (list, hit, key) => {
       for (const a of list) for (const u of a.units) {
         const t = UNIT_TYPES[u.type];
@@ -483,8 +539,11 @@ const Sim = (function () {
       ['Defender supply', -(avg(defs.map(d => d.supply)) * 0.5 - 0.5)],
       ['Attacker commanders', 0.05 * avg(atts.map(a => a.commander.skill))],
       ['Defender commanders', -0.05 * avg(defs.map(d => d.commander.skill))],
-      ['Technology', G.countries[b.atkTag].tech - G.countries[b.defTag].tech]
+      ['Technology', typeof Tech !== 'undefined' ? Tech.level(b.atkTag) - Tech.level(b.defTag) : G.countries[b.atkTag].tech - G.countries[b.defTag].tech]
     ];
+    if (kitA.breach > 0.01) b.mods.push(['Tanks, gas and assault troops', kitA.breach * avg(defs.map(d => d.entrench))]);
+    if (kitA.drones || kitD.drones) b.mods.push(['Drones', (kitA.drones ? droneA * 0.1 : 0) - (kitD.drones ? droneD * 0.1 : 0)]);
+    if (kitA.aa > 0.01 || kitD.aa > 0.01) b.mods.push(['Air defence', kitD.aa * 0.1 - kitA.aa * 0.1]);
     if (fronts > 1) b.mods.push(['Attack from ' + fronts + ' sides', flank - 1]);
     if (recon > 1) b.mods.push(['Reconnaissance', recon - 1]);
     if (fort) b.mods.push(['Fortifications', -fort]);
@@ -520,7 +579,73 @@ const Sim = (function () {
       endBattle(b);
     }
   }
+  // trench eras: one army rarely beats a dug-in enemy, so idle armies next to the same enemy province attack it together
+  function massedAttacks(tag, list, isEnemy, odds) {
+    const ready = list.filter(a => !a.battle && !a.retreating && !a.path.length && a.units.length && !a.sea && G.owner[a.prov] === tag);
+    if (ready.length < 2) return;
+    const byTarget = new Map();
+    for (const a of ready) {
+      const st = armyStats(a);
+      if (st.org < 0.7 || st.str < 0.6) continue;
+      for (const n of MAP.provs[a.prov].nb) if (isEnemy(G.owner[n])) { if (!byTarget.has(n)) byTarget.set(n, []); byTarget.get(n).push(a); }
+    }
+    const used = new Set();
+    const cands = [];
+    for (const [n, group] of byTarget) {
+      const hs = hostilesAt(tag, n);
+      if (!hs.length || group.length < 2) continue;
+      const T = MAP.provs[n].terrain, br = battleKit(group, tag).breach;
+      const atk = group.reduce((s, a) => s + armyPower(a, 'atk', T), 0) * frontageMul(group, hs) * (1 + 0.1 * (new Set(group.map(a => a.prov)).size - 1));
+      const def = hs.reduce((s, h) => s + armyPower(h, 'def', T, { breach: br }), 0) + reservesAt(tag, n);
+      const air = typeof Air !== 'undefined' ? Air.battleBonus(tag, n).mul / Math.max(0.5, Air.battleBonus(G.owner[n], n).mul) : 1;
+      const r = atk * air / (def + 1);
+      if (r > odds) cands.push({ n, group, r: r * (MAP.provs[n].city ? 1.3 : 1) });
+    }
+    cands.sort((x, y) => y.r - x.r);
+    for (const c of cands) {
+      if (c.group.some(a => used.has(a))) continue;
+      // keep one army back in each province so the line does not open behind the attack
+      for (const a of c.group) {
+        const others = G.armies.filter(o => o !== a && o.owner === tag && o.prov === a.prov && !o.path.length);
+        if (!others.length && c.group.length > 2 && a === c.group[c.group.length - 1]) continue;
+        a.path = [c.n]; a.progress = 0; used.add(a);
+      }
+    }
+  }
+  // trench eras: enemy armies next to province n that would march in to help hold it
+  function reservesAt(tag, n) {
+    let v = 0;
+    for (const m of MAP.provs[n].nb) for (const h of hostilesAt(tag, m)) if (!h.battle) v += armyPower(h, 'def', MAP.provs[n].terrain) * 0.25;
+    return v;
+  }
+  // attack power of the enemy armies around province n (not counting the one being attacked from)
+  function exposedAt(tag, n, from) {
+    let v = 0;
+    for (const m of MAP.provs[n].nb) if (m !== from) for (const h of hostilesAt(tag, m)) v += armyPower(h, 'atk', MAP.provs[n].terrain);
+    return v;
+  }
+  // trench eras (Eras.trench().frontage): an attack can use at most frontage x the defending divisions (+3);
+  // a bigger stack adds nothing to the fight, it only waits behind the line
+  function frontageMul(atts, defs) {
+    const fr = typeof Eras !== 'undefined' ? Eras.trench().frontage : 0;
+    if (!fr) return 1;
+    const na = atts.reduce((s, a) => s + a.units.length, 0), nd = defs.reduce((s, a) => s + a.units.length, 0);
+    return na ? Math.min(1, (fr * Math.max(1, nd) + 3) / na) : 1;
+  }
   function avg(arr) { return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0; }
+  // what a side brings beyond raw strength: trench-breaking (unit breach), air defence (unit aa),
+  // drones, and counter-drone jamming (unit aa plus the counterDrone technology)
+  function battleKit(list, tag) {
+    let n = 0, br = 0, aa = 0, dr = 0;
+    for (const a of list) for (const u of a.units) {
+      const t = UNIT_TYPES[u.type]; n++;
+      br += (t.breach || 0) * u.str; aa += (t.aa || 0) * u.str; if (t.drone) dr++;
+    }
+    n = Math.max(1, n);
+    const jam = typeof Tech !== 'undefined' ? Tech.modFast(tag, 'counterDrone', '', -1) : 0;
+    const air = Math.min(0.8, (typeof Eras !== 'undefined' && Eras.trench().aaK || 3) * aa / n);
+    return { breach: Math.min(0.8, 2.5 * br / n), aa: air, drones: dr, counter: Math.min(0.75, air * 0.6 + jam) };
+  }
 
   // an army that loses a battle does not run: what is left of it is killed or taken prisoner
   function destroyBeaten(a, prov) {
@@ -580,6 +705,9 @@ const Sim = (function () {
   function checkCapitulations() {
     for (const c of Object.values(G.countries)) {
       if (!c.alive || !isAtWar(c.tag)) continue;
+      // a government in exile (Belgium, Serbia and Romania in 1917) fights on while its alliance does
+      const d = COUNTRY_BY_TAG[c.tag];
+      if (d && d.exile && MAP.provs.some(p => G.owner[p.id] === c.tag) && coalition(c.tag).some(t => t !== c.tag && G.countries[t].alive && isAtWar(t) && !COUNTRY_BY_TAG[t]?.exile)) continue;
       const home = MAP.provs.filter(p => p.core === c.tag && p.home);
       if (!home.length) continue;
       const held = home.filter(p => G.owner[p.id] === c.tag).length;
@@ -814,8 +942,15 @@ const Sim = (function () {
     const fmap = new Map(front.map(f => [f.id, f]));
     for (const a of G.armies) if (a.owner === tag || allied(a.owner, tag)) {
       const f = fmap.get(a.path.length ? a.path[a.path.length - 1] : a.prov);
-      if (f) f.def += armyPower(a, 'def', MAP.provs[f.id].terrain) / 20;
+      if (f) { f.def += armyPower(a, 'def', MAP.provs[f.id].terrain) / 20; f.divs = (f.divs || 0) + a.units.length; }
     }
+    const tr = typeof Eras !== 'undefined' ? Eras.trench() : {};
+    // trench eras want better odds before going over the top; a nation on the defensive (posture 'defend')
+    // waits for far better odds still, and one grinding forward (posture 'grind') takes worse ones
+    const pst = typeof COUNTRY_BY_TAG !== 'undefined' && COUNTRY_BY_TAG[tag] ? COUNTRY_BY_TAG[tag].posture : '';
+    const odds = (tr.odds || 1.3) * (pst === 'defend' ? 1.6 : pst === 'grind' ? 0.85 : 1);
+    const trenchy = !!tr.frontage;
+    if (trenchy && allowAttack) massedAttacks(tag, list, isEnemy, odds);
     for (const a of list) {
       if (a.battle || a.retreating || a.path.length || !a.units.length || a.sea) continue;
       const st = armyStats(a);
@@ -825,28 +960,38 @@ const Sim = (function () {
         for (const n of MAP.provs[a.prov].nb) {
           if (!isEnemy(G.owner[n])) continue;
           const hs = hostilesAt(tag, n);
-          const defP = hs.reduce((s, h) => s + armyPower(h, 'def', MAP.provs[n].terrain), 0);
-          const atkP = armyPower(a, 'atk', MAP.provs[n].terrain);
+          // tanks, gas, drones and rockets cancel part of the enemy's trenches (unit breach), so count them in the odds
+          const br = hs.length ? battleKit([a], tag).breach : 0;
+          const defP = hs.reduce((s, h) => s + armyPower(h, 'def', MAP.provs[n].terrain, { breach: br }), 0) + (trenchy && hs.length ? reservesAt(tag, n) : 0);
+          const airR = trenchy && hs.length && typeof Air !== 'undefined' ? Air.battleBonus(tag, n).mul / Math.max(0.5, Air.battleBonus(G.owner[n], n).mul) : 1;
+          const atkP = armyPower(a, 'atk', MAP.provs[n].terrain) * (hs.length ? frontageMul([a], hs) : 1) * airR;
           const ratio = atkP / (defP + 1);
-          let score = defP === 0 ? 5 + (MAP.provs[n].city ? 2 : 0) : ratio > 1.3 ? ratio : 0;
+          let score = defP === 0 ? 5 + (MAP.provs[n].city ? 2 : 0) : ratio > odds ? ratio : 0;
+          // trench eras: no walking into an empty gap that strong enemy armies next to it would close on you
+          if (score && trenchy && exposedAt(tag, n, a.prov) > atkP * 0.8) score = 0;
           if (MAP.provs[n].capital) score *= 1.5;
           if (score > bestScore) { bestScore = score; best = n; }
         }
         if (best !== null) { a.path = [best]; a.progress = 0; continue; }
       }
       if (here && here.def - armyPower(a, 'def', MAP.provs[a.prov].terrain) / 20 < here.threat * 0.8) continue; // needed here
+      if (here && trenchy && a.entrench > tr.max * 0.5) continue;   // dug in on the front line: stay in the trenches
+      if (trenchy && MAP.provs[a.prov].capital && G.owner[a.prov] === tag && !G.armies.some(o => o !== a && o.owner === tag && o.prov === a.prov)) continue;   // the capital keeps its garrison
       // move to the most under-defended frontier province nearby
       let target = null, bestNeed = -Infinity;
       const pa = MAP.provs[a.prov];
       for (const f of front) {
+        // trench eras: a sector already holding a dozen divisions gets no more (a beaten stack dies whole)
+        if (trenchy && (f.divs || 0) >= 12 && f.id !== a.prov) continue;
         const pf = MAP.provs[f.id];
         const d = GEO.haversineKm(pa.lon, pa.lat, pf.lon, pf.lat);
         const need = (f.threat - f.def) - d / 400;
         if (need > bestNeed) { bestNeed = need; target = f; }
       }
       if (target && target.id !== a.prov) {
-        const path = findPath(tag, a.prov, target.id, 'move');
-        if (path && path.length) { a.path = path; a.progress = 0; target.def += armyPower(a, 'def', MAP.provs[target.id].terrain) / 20; }
+        // reinforcements travel through friendly land only, never blundering into enemy armies on the way
+        const path = findPath(tag, a.prov, target.id, 'redeploy') || findPath(tag, a.prov, target.id, 'move');
+        if (path && path.length) { a.path = path; a.progress = 0; target.def += armyPower(a, 'def', MAP.provs[target.id].terrain) / 20; target.divs = (target.divs || 0) + a.units.length; }
       }
     }
   }
@@ -890,7 +1035,8 @@ const Sim = (function () {
         continue;
       }
       if (!a.path.length) {
-        a.entrench = Math.min(0.25, a.entrench + 0.25 / (24 * 10));
+        const tr = typeof Eras !== 'undefined' ? Eras.trench() : { max: 0.25, days: 10 };
+        a.entrench = Math.min(tr.max, a.entrench + tr.max / (24 * tr.days));
         recoverOrg(a, 1);
         if (a.retreating) a.retreating = false;
         continue;

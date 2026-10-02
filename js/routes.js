@@ -1,5 +1,5 @@
 // Roads and railways between a nation's buildings, and across the border to trade partners.
-// They build themselves: roads within 300 km, railways within 450 km in 1914 and 1936 between heavy works.
+// They build themselves: roads within 300 km, railways within 450 km in 1917, 1936 and 2026 between heavy works.
 // At most 3 home links per building site, and no link where the network already offers a path under
 // 1.5 times the straight line. Routes give output, army speed, supply and tolls, and cost upkeep.
 // Everything lives in G.routes as plain data, so saves and the online game carry it.
@@ -10,7 +10,7 @@ const Routes = (function () {
   const DAYS = { road: 20, rail: 45 }, UPKEEP = { road: 0.5, rail: 1.5 }, TOLL = { road: 0.3, rail: 1 };
   const OUT = { road: 1.1, rail: 1.2 }, SPEED = { road: 1.3, rail: 2 }, TRADE = { road: 0.1, rail: 0.2 };
   const G = () => Sim.G, MAP = () => Sim.MAP;
-  const railEra = () => { const e = typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936'; return e === 'ww2-1936' || e === 'greatwar-1914'; };
+  const railEra = () => { const e = typeof Economy !== 'undefined' ? Economy.eraId() : 'ww2-1936'; return e === 'ww2-1936' || e === 'greatwar-1917' || e === 'modern-2026'; };
   const list = () => { const g = G(); if (!g.routes) g.routes = []; return g.routes; };
   const kindOf = r => r.rail ? 'rail' : 'road';
   function km(a, b) { const P = MAP().provs, p = P[a], q = P[b]; return GEO.haversineKm(p.lon, p.lat, q.lon, q.lat); }

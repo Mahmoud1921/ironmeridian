@@ -11,6 +11,10 @@ const Figures = (function () {
   // the rest are for the historical eras: foot with spear and shield, musketeers, riders, elephants,
   // siege engines, horse-drawn cannon, archers and swordsmen
   const KINDS = ['soldiers', 'truck', 'halftrack', 'tank', 'gun', 'plane', 'car', 'warband', 'musket', 'rider', 'elephant', 'engine', 'cannon', 'archer', 'swords', 'riderbow'];
+  // 1917 and 2026 units: models made in Blender, shipped in js/models.js
+  const MODELED = typeof Models !== 'undefined' ? Models.kinds : [];
+  KINDS.push(...MODELED);
+  const FOOT = ['soldiers', 'warband', 'musket', 'archer', 'swords', 'modern', 'militia', 'gastroops', 'drone'];
 
   function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
   function mix(a, b, t) { return [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t)); }
@@ -126,6 +130,7 @@ const Figures = (function () {
     else box(parts, 0, x + 0.4, y + 1.0, z + 1.4, 0.25, 0.25, 2.2, P.metal, fighting ? [-2.4, -1.2, 0.3, -0.8][f] : 0.3, x + 0.4, z + 1.4); // sword or sabre, swung when fighting
   }
   function build(kind, P, f, fighting) {
+    if (MODELED.includes(kind)) return Models.parts(kind, P, f, fighting);
     const parts = [];
     const bob = (f % 2) * 0.25;
     const spin = f / FRAMES * Math.PI / 4;
@@ -251,7 +256,7 @@ const Figures = (function () {
     }
   }
 
-  const scaleOf = kind => kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05;
+  const scaleOf = kind => MODELED.includes(kind) ? 1 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? 1.55 : kind === 'rider' || kind === 'riderbow' || kind === 'elephant' ? 1.3 : 1.05;
   // a single model drawn live at any angle, for the turning previews in the Train list
   const previewParts = new Map();
   function preview(cv, tag, unitType, yaw) {
@@ -278,7 +283,7 @@ const Figures = (function () {
   // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
   const atlases = new Map(); // key -> { cv, g, P, row }
   // one row per model, plus 'fighting' poses for soldiers and guns (vehicles fight in their moving pose)
-  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'];
+  const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'].concat(MODELED);
   // only the models the current era's units use get rows, so an atlas stays small (about 12 rows)
   let layout = null;
   function getLayout() {
@@ -332,13 +337,18 @@ const Figures = (function () {
 
   const KIND_OF = { infantry: 'soldiers', marines: 'soldiers', paratroopers: 'soldiers', motorized: 'truck', mechanized: 'halftrack', tanks: 'tank', artillery: 'gun', recon: 'car' };
   // draw one figure with its feet at (x, y) screen px; size is the on-screen cell size in px
-  const kindOf = unitType => KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
+  // an era unit's own look comes first (2026 infantry are modern soldiers, not 1936 riflemen)
+  const kindOf = unitType => {
+    const u = typeof UNIT_TYPES !== 'undefined' && UNIT_TYPES[unitType];
+    if (u && u.look && typeof Eras !== 'undefined') return Eras.figureKind(unitType, KINDS);
+    return KIND_OF[unitType] || (typeof Eras !== 'undefined' && Eras.figureKind(unitType, KINDS)) || 'soldiers';
+  };
   function draw(ctx, tag, unitType, moving, heading, fighting, x, y, size, t) {
     let kind = kindOf(unitType);
     if (unitType === 'paratroopers' && moving) kind = 'plane';
     const L = getLayout();
     const d = ((Math.round(heading / (Math.PI * 2 / DIRS)) % DIRS) + DIRS) % DIRS;
-    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : kind === 'soldiers' || kind === 'warband' || kind === 'musket' || kind === 'archer' || kind === 'swords' ? (fighting ? 170 : 150) : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
+    const f = moving || fighting ? Math.floor(t / (kind === 'plane' ? 60 : FOOT.includes(kind) ? (fighting ? 170 : 150) : kind === 'elephant' ? 200 : 110)) % FRAMES : 0;
     let row = fighting ? L.index.get(kind + '!') : undefined;
     if (row === undefined) row = L.index.get(kind);
     if (row === undefined) row = L.index.get('soldiers');

@@ -39,6 +39,7 @@ const Save = (function () {
     try { d = JSON.parse(text); } catch (e) { return { ok: false, why: 'This is not a saved game' }; }
     if (!d || d.game !== 'iron-meridian' || !d.G || !d.G.countries) return { ok: false, why: 'This is not an Iron Meridian save' };
     if (d.v > VERSION) return { ok: false, why: 'This save comes from a newer version of the game' };
+    if (d.era === 'greatwar-1914') return { ok: false, why: 'This save is from the old 1914 start, which is now the 1917 Great War' };
     if (typeof Eras !== 'undefined' && d.era !== 'ww2-1936' && !Eras.get(d.era)) return { ok: false, why: 'Unknown era in this save' };
     if (!d.G.countries[d.player]) return { ok: false, why: 'The save is damaged' };
     return { ok: true, data: d };

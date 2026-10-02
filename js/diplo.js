@@ -422,7 +422,7 @@ const Diplo = (function () {
     return res(true, '');
   }
 
-  function joinFaction(tag, f) {
+  function enterFaction(tag, f) {
     const g = G();
     f.members.push(tag); g.dip.facOf[tag] = f.id;
     addRel(tag, f.leader, 15);
@@ -624,6 +624,12 @@ const Diplo = (function () {
     if (Sim.factionOf(tag)) leaveFaction(tag);
     f.members.push(tag); g.dip.facOf[tag] = f.id;
   }
+  // a historical event's "join": the nation enters the faction and takes up its wars (America in 1917)
+  function joinFactionWars(tag, f) {
+    if (!f || f.members.includes(tag)) return;
+    if (Sim.factionOf(tag)) leaveFaction(tag);
+    enterFaction(tag, f);
+  }
   return { hooks, COST, AID_EQ, DECLARE_COST, warCost, declare, answerOffer, offerValid, rel, addRel, borders, can, act, answer, warScore, threatOf, power, demandTargets, dayTick, makePeace, describe, guaranteedBy,
-    joinFaction, leaveFaction, transferProvince, evacuate, warsBetweenSides };
+    joinFaction, joinFactionWars, leaveFaction, transferProvince, evacuate, warsBetweenSides };
 })();

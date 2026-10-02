@@ -13,7 +13,9 @@ const Air = (function () {
   const TYPE_KEYS = Object.keys(TYPES);
   const ERA_AIR = {
     'ww2-1936': { range: 1, names: { fighter: 'Fighters', cas: 'Close air support', bomber: 'Bombers', navbomber: 'Naval bombers' } },
-    'greatwar-1914': { range: 0.4, names: { fighter: 'Scout fighters', bomber: 'Bombers' } }
+    'greatwar-1917': { range: 0.45, names: { fighter: 'Scout fighters', cas: 'Ground-attack flights', bomber: 'Bombers' } },
+    // 2026: jets fly far, and close support is mostly done by armed drones
+    'modern-2026': { range: 2.4, names: { fighter: 'Multirole fighters', cas: 'Strike drones', bomber: 'Bombers and cruise missiles', navbomber: 'Maritime strike' } }
   };
   const MISSIONS = {
     idle:        { name: 'Stand down', desc: 'Stays at its base and rebuilds.' },
@@ -66,28 +68,48 @@ const Air = (function () {
   const START = {
     'ww2-1936': { GER: [4, 2, 3, 0], ENG: [4, 0, 3, 1], FRA: [4, 1, 2, 0], ITA: [3, 1, 3, 0], SOV: [6, 2, 4, 0], USA: [3, 1, 2, 2], JAP: [3, 0, 2, 3],
       POL: [2, 0, 1, 0], CZE: [2, 0, 1, 0], SPA: [1, 0, 1, 0], CHI: [1, 0, 0, 0], ROM: [1, 0, 0, 0], YUG: [1, 0, 0, 0], TUR: [1, 0, 0, 0], HOL: [1, 0, 0, 0], BEL: [1, 0, 0, 0], SWE: [1, 0, 0, 0], AST: [1, 0, 0, 0], CAN: [1, 0, 0, 0] },
-    'greatwar-1914': { GER: [2, 0, 1, 0], FRA: [2, 0, 1, 0], GBR: [2, 0, 1, 0], RUS: [1, 0, 1, 0], AUH: [1, 0, 0, 0], ITA: [1, 0, 0, 0], USA: [1, 0, 0, 0] }
+    'greatwar-1917': { GER: [6, 2, 3, 0], FRA: [7, 1, 3, 0], GBR: [7, 1, 3, 0], ITA: [3, 0, 2, 0], RUS: [2, 0, 1, 0], AUH: [2, 0, 1, 0], USA: [1, 0, 0, 0], OTT: [1, 0, 0, 0] },
+    'modern-2026': { USA: [16, 8, 6, 5], CHN: [12, 6, 3, 4], RUS: [8, 5, 3, 2], IND: [6, 3, 0, 1], GBR: [3, 2, 0, 1], FRA: [4, 2, 0, 1], DEU: [3, 1, 0, 0], ITA: [2, 1, 0, 1],
+      ESP: [2, 1, 0, 0], TUR: [4, 4, 0, 1], ISR: [4, 3, 0, 0], IRN: [2, 4, 0, 0], PAK: [4, 2, 0, 0], JPN: [4, 1, 0, 2], KOR: [4, 1, 0, 1], TWN: [3, 1, 0, 1], SAU: [3, 1, 0, 0],
+      ARE: [2, 2, 0, 0], EGY: [3, 1, 0, 0], UKR: [1, 4, 0, 0], POL: [2, 1, 0, 0], AUS: [2, 1, 0, 1], CAN: [1, 0, 0, 1], BRA: [1, 1, 0, 0], GRC: [2, 0, 0, 0], NLD: [1, 0, 0, 0],
+      NOR: [1, 0, 0, 1], SWE: [1, 0, 0, 0], FIN: [1, 0, 0, 0], DZA: [2, 0, 0, 0], PRK: [2, 1, 0, 0], VNM: [1, 0, 0, 0], IDN: [1, 0, 0, 0], THA: [1, 0, 0, 0], MAR: [1, 0, 0, 0], QAT: [1, 0, 0, 0] }
   };
   function setup() {
     const g = G();
     g.wings = []; g.nextWing = 1; g.bomb = {};
     if (!available()) return;
     const table = START[eraId()] || {};
+    const front = {};
     // airbases: the capital and the biggest home cities of nations with an air force
     for (const c of Object.values(g.countries)) {
       const d = COUNTRY_BY_TAG[c.tag];
       if (!c.alive || !d || d.unclaimed || c.capital < 0) continue;
       const big = !!table[c.tag];
-      if (!big && (eraId() !== 'ww2-1936' || (d.mil || 0) < 3)) continue;
+      if (!big && ((eraId() !== 'ww2-1936' && eraId() !== 'modern-2026') || (d.mil || 0) < 3)) continue;
       Economy.setInfra(c.capital, 'air', big ? 2 : 1);
       if (big) MAP().provs.filter(p => g.owner[p.id] === c.tag && p.city && p.home && !p.capital).sort((a, b) => b.pop - a.pop).slice(0, 2).forEach(p => Economy.setInfra(p.id, 'air', 1));
+      // a nation already at war starts with airfields behind its fronts, so its planes can reach the fighting
+      if (big && Sim.isAtWar(c.tag)) {
+        const foes = MAP().provs.filter(p => Sim.atWar(c.tag, g.owner[p.id]));
+        // one field facing each enemy nation (the strongest first), the nearest own city not right on the line
+        const foeTags = [...new Set(foes.map(p => g.owner[p.id]))].sort((x, y) => (COUNTRY_BY_TAG[y]?.divs || 0) - (COUNTRY_BY_TAG[x]?.divs || 0)).slice(0, 4);
+        const cities = MAP().provs.filter(p => g.owner[p.id] === c.tag && p.city);
+        for (const ft of foeTags) {
+          const fp = foes.filter(p => g.owner[p.id] === ft);
+          let best = null, bd = Infinity;
+          for (const p of cities) { let d = Infinity; for (const q of fp) d = Math.min(d, GEO.haversineKm(p.lon, p.lat, q.lon, q.lat)); if (d > 40 && d < bd) { bd = d; best = p; } }
+          if (!best || bd > 400) continue;
+          Economy.setInfra(best.id, 'air', Math.max(1, Economy.infra(best.id, 'air')));
+          if (front[c.tag] === undefined) front[c.tag] = best.id;
+        }
+      }
     }
     for (const tag in table) {
       const c = g.countries[tag];
       if (!c || !c.alive) continue;
       const [f, cas, b, n] = table[tag];
       const list = [...Array(f).fill('fighter'), ...Array(cas).fill('cas'), ...Array(b).fill('bomber'), ...Array(n).fill('navbomber')].filter(t => types().includes(t));
-      for (const t of list) { const base = freeBase(tag, -1); if (base < 0) break; newWing(tag, t, base); }
+      for (const t of list) { const base = freeBase(tag, t === 'bomber' || front[tag] === undefined ? -1 : front[tag]); if (base < 0) break; newWing(tag, t, base); }
     }
   }
   function newWing(tag, type, base) {
@@ -180,6 +202,15 @@ const Air = (function () {
       if (friendly ? !mine : !Sim.atWar(tag, w.owner)) continue;
       if (km(point(w), pt) > AREA_KM) continue;
       v += TYPES[w.type].air * w.str * (0.4 + 0.6 * w.org) * (1 + mod(w.owner, 'air')) * radarBonus(w.owner, pt);
+    }
+    // modern eras: missile batteries on the ground deny the sky as well as fighters do
+    const aaK = typeof Eras !== 'undefined' && Eras.trench().aaK;
+    if (aaK) for (const a of G().armies) {
+      const mine = friendlyTo(tag, a.owner);
+      if (friendly ? !mine : !Sim.atWar(tag, a.owner)) continue;
+      const p = MAP().provs[a.prov];
+      if (!p || GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) > AREA_KM) continue;
+      for (const u of a.units) { const t = UNIT_TYPES[u.type]; if (t && t.aa) v += t.aa * u.str * aaK * 10; }
     }
     return v;
   }
@@ -327,18 +358,27 @@ const Air = (function () {
     }
     if (!mine.length) return;
     if (!war) { for (const w of mine) if (w.mission !== 'idle') setMission(w, 'idle'); return; }
-    // the hottest battle of ours, or the most threatened front province
-    let focus = -1, fs = -Infinity;
+    // the hottest battles of ours (up to three, so the wings spread over the fronts), or the most threatened front province
+    const short = !!(EA() && EA().range < 1);   // early aircraft: stay with the fronts they can reach
+    const hot = [];
     for (const b of g.battles) {
       const involved = b.atkTag === tag || b.defTag === tag || Sim.allied(b.atkTag, tag) || Sim.allied(b.defTag, tag);
       if (!involved) continue;
-      const s = b.attackers.length * 3 + (MAP().provs[b.prov].city ? 2 : 0);
-      if (s > fs) { fs = s; focus = b.prov; }
+      // an ally's battle only if one of our airfields can reach it (no flying off to a distant front)
+      const own = b.atkTag === tag || b.defTag === tag;
+      if (!own && short) { const pp = MAP().provs[b.prov]; if (!basesOf(tag).some(pid => km([MAP().provs[pid].lon, MAP().provs[pid].lat], [pp.lon, pp.lat]) <= range('fighter', tag))) continue; }
+      // our own battles come well before an ally's
+      hot.push([b.attackers.length * 3 + (MAP().provs[b.prov].city ? 2 : 0) + (b.atkTag === tag || b.defTag === tag ? 20 : 0), b.prov]);
     }
+    hot.sort((a, b) => b[0] - a[0]);
+    const focuses = [...new Set(hot.map(h => h[1]))].slice(0, 3);
+    let focus = focuses.length ? focuses[0] : -1, fs = -Infinity;
     if (focus < 0) {
       const en = Sim.enemiesOf(tag);
       for (const p of MAP().provs) if (g.owner[p.id] === tag && p.nb.some(n => en.has(g.owner[n]))) { const s = p.pop / 1e5 + (p.city ? 5 : 0); if (s > fs) { fs = s; focus = p.id; } }
+      if (focus >= 0) focuses.push(focus);
     }
+    let wi = 0;
     for (const w of mine) {
       if (w.str < 0.4) { if (w.mission !== 'idle') setMission(w, 'idle'); continue; }
       if (w.type === 'navbomber') {
@@ -359,13 +399,16 @@ const Air = (function () {
         }
         if (best >= 0 && Sim.rng() < 0.6) { setMission(w, 'bomb', best); continue; }
       }
-      if (focus >= 0) {
+      if (focuses.length) {
         const m = w.type === 'fighter' ? 'superiority' : 'cas';
-        const r = setMission(w, m, focus);
+        const k = wi++ % focuses.length;
+        let r = { ok: false };
+        for (let j = 0; j < focuses.length && !r.ok; j++) r = setMission(w, m, focuses[(k + j) % focuses.length]);
+        const focus = focuses[k];
         if (!r.ok) {
           // move closer to the fighting
-          const nb = freeBase(tag, focus);
-          if (nb >= 0 && nb !== w.base) { rebase(w, nb); setMission(w, m, focus); }
+          const nb = freeBase(tag, focus), fp = MAP().provs[focus];
+          if (nb >= 0 && nb !== w.base && (!short || km([MAP().provs[nb].lon, MAP().provs[nb].lat], [fp.lon, fp.lat]) <= range(w.type, tag))) { rebase(w, nb); setMission(w, m, focus); }
         }
       }
     }

@@ -2,7 +2,7 @@
 //
 // EVENT_DEFS (js/events-data.js) is a list of plain objects:
 //   id       unique string
-//   era      era id or list of era ids ('ww2-1936', 'greatwar-1914', 'napoleonic-1805', 'medieval-1200', 'rome-117', 'greece-431bc'); omit for every era
+//   era      era id or list of era ids ('ww2-1936', 'modern-2026', 'greatwar-1917', 'napoleonic-1805', 'medieval-1200', 'rome-117', 'greece-431bc'); omit for every era
 //   title    short headline;  text: one to three sentences. Placeholders: {name} {capital} {coin} {food} {metal} {fuel} {strategic} {luxuries} {arms}
 //   tag      who receives it: a tag or a list of tags (each alive one gets it once). Omit for an everyday event any nation can get.
 //   date     [y, m, d] earliest date (historical events); until: [y, m, d] after which it lapses
@@ -18,7 +18,7 @@
 //   relAbove, relBelow ({ tag, v }); flag, notFlag (a flag this nation set); player (bool); losing (bool: war score below -25 in some war).
 // Effects: pp, stab, ws (0..1 fractions), manpower, gold, arms, goods ({ food: 30, ... } stock days), rel ({ TAG: +20 }), relNeighbours,
 //   mod ({ name, days, fx: [{ mod, value, ... }] } a timed modifier using the tech vocabulary), provs ({ names: [...], to: TAG|'self' }),
-//   annex (tag), puppet (tag), war ({ on: TAG, name }), peace (tag), join (tag: join that nation's faction), leave (true), pact ({ with: TAG, years }),
+//   annex (tag), puppet (tag), war ({ on: TAG, name }), peace (tag), yieldTo (tag: a separate peace on its terms; it keeps what it holds), join (tag: join that nation's faction), leave (true), pact ({ with: TAG, years }),
 //   army ({ divs, where: 'capital' }), gov (government name), flag (id), event ({ id, days } follow-up for the same nation).
 'use strict';
 const Events = (function () {
@@ -126,6 +126,7 @@ const Events = (function () {
         case 'puppet': if (alive(v)) out.push(nm(v) + ' becomes a subject of ' + nm(tag)); break;
         case 'war': if (alive(v.on)) out.push('War with ' + nm(v.on)); break;
         case 'peace': if (alive(v)) out.push('Peace with ' + nm(v)); break;
+        case 'yieldTo': if (alive(v)) out.push('Peace with ' + nm(v) + ', who keeps the land it holds'); break;
         case 'join': if (alive(v)) { const f = Sim.factionOf(v); out.push(f ? 'Join the ' + f.name : 'Closer ties with ' + nm(v)); } break;
         case 'leave': out.push('Leave your alliance'); break;
         case 'pact': if (alive(v.with)) out.push('Non-aggression pact with ' + nm(v.with)); break;
@@ -163,12 +164,14 @@ const Events = (function () {
         }
         case 'annex': if (alive(v) && v !== tag) annex(v, tag); break;
         case 'puppet': if (alive(v) && v !== tag && !Sim.atWar(v, tag)) { const f = Sim.factionOf(v); if (f) Diplo.leaveFaction(v); g.countries[v].overlord = tag; } break;
-        case 'war': if (alive(v.on)) { const w = Sim.declareWar(tag, v.on, false, { breakPact: true }); if (w && v.name) w.name = v.name; } break;
+        case 'war': if (alive(v.on) && !Sim.atWar(tag, v.on)) { const w = Sim.declareWar(tag, v.on, false, { breakPact: true }); if (w && v.name) w.name = v.name; } break;
         case 'peace': if (alive(v) && Sim.atWar(tag, v)) Diplo.makePeace(tag, v, false); break;
-        case 'join': if (alive(v) && !Sim.atWar(tag, v)) { const f = Sim.factionOf(v); if (f) Diplo.joinFaction(tag, f); else Diplo.addRel(tag, v, 30); } break;
+        // a separate peace on the other side's terms: it keeps what it occupies (Brest-Litovsk, the 1918 armistices)
+        case 'yieldTo': if (alive(v) && Sim.atWar(tag, v)) Diplo.makePeace(v, tag, true); break;
+        case 'join': if (alive(v) && !Sim.atWar(tag, v)) { const f = Sim.factionOf(v); if (f) Diplo.joinFactionWars(tag, f); else Diplo.addRel(tag, v, 30); } break;
         case 'leave': if (Sim.factionOf(tag)) Diplo.leaveFaction(tag); break;
         case 'pact': if (alive(v.with) && !Sim.atWar(tag, v.with)) g.dip.pacts[Sim.pairKey(Sim.root(tag), Sim.root(v.with))] = g.hour + (v.years || 2) * 365 * DAY; break;
-        case 'army': spawnArmy(tag, v.divs || 2); break;
+        case 'army': spawnArmy(tag, v.divs || 2, v.at); break;
         case 'gov': if (GOV_BASE[v]) c.gov = v; break;
         case 'flag': (c.flags || (c.flags = {}))[v] = g.hour; break;
         case 'event': g.ev.queue.push({ id: v.id, tag, at: g.hour + (v.days || 1) * DAY }); break;
@@ -193,9 +196,19 @@ const Events = (function () {
     Sim.dropNation(tag);
     g.ownVer++; Diplo.evacuate();
   }
-  function spawnArmy(tag, divs) {
+  // at: [lon, lat] lands the army on the nearest own or allied province to that point (an expeditionary force)
+  function spawnArmy(tag, divs, at) {
     const g = G(), c = g.countries[tag];
     let prov = c.capital >= 0 && g.owner[c.capital] === tag ? c.capital : MAP().provs.findIndex(p => g.owner[p.id] === tag);
+    if (at) {
+      let bd = 1500;
+      for (const p of MAP().provs) {
+        const o = g.owner[p.id];
+        if (o !== tag && !Sim.allied(tag, o)) continue;
+        const d = Eras.haversineKm(at[0], at[1], p.lon, p.lat);
+        if (d < bd) { bd = d; prov = p.id; }
+      }
+    }
     if (prov < 0) return;
     const types = (typeof Eras !== 'undefined' ? Eras.unitsFor(tag) : Object.keys(UNIT_TYPES)).filter(t => !UNIT_TYPES[t].locked && !UNIT_TYPES[t].navy);
     const type = types.find(t => UNIT_TYPES[t].symbol === 'inf') || types[0];
