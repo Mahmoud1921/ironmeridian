@@ -12209,6 +12209,7 @@ const Render = (function () {
     else for (const i of changed) fillCache[i] = provColor(MAP.provs[i], own[i]);
     lmCountryBorders = MAP.lms.map(() => new Path2D());
     MAP.edges.forEach((e, i) => { if (own[e.a] !== own[e.b]) edgeTo(lmCountryBorders[MAP.provs[e.a].lm], i); });
+    if (look()) { nationTiles = makeTiles(); MAP.edges.forEach((e, i) => { if (own[e.a] !== own[e.b]) tileAdd(nationTiles, MAP.provs[e.a].lm, edgePts(i)); }); }
     computeLabels(own);
     state.dirtyOwners = false;
     if (!layer) return;
@@ -12349,7 +12350,27 @@ const Render = (function () {
   const LOOKS = {};
   const look = () => state.look === 'cartoon';
   let edgeWob = [];
-  let lmCoast = [];          // per landmass coast (smoothed), so shore strokes skip landmasses out of view          // per MAP.edges index: wavy polyline [x0,y0,x1,y1,...] (cartoon) or null
+  // Long lines (coasts, borders) are cut into small tiles with their own bounds, so a repaint of a small
+  // box strokes only the pieces inside it instead of a whole continent's worth of line.
+  const TILE = 12;
+  let coastTiles = [], provTiles = [], provTilesFlat = [], nationTiles = [];
+  const makeTiles = () => MAP.lms.map(() => new Map());
+  function tileAdd(tiles, li, pts) {
+    const k = Math.floor(pts[0] / TILE) * 1000 + Math.floor(pts[1] / TILE);
+    let t = tiles[li].get(k);
+    if (!t) tiles[li].set(k, t = { path: new Path2D(), b: [Infinity, Infinity, -Infinity, -Infinity] });
+    t.path.moveTo(pts[0], pts[1]);
+    for (let i = 0; i < pts.length; i += 2) {
+      const x = pts[i], y = pts[i + 1];
+      if (i) t.path.lineTo(x, y);
+      if (x < t.b[0]) t.b[0] = x; if (y < t.b[1]) t.b[1] = y; if (x > t.b[2]) t.b[2] = x; if (y > t.b[3]) t.b[3] = y;
+    }
+  }
+  function strokeTiles(g, tiles, li, vx0, vy0, vx1, vy1, m) {
+
+    for (const t of tiles[li].values()) { const b = t.b; if (b[2] < vx0 - m || b[0] > vx1 + m || b[3] < vy0 - m || b[1] > vy1 + m) continue; g.stroke(t.path); }
+  }
+  const edgePts = i => { const e = MAP.edges[i]; return (look() && edgeWob[i]) || [e.x1, e.y1, e.x2, e.y2]; };
   // centripetal Catmull-Rom through every coast point: rounder shores that still pass through the real coastline
   function smoothRing(pts) {
     const n = pts.length / 2, out = [];
@@ -12391,7 +12412,8 @@ const Render = (function () {
     const coastS = MAP.lms.map(l => smoothRing(l.pts)), lakeS = MAP.lakes.map(l => smoothRing(l.pts));
     const L = { coastPath: new Path2D(), lakePath: new Path2D(), lmClips: [], lmBorders: [], provPaths: [] };
     coastS.forEach(pts => addPoly(L.coastPath, pts));
-    lmCoast = coastS.map(pts => { const p = new Path2D(); addPoly(p, pts); return p; });
+    coastTiles = makeTiles();
+    coastS.forEach((pts, li) => { const n = pts.length; for (let i = 0; i < n; i += 80) { const run = pts.slice(i, Math.min(n, i + 82)); if (i + 82 > n) run.push(pts[0], pts[1]); if (run.length >= 4) tileAdd(coastTiles, li, run); } });
     lakeS.forEach(pts => { addPoly(L.coastPath, pts); addPoly(L.lakePath, pts); });
     MAP.lms.forEach((l, i) => {
       const c = new Path2D(); addPoly(c, coastS[i]);
@@ -12422,6 +12444,8 @@ const Render = (function () {
       return path;
     });
     edgeWob = MAP.edges.map(e => wob.get(key(e.a, e.b)) || null);
+    provTiles = makeTiles(); provTilesFlat = makeTiles();
+    MAP.edges.forEach((e, i) => { const li = MAP.provs[e.a].lm; tileAdd(provTiles, li, edgeWob[i] || [e.x1, e.y1, e.x2, e.y2]); tileAdd(provTilesFlat, li, [e.x1, e.y1, e.x2, e.y2]); });
     MAP.edges.forEach((e, i) => { const b = L.lmBorders[MAP.provs[e.a].lm], s = edgeWob[i]; if (!s) { b.moveTo(e.x1, e.y1); b.lineTo(e.x2, e.y2); return; } b.moveTo(s[0], s[1]); for (let j = 2; j < s.length; j += 2) b.lineTo(s[j], s[j + 1]); });
     return L;
   }
@@ -12537,10 +12561,21 @@ const Render = (function () {
     g.fillStyle = '#3a9acb'; g.fillRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
     g.lineJoin = 'round'; g.lineCap = 'round';
     // shallow water rings hugging every shore
-    const vis = [];
+    const vis = [], m = 30 / z;
     MAP.lms.forEach((l, li) => { const b = l.bbox, m = 3; if (!(b[2] < vx0 - m || b[0] > vx1 + m || b[3] < vy0 - m || b[1] > vy1 + m)) vis.push(li); });
-    for (const [w, col] of [[16, 'rgba(140,215,238,0.34)'], [7, 'rgba(196,240,248,0.55)']]) {
-      g.strokeStyle = col; g.lineWidth = w / z; for (const li of vis) g.stroke(lmCoast[li]);
+    // close up, the cached view gets the full three-ring shallows and a white surf line; the world raster keeps two rings
+    const rings = z === LS ? [[16, 'rgba(140,215,238,0.34)'], [7, 'rgba(196,240,248,0.55)']]
+      : [[26, 'rgba(120,205,232,0.22)'], [15, 'rgba(150,222,240,0.32)'], [7, 'rgba(196,240,248,0.55)']];
+    for (const [w, col] of rings) {
+      g.strokeStyle = col; g.lineWidth = w / z; for (const li of vis) strokeTiles(g, coastTiles, li, vx0, vy0, vx1, vy1, m);
+    }
+    if (z !== LS) {
+      // drawn under the land, so only the seaward half shows: scalloped surf close up, a plain foam edge further out
+      // (dashing a long coast is costly, so the scallops wait until few coasts are in view)
+      if (z >= 14) g.setLineDash([4 / z, 11 / z]);
+      g.strokeStyle = z >= 14 ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.6)'; g.lineWidth = (z >= 14 ? 12 : 6) / z;
+      for (const li of vis) strokeTiles(g, coastTiles, li, vx0, vy0, vx1, vy1, m);
+      g.setLineDash([]);
     }
     MAP.lms.forEach((l, li) => {
       const b = l.bbox;
@@ -12559,19 +12594,19 @@ const Render = (function () {
         }
       }
       // sandy beach line and a soft rim just inside the shore
-      g.strokeStyle = 'rgba(255,244,205,0.55)'; g.lineWidth = 5 / z; g.stroke(lmClips[li]);
+      g.strokeStyle = 'rgba(255,244,205,0.55)'; g.lineWidth = 5 / z; strokeTiles(g, coastTiles, li, vx0, vy0, vx1, vy1, 30 / z);
       if (z > 4) {
         g.lineWidth = Math.min(0.1, 1.1 / z); g.strokeStyle = 'rgba(40,40,30,' + Math.min(0.22, (z - 4) * 0.04) + ')';
         // the waves in province lines vanish at world scale, so the cheaper straight lines do there
-        g.stroke(z === LS ? LOOKS.classic.lmBorders[li] : lmBorders[li]);
+        strokeTiles(g, z === LS ? provTilesFlat : provTiles, li, vx0, vy0, vx1, vy1, m);
       }
       paintProps(g, z, li, vx0 - 3, vy0 - 3, vx1 + 3, vy1 + 3);
       // nation borders: a light glow both sides, then a chunky ink line
-      g.lineWidth = 7 / z; g.strokeStyle = 'rgba(255,255,255,0.28)'; g.stroke(lmCountryBorders[li]);
-      g.lineWidth = Math.max(2.1 / z, Math.min(0.16, 2.6 / z)); g.strokeStyle = 'rgba(38,30,44,0.85)'; g.stroke(lmCountryBorders[li]);
+      g.lineWidth = 7 / z; g.strokeStyle = 'rgba(255,255,255,0.28)'; strokeTiles(g, nationTiles, li, vx0, vy0, vx1, vy1, m);
+      g.lineWidth = Math.max(2.1 / z, Math.min(0.16, 2.6 / z)); g.strokeStyle = 'rgba(38,30,44,0.85)'; strokeTiles(g, nationTiles, li, vx0, vy0, vx1, vy1, m);
       g.restore();
     });
-    g.strokeStyle = '#1c3f5c'; g.lineWidth = 2 / z; for (const li of vis) g.stroke(lmCoast[li]);
+    g.strokeStyle = '#1c3f5c'; g.lineWidth = 2 / z; for (const li of vis) strokeTiles(g, coastTiles, li, vx0, vy0, vx1, vy1, m);
     g.fillStyle = '#3a9acb'; g.fill(lakePath);
     g.strokeStyle = 'rgba(196,240,248,0.7)'; g.lineWidth = 3 / z; g.stroke(lakePath);
     g.strokeStyle = '#1c3f5c'; g.lineWidth = 1.6 / z; g.stroke(lakePath);
