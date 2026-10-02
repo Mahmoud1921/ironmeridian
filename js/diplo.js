@@ -237,8 +237,8 @@ const Diplo = (function () {
     let best = null, bv = 0;
     const mine = sidePower(Sim.coalition(tag));
     for (const c of Object.values(g.countries)) {
-      if (!c.alive || c.tag === tag || Sim.allied(c.tag, tag) || Sim.hasPact(c.tag, tag)) continue;
-      if (rel(tag, c.tag) > -10 || !borders(tag, c.tag)) continue;
+      if (!c.alive || c.tag === tag || !borders(tag, c.tag)) continue;   // the cheap test first: most nations are not neighbours
+      if (Sim.allied(c.tag, tag) || Sim.hasPact(c.tag, tag) || rel(tag, c.tag) > -10) continue;
       const v = power(c.tag) / Math.max(1, mine);
       if (v > 1.3 && v > bv) { bv = v; best = c.tag; }
     }

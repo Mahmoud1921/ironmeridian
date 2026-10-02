@@ -163,7 +163,7 @@ const Events = (function () {
           break;
         }
         case 'annex': if (alive(v) && v !== tag) annex(v, tag); break;
-        case 'puppet': if (alive(v) && v !== tag && !Sim.atWar(v, tag)) { const f = Sim.factionOf(v); if (f) Diplo.leaveFaction(v); g.countries[v].overlord = tag; } break;
+        case 'puppet': if (alive(v) && v !== tag && !Sim.atWar(v, tag)) { const f = Sim.factionOf(v); if (f) Diplo.leaveFaction(v); g.countries[v].overlord = tag; Sim.relDirty(); } break;
         case 'war': if (alive(v.on) && !Sim.atWar(tag, v.on)) { const w = Sim.declareWar(tag, v.on, false, { breakPact: true }); if (w && v.name) w.name = v.name; } break;
         case 'peace': if (alive(v) && Sim.atWar(tag, v)) Diplo.makePeace(tag, v, false); break;
         // a separate peace on the other side's terms: it keeps what it occupies (Brest-Litovsk, the 1918 armistices)
@@ -192,7 +192,7 @@ const Events = (function () {
     const c = g.countries[tag];
     g.countries[by].equipment += c.equipment; g.countries[by].manpower += c.manpower;
     c.alive = false; c.queue = [];
-    for (const o of Object.values(g.countries)) if (o.overlord === tag) o.overlord = by;
+    for (const o of Object.values(g.countries)) if (o.overlord === tag) o.overlord = by; Sim.relDirty();
     Sim.dropNation(tag);
     g.ownVer++; Diplo.evacuate();
   }

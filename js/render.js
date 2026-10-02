@@ -693,6 +693,7 @@ const Render = (function () {
 
   function draw() {
     stepCamera();
+    flushText();
     if (state.dirtyOwners || !lmCountryBorders.length || (Sim.G && Sim.G.hour !== lastDeadHour && (lastDeadHour = Sim.G.hour, deadCount() !== lastDead))) recolor();
     if (!layer) buildLayer();
     const G = Sim.G;
@@ -771,10 +772,58 @@ const Render = (function () {
     ctx.restore();
   }
 
+  // Map lettering is painted once into small sprites and reused: outlined text is one of the dearest things a
+  // canvas draws, and the same names show every frame. Sizes snap to steps about 8% apart.
+  const textSprites = new Map();
+  let spritesMade = 0;
+  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { textSprites.clear(); TA.fresh.length = 0; TA.x = TA.y = TA.row = 0; if (TA.g) { TA.g.setTransform(1, 0, 0, 1, 0, 0); TA.g.clearRect(0, 0, TA.W, TA.H); } });   // repaint in the real fonts
+  function sprite(key, make) {
+    let sp = textSprites.get(key);
+    if (sp) { textSprites.delete(key); textSprites.set(key, sp); return sp; }   // keep recently used ones at the end
+    sp = make(); spritesMade++;
+    textSprites.set(key, sp);
+    if (textSprites.size > 700) textSprites.delete(textSprites.keys().next().value);
+    return sp;
+  }
+  const fsStep = fs => Math.pow(1.08, Math.round(Math.log(fs) / Math.log(1.08)));
+  function nationSprite(name, fs, toon) {
+    return sprite('n|' + name + '|' + fs.toFixed(2) + '|' + toon + '|' + dpr, () => {
+      const lk = name + '|' + toon + '|' + dpr; if (!labelSizes.has(lk)) labelSizes.set(lk, new Set()); labelSizes.get(lk).add(fs);
+      const g = document.createElement('canvas').getContext('2d');
+      const font = toon ? fs.toFixed(1) + 'px "Lilita One", "Barlow Semi Condensed", sans-serif' : '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
+      g.font = font;
+      const spacing = fs * (toon ? 0.07 : 0.12);
+      const widths = [...name].map(ch => g.measureText(ch).width);
+      const w = widths.reduce((a, b) => a + b, 0) + spacing * name.length;
+      const pad = Math.ceil(Math.max(2.5, fs * 0.16)) + 2, h = Math.ceil(fs * 1.3) + pad * 2;
+      g.canvas.width = Math.ceil((w + pad * 2) * dpr); g.canvas.height = Math.ceil(h * dpr);
+      g.scale(dpr, dpr); g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+      const cy = h / 2;
+      const run = fn => { let x = pad; [...name].forEach((ch, i) => { fn(ch, x + widths[i] / 2); x += widths[i] + spacing; }); };
+      if (toon) {
+        // chunky storybook lettering: white with a dark outline
+        g.lineJoin = 'round'; g.lineWidth = Math.max(2.5, fs * 0.16); g.strokeStyle = 'rgba(44,34,52,0.55)';
+        run((ch, x) => g.strokeText(ch, x, cy));
+        g.fillStyle = 'rgba(255,252,240,0.9)'; run((ch, x) => g.fillText(ch, x, cy));
+      } else { g.fillStyle = 'rgba(18,16,12,0.62)'; run((ch, x) => g.fillText(ch, x, cy)); }
+      return { cv: g.canvas, w, pad, h, alpha: toon ? 0.92 : 1 };
+    });
+  }
+  const labelSizes = new Map();   // name|look -> sizes painted
+  function nearestLabel(name, toon, fs) {
+    const set = labelSizes.get(name + '|' + toon + '|' + dpr); if (!set) return 0;
+    let best = 0;
+    for (const f of set) {
+      if (!textSprites.has('n|' + name + '|' + f.toFixed(2) + '|' + toon + '|' + dpr)) { set.delete(f); continue; }
+      if (f / fs > 0.6 && f / fs < 1.7 && (!best || Math.abs(Math.log(f / fs)) < Math.abs(Math.log(best / fs)))) best = f;
+    }
+    return best;
+  }
   function drawLabels(z) {
     if (z > 11) return;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const placed = [];
+    const zooming = cam.anim || performance.now() - lastZoomInput < 300;
+    const toon = look();
     for (const l of labels) {
       const px = l.size * z * (l.wide ? 0.34 : 0.26);
       if (px < 10 || l.n < 2 && px < 16) continue;
@@ -782,26 +831,88 @@ const Render = (function () {
       const [sx, sy] = worldToScreen(l.x, l.y);
       if (sx < -200 || sx > W + 200 || sy < -50 || sy > H + 50) continue;
       const name = COUNTRY_BY_TAG[l.tag].name.toUpperCase();
-      const toon = look();
-      ctx.font = toon ? fs.toFixed(1) + 'px "Lilita One", "Barlow Semi Condensed", sans-serif' : '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
-      const spacing = fs * (toon ? 0.07 : 0.12);
-      const w = ctx.measureText(name).width + spacing * name.length;
+      let fsB = fsStep(fs);
+      // while the camera is zooming, reuse the nearest size already painted rather than painting every step
+      if (zooming && !textSprites.has('n|' + name + '|' + fsB.toFixed(2) + '|' + toon + '|' + dpr)) {
+        const near = nearestLabel(name, toon, fsB);
+        if (near) fsB = near;
+      }
+      const k = fs / fsB;
+      const sp = nationSprite(name, fsB, toon);
+      const w = sp.w * k;
       if (w > l.size * z * 1.6 && fs > 14) continue;
       const box = [sx - w / 2, sy - fs / 2, sx + w / 2, sy + fs / 2];
       if (placed.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
       placed.push(box);
-      ctx.globalAlpha = Math.max(0, Math.min(1, (11 - z) / 3));
-      ctx.fillStyle = 'rgba(18,16,12,0.62)';
-      let x = sx - w / 2;
-      if (toon) {
-        // chunky storybook lettering: white with a dark outline
-        ctx.globalAlpha *= 0.92; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2.5, fs * 0.16); ctx.strokeStyle = 'rgba(44,34,52,0.55)'; ctx.fillStyle = 'rgba(255,252,240,0.9)';
-        for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.strokeText(ch, x + cw / 2, sy); x += cw + spacing; }
-        x = sx - w / 2;
-      }
-      for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.fillText(ch, x + cw / 2, sy); x += cw + spacing; }
+      ctx.globalAlpha = Math.max(0, Math.min(1, (11 - z) / 3)) * sp.alpha;
+      ctx.drawImage(sp.cv, sx - w / 2 - sp.pad * k, sy - sp.h * k / 2, (sp.w + sp.pad * 2) * k, sp.h * k);
       ctx.globalAlpha = 1;
     }
+  }
+  // small outlined text (division counts, building counts, sea names) from the same sprite cache
+  // Small lettering (city names, counts) shares one big canvas: drawing many pieces from a single source is far
+  // cheaper for the browser than from hundreds of little canvases. A new piece is painted on its own little canvas
+  // first and moved into the shared one at the start of the next frame, all together: changing the shared canvas
+  // between two draws from it would make the browser copy all of it each time. When it fills up it starts afresh.
+  const TA = { cv: null, g: null, x: 0, y: 0, row: 0, W: 2048, H: 2048, fresh: [] };
+  function packText(w, h, paint) {
+    const cv = document.createElement('canvas'), g = cv.getContext('2d');
+    cv.width = Math.ceil(w * dpr); cv.height = Math.ceil(h * dpr);
+    g.scale(dpr, dpr); paint(g);
+    const sp = { packed: true, cv, sx: 0, sy: 0, sw: cv.width, sh: cv.height };
+    TA.fresh.push(sp);
+    return sp;
+  }
+  function flushText() {
+    if (!TA.fresh.length) return;
+    if (!TA.cv) { TA.cv = document.createElement('canvas'); TA.cv.width = TA.W; TA.cv.height = TA.H; TA.g = TA.cv.getContext('2d'); }
+    const g = TA.g; g.setTransform(1, 0, 0, 1, 0, 0);
+    for (const sp of TA.fresh) {
+      if (!sp.cv) continue;
+      const pw = sp.sw + 2, ph = sp.sh + 2;
+      if (TA.x + pw > TA.W) { TA.x = 0; TA.y += TA.row; TA.row = 0; }
+      if (TA.y + ph > TA.H) {
+        // full: start afresh, and forget the pieces that lived there
+        g.clearRect(0, 0, TA.W, TA.H); TA.x = TA.y = TA.row = 0;
+        for (const [k, q] of textSprites) if (q.packed && !q.cv) textSprites.delete(k);
+      }
+      sp.sx = TA.x + 1; sp.sy = TA.y + 1;
+      g.drawImage(sp.cv, sp.sx, sp.sy);
+      sp.cv = null;
+      TA.x += pw; TA.row = Math.max(TA.row, ph);
+    }
+    TA.fresh.length = 0;
+  }
+  function drawPacked(sp, dx, dy) {
+    if (sp.cv) ctx.drawImage(sp.cv, dx, dy, sp.sw / dpr, sp.sh / dpr);
+    else ctx.drawImage(TA.cv, sp.sx, sp.sy, sp.sw, sp.sh, dx, dy, sp.sw / dpr, sp.sh / dpr);
+  }
+  const measurer = document.createElement('canvas').getContext('2d');
+  // small outlined text (division counts, building counts) from the same sprite cache
+  function outText(text, font, lw, stroke, fill, x, y, align) {
+    const sp = sprite('t|' + text + '|' + font + '|' + lw + '|' + stroke + '|' + fill + '|' + dpr, () => {
+      measurer.font = font;
+      const w = measurer.measureText(text).width, fs = parseFloat(font.match(/(\d+(?:\.\d+)?)px/)[1]), pad = Math.ceil(lw) + 1, h = Math.ceil(fs * 1.4) + pad * 2;
+      return Object.assign(packText(w + pad * 2, h, g => {
+        g.font = font; g.textAlign = 'left'; g.textBaseline = 'middle'; g.lineJoin = 'miter';
+        g.lineWidth = lw; g.strokeStyle = stroke; g.strokeText(text, pad, h / 2);
+        g.fillStyle = fill; g.fillText(text, pad, h / 2);
+      }), { w, pad, h });
+    });
+    const ox = align === 'center' ? sp.w / 2 : align === 'right' ? sp.w : 0;
+    drawPacked(sp, x - ox - sp.pad, y - sp.h / 2);
+  }
+  function citySprite(name, isCap, toon) {
+    return sprite('c|' + name + '|' + isCap + '|' + toon + '|' + dpr, () => {
+      const font = toon ? (isCap ? '600 14px' : '500 12.5px') + ' "Fredoka", "Barlow Semi Condensed", sans-serif' : (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
+      measurer.font = font;
+      const w = measurer.measureText(name).width, pad = 3, h = 20;
+      return Object.assign(packText(w + pad * 2, h, g => {
+        g.font = font; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.lineJoin = 'round'; g.lineWidth = toon ? 4 : 3; g.strokeStyle = toon ? 'rgba(40,30,50,0.9)' : 'rgba(16,16,12,0.85)'; g.strokeText(name, pad, h / 2);
+        g.fillStyle = toon ? '#ffffff' : '#f1ead2'; g.fillText(name, pad, h / 2);
+      }), { w, pad, h });
+    });
   }
 
   function star(x, y, r) {
@@ -824,13 +935,11 @@ const Render = (function () {
       if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
       (isCap ? starPts : dotPts).push(sx, sy);
       if ((isCap && z > 4.5) || z > 13) {
-        ctx.font = look() ? (isCap ? '600 14px' : '500 12.5px') + ' "Fredoka", "Barlow Semi Condensed", sans-serif' : (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
-        const w = ctx.measureText(p.city).width;
+        const sp = citySprite(p.city, !!isCap, look()), w = sp.w;
         const box = [sx + 6, sy - 8, sx + 10 + w, sy + 8];
         if (placedCity.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
         placedCity.push(box);
-        ctx.lineJoin = 'round'; ctx.lineWidth = look() ? 4 : 3; ctx.strokeStyle = look() ? 'rgba(40,30,50,0.9)' : 'rgba(16,16,12,0.85)'; ctx.strokeText(p.city, sx + 8, sy);
-        ctx.fillStyle = look() ? '#ffffff' : '#f1ead2'; ctx.fillText(p.city, sx + 8, sy);
+        drawPacked(sp, sx + 8 - sp.pad, sy - sp.h / 2);
       }
     }
     ctx.beginPath();
@@ -919,9 +1028,7 @@ const Render = (function () {
           ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.closePath(); ctx.fillStyle = '#d6b052'; ctx.fill();
         } else if (count > 1 && size >= 16) {
           const bx = x + size - 3, by = y + size - 3;
-          ctx.font = '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif';
-          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,16,12,0.9)'; ctx.strokeText(count, bx, by);
-          ctx.fillStyle = '#f1ead2'; ctx.fillText(count, bx, by);
+          outText(String(count), '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif', 3, 'rgba(16,16,12,0.9)', '#f1ead2', bx, by, 'center');
         }
       };
       if (q) for (const j of q) put(j.kind, 1, j);
@@ -1475,8 +1582,7 @@ const Render = (function () {
         if (compact) {
           if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
           counterHits.push({ x: sx - fig * 0.4, y: figTop, w: fig * 0.8, h: fig * 0.75, army: a, group: grp });
-          ctx.font = '700 10px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(String(divs), sx + fig * 0.42, figTop + 3); ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(divs), sx + fig * 0.42, figTop + 3);
+          outText(String(divs), '700 10px "Barlow Semi Condensed", sans-serif', 3, 'rgba(0,0,0,0.75)', '#f0e8cc', sx + fig * 0.42, figTop + 3, 'center');
           return;
         }
         const w = 44, h = 20;
@@ -1739,5 +1845,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

@@ -181,22 +181,67 @@ const Sim = (function () {
   }
 
   // ---------- relations ----------
+  // Overlords and deaths change rarely, so each nation's root and family are worked out once per game hour
+  // (or again after relDirty(), which every overlord or alive change calls). The AI asks for them constantly.
+  let famMemo = null;
+  function relMemo() {
+    if (!famMemo || famMemo.G !== G || famMemo.hour !== G.hour) famMemo = { G, hour: G.hour, root: new Map(), fam: null };
+    return famMemo;
+  }
+  function relDirty() { famMemo = null; }
   function root(tag) {
+    const m = relMemo();
+    let r = m.root.get(tag);
+    if (r !== undefined) return r;
     let t = tag, guard = 0;
     while (G.countries[t] && G.countries[t].overlord && G.countries[G.countries[t].overlord] && G.countries[G.countries[t].overlord].alive && guard++ < 5) t = G.countries[t].overlord;
+    m.root.set(tag, t);
     return t;
   }
   function family(tag) {
-    const r = root(tag);
-    return Object.values(G.countries).filter(c => c.alive && root(c.tag) === r).map(c => c.tag);
+    const m = relMemo();
+    if (!m.fam) {
+      m.fam = new Map();
+      for (const c of Object.values(G.countries)) if (c.alive) { const r = root(c.tag); if (!m.fam.has(r)) m.fam.set(r, []); m.fam.get(r).push(c.tag); }
+    }
+    return (m.fam.get(root(tag)) || []).slice();
   }
-  function sideOf(war, tag) { return war.attackers.includes(tag) ? 'att' : war.defenders.includes(tag) ? 'def' : null; }
+  // Which side of which war each nation is on. Alliances like NATO put 30 and more nations on one side, and the AI
+  // asks "at war?" and "allied?" tens of thousands of times a day, so the answer comes from an index. The index is
+  // checked against the war list on every use (cheap: a few comparisons per war) and rebuilt when anything changed.
+  let warIdx = null;
+  function warIndex() {
+    const ws = G.wars, X = warIdx;
+    if (X && X.G === G && X.ws === ws && X.sig.length === ws.length * 5) {
+      let ok = true;
+      for (let i = 0, j = 0; i < ws.length; i++, j += 5) {
+        const w = ws[i], q = X.sig;
+        if (w !== q[j] || w.attackers !== q[j + 1] || w.defenders !== q[j + 2] || w.attackers.length !== q[j + 3] || w.defenders.length !== q[j + 4]) { ok = false; break; }
+      }
+      if (ok) return X;
+    }
+    const side = new Map(), sig = [];
+    const add = (t, w, sd) => { let m = side.get(t); if (!m) side.set(t, m = new Map()); if (!m.has(w)) m.set(w, sd); };
+    for (const w of ws) {
+      sig.push(w, w.attackers, w.defenders, w.attackers.length, w.defenders.length);
+      for (const t of w.attackers) add(t, w, 'att');
+      for (const t of w.defenders) add(t, w, 'def');
+    }
+    return (warIdx = { G, ws, sig, side });
+  }
+  const NONE = new Map();
+  function sideOf(war, tag) {
+    const m = warIndex().side.get(tag);
+    if (m && m.has(war)) return m.get(war);
+    if (!G.wars.includes(war)) return war.attackers.includes(tag) ? 'att' : war.defenders.includes(tag) ? 'def' : null;   // a war that has ended
+    return null;
+  }
   function atWar(a, b) {
     if (a === b) return false;
-    for (const w of G.wars) {
-      const sa = sideOf(w, a), sb = sideOf(w, b);
-      if (sa && sb && sa !== sb) return true;
-    }
+    const X = warIndex(), ma = X.side.get(a);
+    if (!ma) return false;
+    const mb = X.side.get(b) || NONE;
+    for (const [w, sa] of ma) { const sb = mb.get(w); if (sb && sb !== sa) return true; }
     return false;
   }
   function factionOf(tag) { const id = G.dip.facOf[root(tag)]; return id ? G.dip.factions.find(f => f.id === id) || null : null; }
@@ -214,7 +259,10 @@ const Sim = (function () {
     if (root(a) === root(b)) return true;
     const fa = G.dip.facOf[root(a)];
     if (fa && fa === G.dip.facOf[root(b)]) return true;
-    for (const w of G.wars) { const sa = sideOf(w, a); if (sa && sa === sideOf(w, b)) return true; }
+    const X = warIndex(), ma = X.side.get(a);
+    if (!ma) return false;
+    const mb = X.side.get(b) || NONE;
+    for (const [w, sa] of ma) if (mb.get(w) === sa) return true;
     return false;
   }
   function enemiesOf(tag) {
@@ -226,7 +274,7 @@ const Sim = (function () {
     }
     return s;
   }
-  function isAtWar(tag) { return G.wars.some(w => sideOf(w, tag)); }
+  function isAtWar(tag) { return warIndex().side.has(tag); }
   // unclaimed land in the historical eras (tag UNC) is open to anyone and taken by marching in
   const wild = o => !!(COUNTRY_BY_TAG[o] && COUNTRY_BY_TAG[o].unclaimed);
   function canEnter(tag, prov) { const o = G.owner[prov]; return o === tag || allied(tag, o) || atWar(tag, o) || wild(o); }
@@ -746,6 +794,7 @@ const Sim = (function () {
     c.alive = false; c.queue = [];
     dropFromDiplomacy(tag);
     for (const o of Object.values(G.countries)) if (o.overlord === tag) o.overlord = null;
+    relDirty();
     for (const w of G.wars) { w.attackers = w.attackers.filter(t => t !== tag); w.defenders = w.defenders.filter(t => t !== tag); }
     const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
     G.wars = G.wars.filter(w => w.attackers.length && w.defenders.length);
@@ -783,7 +832,18 @@ const Sim = (function () {
     if (EC && typeof Navy !== 'undefined' && G.fleets && Economy.infra(id, 'port')) v = Math.max(v, Navy.portSupply(tag, id));
     return v;
   }
+  // armies of one nation sharing a province share the answer; it is worked out again each game hour
+  let armiesByProv = null;   // set while the daily supply pass runs
+  let reachMemo = { G: null, hour: -1, ver: -1, m: new Map() };
   function supplyReach(tag, prov) {
+    const iv = typeof Economy !== 'undefined' && Economy.infraVer ? Economy.infraVer() : 0;
+    if (reachMemo.G !== G || reachMemo.hour !== G.hour || reachMemo.ver !== G.ownVer || reachMemo.iv !== iv) reachMemo = { G, hour: G.hour, ver: G.ownVer, iv, m: new Map() };
+    const key = tag + ':' + prov;
+    let r = reachMemo.m.get(key);
+    if (r === undefined) { r = supplyReachRaw(tag, prov); reachMemo.m.set(key, r); }
+    return r;
+  }
+  function supplyReachRaw(tag, prov) {
     let best = sourceValue(tag, prov);
     if (best >= 1) return 1;
     // supply fades 12% a province, or only 6% along a railway
@@ -821,7 +881,7 @@ const Sim = (function () {
     const EC = typeof Economy !== 'undefined' && Economy.infra;
     const cap = 4 + (p.infra + rInf) * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
     let demand = 0;
-    for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
+    for (const o of (armiesByProv && armiesByProv.get(a.prov)) || G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
     const tm = typeof Tech !== 'undefined' ? 1 + Tech.mod(a.owner, 'supply', { prov: a.prov }) : 1;
     // enemy aircraft over the roads
@@ -1074,8 +1134,10 @@ const Sim = (function () {
       c.queue = c.queue.filter(i => i.hours > 0);
       for (const d of done) finishRecruit(c, d);
     }
-    if (G.hour % 24 === 0) dayTick();
-    else if (G.hour % 6 === 0) playerOrders();
+    // the day's work is split over the first four hours of each day, so no single frame carries all of it
+    const hd = G.hour % 24;
+    if (hd < DAY_PARTS.length) DAY_PARTS[hd]();
+    if (G.hour % 6 === 0) playerOrders();
   }
   function recoverOrg(a, f) {
     const c = G.countries[a.owner];
@@ -1083,11 +1145,15 @@ const Sim = (function () {
     for (const u of a.units) u.org = Math.min(1, u.org + rate);
   }
 
-  function dayTick() {
-    const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
-    // sea and air first: convoy losses and bomb damage feed today's economy
-    if (typeof Navy !== 'undefined' && G.fleets) Navy.daily();
+  // 1. sea and air first: convoy losses and bomb damage feed today's economy; AI landings are planned
+  // right after the AI's fleets get their orders
+  function daySeaAir() {
+    if (typeof Navy !== 'undefined' && G.fleets) { Navy.daily(); Navy.aiInvasions(); }
     if (typeof Air !== 'undefined' && G.wings) Air.daily();
+  }
+  // 2. economy and research, then each nation's daily numbers
+  function dayNations() {
+    const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
     if (ECO) Economy.daily();
     if (typeof Routes !== 'undefined') Routes.daily();
     if (TX) Tech.daily();
@@ -1107,6 +1173,11 @@ const Sim = (function () {
       c.stab += (stT - c.stab) * 0.005 - (war && c.ws < 0.3 ? 0.001 : 0);
       c.stab = Math.max(0, Math.min(1, c.stab)); c.ws = Math.max(0, Math.min(1, c.ws));
     }
+  }
+  // 3. supply, attrition and reinforcement for every army, then who has capitulated
+  function dayArmies() {
+    armiesByProv = new Map();
+    for (const o of G.armies) { if (!armiesByProv.has(o.prov)) armiesByProv.set(o.prov, []); armiesByProv.get(o.prov).push(o); }
     for (const a of G.armies) {
       a.supply = computeSupply(a);
       // out of supply: attrition, and organisation drains away
@@ -1122,20 +1193,27 @@ const Sim = (function () {
         }
       }
     }
+    armiesByProv = null;
     checkCapitulations();
+  }
+  // 4a. the AI nations plan their armies (every day at war, once a week in peace)
+  function dayAI() {
     const day = Math.floor(G.hour / 24);
     for (const c of Object.values(G.countries)) {
       if (!c.alive || isHuman(c.tag)) continue;
       const war = isAtWar(c.tag);
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
+  }
+  // 4b. diplomacy, politics, peace talks, events and the autosave
+  function dayWorld() {
     if (typeof Diplo !== 'undefined') Diplo.dayTick();
     if (typeof Politics !== 'undefined') Politics.daily();
     if (typeof Peace !== 'undefined') Peace.daily();
     if (typeof Events !== 'undefined') Events.daily();
     if (typeof Save !== 'undefined') Save.tick();
-    playerOrders();
   }
+  const DAY_PARTS = [daySeaAir, dayNations, dayArmies, () => { dayAI(); dayWorld(); }];
 
   // humans: the local player plus, in a multiplayer game, every nation another person leads
   function isHuman(tag) { return tag === G.player || !!(G.humans && G.humans[tag]); }
@@ -1155,6 +1233,7 @@ const Sim = (function () {
   }
 
   return {
+    relDirty,
     init, newGame, restore, hourTick, dateStr, dateTime, hooks, mpCost,
     get G() { return G; }, set G(v) { G = v; },
     get MAP() { return MAP; },

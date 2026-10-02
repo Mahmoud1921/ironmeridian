@@ -42,7 +42,8 @@ const Economy = (function () {
   const isInfra = k => !!INFRA[k];
   function infraKinds() { const n = INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936']; return INFRA_KEYS.filter(k => n[k]); }
   function infra(pid, k) { const I = G().inf && G().inf[pid]; return (I && I[k]) || 0; }
-  function setInfra(pid, k, v) { const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
+  let infraVer = 0;   // bumped on every change, so other modules can keep lists of ports, radars and bases
+  function setInfra(pid, k, v) { infraVer++; const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
   const MOD_OF = { farm: 'farms', mine: 'mines', fuel: 'fuelworks', strat: 'stratworks', shop: 'workshops', arsenal: 'arsenals' };
   const FARM_TERRAIN = { plains: 1.5, forest: 0.8, hills: 0.9, mountains: 0.5, desert: 0.5, jungle: 0.7, marsh: 0.7, tundra: 0.3, urban: 0.8 };
 
@@ -225,7 +226,7 @@ const Economy = (function () {
   // opening harbours on every coastal city, bigger at capitals; forts where history built them
   function seedInfra() {
     const g = G(), M = MAP(), id = eraId();
-    g.inf = M.provs.map(() => null);
+    g.inf = M.provs.map(() => null); infraVer++;
     const coast = pid => typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(M.provs[pid]);
     for (const p of M.provs) {
       const d = COUNTRY_BY_TAG[g.owner[p.id]];
@@ -880,7 +881,7 @@ const Economy = (function () {
   }
 
   return {
-    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
+    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, infraVer: () => infraVer, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId, oilEra

@@ -205,19 +205,37 @@ const Air = (function () {
     }
     // modern eras: missile batteries on the ground deny the sky as well as fighters do
     const aaK = typeof Eras !== 'undefined' && Eras.trench().aaK;
-    if (aaK) for (const a of G().armies) {
-      const mine = friendlyTo(tag, a.owner);
-      if (friendly ? !mine : !Sim.atWar(tag, a.owner)) continue;
-      const p = MAP().provs[a.prov];
-      if (!p || GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) > AREA_KM) continue;
-      for (const u of a.units) { const t = UNIT_TYPES[u.type]; if (t && t.aa) v += t.aa * u.str * aaK * 10; }
+    if (aaK) for (const b of hourly().aa) {
+      const mine = friendlyTo(tag, b.owner);
+      if (friendly ? !mine : !Sim.atWar(tag, b.owner)) continue;
+      if (GEO.haversineKm(b.lon, b.lat, pt[0], pt[1]) > AREA_KM) continue;
+      v += b.aa * aaK * 10;
     }
     return v;
   }
-  function radarBonus(tag, pt) {
+  // radar stations and air defence batteries, gathered once per game hour (superiority is cached hourly too)
+  let hourCache = { g: null, hour: -1 };
+  function hourly() {
     const g = G();
-    for (const p of MAP().provs) if (infra(p.id, 'radar') && friendlyTo(tag, g.owner[p.id]) && GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) < 600) return 1.3;
-    return 1;
+    const v = typeof Economy !== 'undefined' && Economy.infraVer ? Economy.infraVer() : 0;
+    if (hourCache.g === g && hourCache.hour === g.hour && hourCache.v === v && hourCache.armies === g.armies.length) return hourCache;
+    const radar = [], aa = [];
+    for (const p of MAP().provs) if (infra(p.id, 'radar')) radar.push(p);
+    for (const a of g.armies) {
+      let v = 0; for (const u of a.units) { const t = UNIT_TYPES[u.type]; if (t && t.aa) v += t.aa * u.str; }
+      const p = MAP().provs[a.prov];
+      if (v > 0 && p) aa.push({ owner: a.owner, lon: p.lon, lat: p.lat, aa: v });
+    }
+    return (hourCache = { g, hour: g.hour, v, armies: g.armies.length, radar, aa, rb: new Map() });
+  }
+  function radarBonus(tag, pt) {
+    const g = G(), H = hourly(), key = tag + ':' + Math.round(pt[0] * 2) + ':' + Math.round(pt[1] * 2);
+    let r = H.rb.get(key);
+    if (r !== undefined) return r;
+    r = 1;
+    for (const p of H.radar) if (friendlyTo(tag, g.owner[p.id]) && GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) < 600) { r = 1.3; break; }
+    H.rb.set(key, r);
+    return r;
   }
   // 0..1: this side's share of the sky over a point (0.5 when the sky is empty)
   function superiority(tag, pt) {

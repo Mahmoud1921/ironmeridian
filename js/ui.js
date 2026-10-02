@@ -1729,11 +1729,20 @@ const UI = (function () {
     if (!sel.collapsed && sel.tab === 'econ') try { Buildings.spin($('#rp-body'), era, col, yaw); } catch (e) { }
     if (!$('#leftpanel').hidden) try { Buildings.spin($('#leftpanel'), era, col, yaw); } catch (e) { }
   }
+  // the turning models in the Train list: about 25 turns of the wheel a second is smooth enough, and only the
+  // cards scrolled into view are drawn
+  let spinAt = 0;
   function spinModels(now) {
     if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
+    if (now - spinAt < 40) return;
+    spinAt = now;
     const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
-    const tag = Sim.G.player;
-    $('#rp-body').querySelectorAll('canvas[data-spin]').forEach(cv => { try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { } });
+    const tag = Sim.G.player, body = $('#rp-body'), box = body.getBoundingClientRect();
+    body.querySelectorAll('canvas[data-spin]').forEach(cv => {
+      const r = cv.getBoundingClientRect();
+      if (r.bottom < box.top || r.top > box.bottom) return;
+      try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { }
+    });
   }
   function frame(now) {
     const dtPan = lastPan ? Math.min(0.1, (now - lastPan) / 1000) : 0; lastPan = now;

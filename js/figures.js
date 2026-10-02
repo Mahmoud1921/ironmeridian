@@ -279,12 +279,12 @@ const Figures = (function () {
     renderModel(g, parts, yaw, CELL / 2, CELL * 0.72 + parts.low * CE * PX * parts.fit, kind === 'plane', parts.fit);
     g.setTransform(1, 0, 0, 1, 0, 0);
   }
-  // Atlases are painted a row at a time within a small per-frame budget, so a new nation appearing on
-  // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
-  const atlases = new Map(); // key -> { cv, g, P, row }
-  // one row per model, plus 'fighting' poses for soldiers and guns (vehicles fight in their moving pose)
+  // Sprites are painted per nation and per model row, and only for the rows actually on screen: one nation's
+  // tanks never cost anything until its tanks are seen. Each row (8 headings x 4 poses) is painted one pose at a
+  // time inside a small per-frame budget, so a crowded new front never stalls the game. Until a row is ready
+  // the neutral grey figure stands in. Rows not drawn for a while are dropped and repainted on return.
   const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'].concat(MODELED);
-  // only the models the current era's units use get rows, so an atlas stays small (about 12 rows)
+  // only the models the current era's units use get rows (about 12 to 20)
   let layout = null;
   function getLayout() {
     if (!layout) {
@@ -296,44 +296,72 @@ const Figures = (function () {
     return layout;
   }
   const rowsN = () => getLayout().rows.length;
-  const MAX_ATLASES = 28;   // about 2 MB each; nations off screen for a while are dropped and repainted on return
-  function newAtlas(color) {
-    const cv = document.createElement('canvas');
-    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * rowsN();
-    return { cv, g: cv.getContext('2d'), P: palette(color), row: 0, used: 0 };
-  }
-  function paintRow(A) {
-    const [kind, fight] = getLayout().rows[A.row], g = A.g;
-    for (let f = 0; f < FRAMES; f++) {
-      const parts = build(kind, A.P, f, !!fight);
-      for (let d = 0; d < DIRS; d++) {
-        // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
-        const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
-        g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
-        g.restore();
-      }
+  const MAX_ROWS = 320;   // painted rows kept, about 250 KB each
+  const atlases = new Map(); // tag -> { P, rows: [{ cv, g, done: bitmask of painted poses, used }] }
+  let painted = 0;
+  function newAtlas(color) { return { P: palette(color), rows: [], used: 0 }; }
+  function rowOf(A, r) {
+    let R = A.rows[r];
+    if (!R) {
+      if (painted >= MAX_ROWS) evict();
+      const cv = document.createElement('canvas');
+      cv.width = CELL * DIRS * FRAMES; cv.height = CELL;
+      R = A.rows[r] = { cv, g: cv.getContext('2d'), done: 0, used: 0, queued: false, parts: null };
+      painted++;
     }
-    A.row++;
+    return R;
   }
-  const queue = [];
+  function evict() {
+    let oldA = null, oldR = -1, ou = Infinity;
+    for (const A of atlases.values()) A.rows.forEach((R, i) => { if (R && !R.queued && R.used < ou) { ou = R.used; oldA = A; oldR = i; } });
+    if (oldA) { delete oldA.rows[oldR]; painted--; }
+  }
+  // paint one cell of a row: one pose seen from one heading (about 1 ms for a Blender model)
+  function paintCell(A, r, cell) {
+    const R = rowOf(A, r), [kind, fight] = getLayout().rows[r], g = R.g;
+    const d = Math.floor(cell / FRAMES), f = cell % FRAMES;
+    const pk = r + ':' + f;
+    let parts = R.parts && R.parts.get(pk);
+    if (!parts) { parts = build(kind, A.P, f, !!fight); (R.parts || (R.parts = new Map())).set(pk, parts); }
+    // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
+    const cx = cell * CELL + CELL / 2, cy = CELL * (kind === 'plane' ? 0.78 : 0.66);
+    g.save(); g.beginPath(); g.rect(cell * CELL, 0, CELL, CELL); g.clip();
+    renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
+    g.restore();
+    R.done = (R.done | 1 << cell) >>> 0;
+    if (R.done === ALL) R.parts = null;
+  }
+  const ALL = 2 ** (DIRS * FRAMES) - 1;   // one bit per cell (32 cells)
+  const cellReady = (R, d, f) => (R.done >>> (d * FRAMES + f) & 1) === 1;
+  function paintRowNow(A, r) { for (let c = 0; c < DIRS * FRAMES; c++) if (!(rowOf(A, r).done >>> c & 1)) paintCell(A, r, c); }
+  const queue = [];   // [atlas, row] waiting to be painted
+  function want(A, r, first) {
+    const R = rowOf(A, r);
+    if (R.done === ALL || R.queued) return R;
+    R.queued = true; if (first) queue.unshift([A, r]); else queue.push([A, r]);
+    return R;
+  }
   let neutral = null;
   function atlasFor(tag, now) {
     let A = atlases.get(tag);
-    if (!A) {
-      if (atlases.size >= MAX_ATLASES) {
-        let old = null; for (const [t, x] of atlases) if (x.row >= rowsN() && (!old || x.used < atlases.get(old).used)) old = t;
-        if (old) atlases.delete(old);
-      }
-      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < rowsN()) paintRow(A); else queue.push(A);
-    }
+    if (!A) { A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); }
+    if (now) for (let r = 0; r < rowsN(); r++) paintRowNow(A, r);
     return A;
   }
   function pump(budgetMs) {
     const t0 = performance.now();
-    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= rowsN()) queue.shift(); }
+    while (queue.length && performance.now() - t0 < budgetMs) {
+      const [A, r] = queue[0], R = A.rows[r];
+      if (!R) { queue.shift(); continue; }   // dropped meanwhile
+      let c = 0; while (c < DIRS * FRAMES && R.done >>> c & 1) c++;
+      if (c < DIRS * FRAMES) paintCell(A, r, c);
+      if (R.done === ALL) { R.queued = false; queue.shift(); }
+    }
   }
-  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < rowsN()) paintRow(neutral); } }
+  function ready() { if (!neutral) neutral = newAtlas('#6b7058'); }
+  // the grey stand-in is painted through the same budget, ahead of everything else; until even that is ready
+  // the figure is simply left out for a moment (its nation-coloured ring and counter still show)
+  function neutralRow(r) { return want(neutral, r, true); }
 
   const KIND_OF = { infantry: 'soldiers', marines: 'soldiers', paratroopers: 'soldiers', motorized: 'truck', mechanized: 'halftrack', tanks: 'tank', artillery: 'gun', recon: 'car' };
   // draw one figure with its feet at (x, y) screen px; size is the on-screen cell size in px
@@ -354,12 +382,24 @@ const Figures = (function () {
     if (row === undefined) row = L.index.get('soldiers');
     const ay = kind === 'plane' ? 0.78 : 0.66;
     ready();
-    const A = atlasFor(tag); A.used = t || performance.now();
-    ctx.drawImage(A.row >= L.rows.length ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
+    const A = atlasFor(tag), R = want(A, row);
+    R.used = performance.now();
+    const src = cellReady(R, d, f) ? R : neutralRow(row);
+    if (src !== R && !cellReady(src, d, f)) return;
+    ctx.drawImage(src.cv, (d * FRAMES + f) * CELL, 0, CELL, CELL, x - size / 2, y - size * ay, size, size);
   }
-  // queue nations to paint ahead of need, most important first
-  function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
+  // queue nations to paint ahead of need: the rows their armies will show
+  function warm(tags) {
+    ready();
+    const L = getLayout(), G = typeof Sim !== 'undefined' && Sim.G;
+    for (const t of tags) {
+      if (!COUNTRY_BY_TAG[t]) continue;
+      const A = atlasFor(t), kinds = new Set();
+      if (G) for (const a of G.armies) if (a.owner === t) for (const u of a.units) kinds.add(kindOf(u.type));
+      for (const k of kinds) { const r = L.index.get(k); if (r !== undefined) want(A, r).used = performance.now(); }
+    }
+  }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; previewParts.clear(); }
-  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; painted = 0; layout = null; neutral = null; previewParts.clear(); }
+  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, painted: () => painted, _atlases: atlases };
 })();

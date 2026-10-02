@@ -870,8 +870,8 @@ async function navyRun(browser) {
     const ships0 = {}; for (const c of Object.values(g.countries)) ships0[c.tag] = Navy.nav(c).lost;
     let battles = 0, landings = 0, flying = 0; const seenInv = new Set();
     for (let d = 0; d < 180; d++) {
-      for (let h = 0; h < 24; h++) { Sim.hourTick(); battles += g.navBattles.filter(b => b.start === g.hour).length; }
-      for (const a of g.armies) if (a.sea && a.owner !== 'ENG') seenInv.add(a.id);
+      // landings are spotted every hour: a short crossing can be planned, sail and land within one day
+      for (let h = 0; h < 24; h++) { Sim.hourTick(); battles += g.navBattles.filter(b => b.start === g.hour).length; for (const a of g.armies) if (a.sea && a.owner !== 'ENG') seenInv.add(a.id); }
       flying = Math.max(flying, g.wings.filter(w => w.owner !== 'ENG' && w.mission !== 'idle').length);
     }
     const lost = Object.values(g.countries).reduce((s, c) => s + Navy.nav(c).lost, 0);
@@ -1146,7 +1146,8 @@ async function politicsRun(browser) {
   await page.waitForTimeout(900);
   check('events: the clock keeps running for an everyday event', await G(h => Sim.G.hour > h && !Sim.G.paused, hm));
   await clickEl(page, '#evside .ev-opt[data-x="1"]');
-  check('events: answering the side card records it', await waitFor(page, id => document.getElementById('evside').hidden && Sim.G.ev.hist.some(h => h.id === id && h.tag === 'ITA' && h.pick === 1), minor, 1500));
+  // the card then closes, or moves on to another everyday event that came up while the clock ran
+  check('events: answering the side card records it', await waitFor(page, id => { const box = document.getElementById('evside'), top = box.querySelector('[data-evs]'); return (box.hidden || (top && !Events.open().some(e => e.n === +top.dataset.evs && e.id === id))) && Sim.G.ev.hist.some(h => h.id === id && h.tag === 'ITA' && h.pick === 1); }, minor, 1500));
   const auto = await G(() => { const d = Events.defs().find(d => !d.tag && d.options.length >= 2); Sim.G.paused = true; Events.fire(d.id, 'ITA'); const n = Sim.G.ev.next - 1; for (let h = 0; h < 24 * (Events.DECIDE_DAYS + 2); h++) Sim.hourTick(); const r = { left: Events.open().some(e => e.n === n), hist: Sim.G.ev.hist.some(h => h.id === d.id && h.tag === 'ITA') }; while (Events.open().length) Events.choose(Events.open()[0].n, 0); return r; });
   check('events: an unanswered everyday event is decided after a month', !auto.left && auto.hist, JSON.stringify(auto));
   // big historical events: a card with choices, the clock waits for the answer

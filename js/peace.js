@@ -55,6 +55,7 @@ const Peace = (function () {
     c.queue = [];
     Sim.dropNation(loser);
     for (const o of Object.values(g.countries)) if (o.overlord === loser) o.overlord = null;
+    Sim.relDirty();
     if (conf.winners.some(w => Sim.isHuman(w.tag))) {
       g.peace = conf;
       aiTurns(conf);
@@ -148,7 +149,7 @@ const Peace = (function () {
   // ---------- the treaty ----------
   function revive(tag, provs) {
     const g = G(), c = g.countries[tag];
-    c.alive = true; c.queue = [];
+    c.alive = true; c.queue = []; Sim.relDirty();
     const cap = provs.find(id => MAP().provs[id].capital && MAP().provs[id].cityTag === tag) ?? provs.slice().sort((a, b) => value(b) - value(a))[0];
     c.capital = cap;
     const types = (typeof Eras !== 'undefined' ? Eras.unitsFor(tag) : Object.keys(UNIT_TYPES)).filter(t => !UNIT_TYPES[t].locked);
@@ -174,13 +175,13 @@ const Peace = (function () {
     for (const t in gained) { parts.push(nm(t) + ' takes ' + (gained[t].length > 3 ? gained[t].length + ' provinces' : gained[t].map(id => MAP().provs[id].name).join(', '))); Diplo.addRel(conf.loser, t, -10 - 5 * gained[t].length); }
     const kept = MAP().provs.filter(p => g.owner[p.id] === conf.loser).map(p => p.id);
     if (!kept.length) {
-      lc.alive = false;
+      lc.alive = false; Sim.relDirty();
       parts.push(nm(conf.loser) + ' ceases to exist');
     } else {
       if (g.owner[lc.capital] !== conf.loser) lc.capital = kept.slice().sort((a, b) => value(b) - value(a))[0];
       lc.stab = Math.max(0.2, lc.stab - 0.15); lc.ws = 0.1;
       revive(conf.loser, kept);
-      if (conf.puppet) { lc.overlord = conf.puppet; parts.push(nm(conf.loser) + ' becomes a subject of ' + nm(conf.puppet)); }
+      if (conf.puppet) { lc.overlord = conf.puppet; Sim.relDirty(); parts.push(nm(conf.loser) + ' becomes a subject of ' + nm(conf.puppet)); }
       for (const t of conf.repar) { g.repar = g.repar || []; g.repar.push({ from: conf.loser, to: t, perDay: Math.max(1, Math.round(Math.sqrt(kept.length) * 1.5)), until: g.hour + 2 * YEAR }); }
       const rp = [...new Set(conf.repar)]; if (rp.length) parts.push(nm(conf.loser) + ' pays reparations to ' + rp.map(nm).join(' and '));
       for (const w of conf.winners) if (alive(w.tag) && !Sim.atWar(w.tag, conf.loser)) g.dip.pacts[Sim.pairKey(Sim.root(w.tag), Sim.root(conf.loser))] = g.hour + 2 * YEAR;

@@ -5881,22 +5881,67 @@ const Sim = (function () {
   }
 
   // ---------- relations ----------
+  // Overlords and deaths change rarely, so each nation's root and family are worked out once per game hour
+  // (or again after relDirty(), which every overlord or alive change calls). The AI asks for them constantly.
+  let famMemo = null;
+  function relMemo() {
+    if (!famMemo || famMemo.G !== G || famMemo.hour !== G.hour) famMemo = { G, hour: G.hour, root: new Map(), fam: null };
+    return famMemo;
+  }
+  function relDirty() { famMemo = null; }
   function root(tag) {
+    const m = relMemo();
+    let r = m.root.get(tag);
+    if (r !== undefined) return r;
     let t = tag, guard = 0;
     while (G.countries[t] && G.countries[t].overlord && G.countries[G.countries[t].overlord] && G.countries[G.countries[t].overlord].alive && guard++ < 5) t = G.countries[t].overlord;
+    m.root.set(tag, t);
     return t;
   }
   function family(tag) {
-    const r = root(tag);
-    return Object.values(G.countries).filter(c => c.alive && root(c.tag) === r).map(c => c.tag);
+    const m = relMemo();
+    if (!m.fam) {
+      m.fam = new Map();
+      for (const c of Object.values(G.countries)) if (c.alive) { const r = root(c.tag); if (!m.fam.has(r)) m.fam.set(r, []); m.fam.get(r).push(c.tag); }
+    }
+    return (m.fam.get(root(tag)) || []).slice();
   }
-  function sideOf(war, tag) { return war.attackers.includes(tag) ? 'att' : war.defenders.includes(tag) ? 'def' : null; }
+  // Which side of which war each nation is on. Alliances like NATO put 30 and more nations on one side, and the AI
+  // asks "at war?" and "allied?" tens of thousands of times a day, so the answer comes from an index. The index is
+  // checked against the war list on every use (cheap: a few comparisons per war) and rebuilt when anything changed.
+  let warIdx = null;
+  function warIndex() {
+    const ws = G.wars, X = warIdx;
+    if (X && X.G === G && X.ws === ws && X.sig.length === ws.length * 5) {
+      let ok = true;
+      for (let i = 0, j = 0; i < ws.length; i++, j += 5) {
+        const w = ws[i], q = X.sig;
+        if (w !== q[j] || w.attackers !== q[j + 1] || w.defenders !== q[j + 2] || w.attackers.length !== q[j + 3] || w.defenders.length !== q[j + 4]) { ok = false; break; }
+      }
+      if (ok) return X;
+    }
+    const side = new Map(), sig = [];
+    const add = (t, w, sd) => { let m = side.get(t); if (!m) side.set(t, m = new Map()); if (!m.has(w)) m.set(w, sd); };
+    for (const w of ws) {
+      sig.push(w, w.attackers, w.defenders, w.attackers.length, w.defenders.length);
+      for (const t of w.attackers) add(t, w, 'att');
+      for (const t of w.defenders) add(t, w, 'def');
+    }
+    return (warIdx = { G, ws, sig, side });
+  }
+  const NONE = new Map();
+  function sideOf(war, tag) {
+    const m = warIndex().side.get(tag);
+    if (m && m.has(war)) return m.get(war);
+    if (!G.wars.includes(war)) return war.attackers.includes(tag) ? 'att' : war.defenders.includes(tag) ? 'def' : null;   // a war that has ended
+    return null;
+  }
   function atWar(a, b) {
     if (a === b) return false;
-    for (const w of G.wars) {
-      const sa = sideOf(w, a), sb = sideOf(w, b);
-      if (sa && sb && sa !== sb) return true;
-    }
+    const X = warIndex(), ma = X.side.get(a);
+    if (!ma) return false;
+    const mb = X.side.get(b) || NONE;
+    for (const [w, sa] of ma) { const sb = mb.get(w); if (sb && sb !== sa) return true; }
     return false;
   }
   function factionOf(tag) { const id = G.dip.facOf[root(tag)]; return id ? G.dip.factions.find(f => f.id === id) || null : null; }
@@ -5914,7 +5959,10 @@ const Sim = (function () {
     if (root(a) === root(b)) return true;
     const fa = G.dip.facOf[root(a)];
     if (fa && fa === G.dip.facOf[root(b)]) return true;
-    for (const w of G.wars) { const sa = sideOf(w, a); if (sa && sa === sideOf(w, b)) return true; }
+    const X = warIndex(), ma = X.side.get(a);
+    if (!ma) return false;
+    const mb = X.side.get(b) || NONE;
+    for (const [w, sa] of ma) if (mb.get(w) === sa) return true;
     return false;
   }
   function enemiesOf(tag) {
@@ -5926,7 +5974,7 @@ const Sim = (function () {
     }
     return s;
   }
-  function isAtWar(tag) { return G.wars.some(w => sideOf(w, tag)); }
+  function isAtWar(tag) { return warIndex().side.has(tag); }
   // unclaimed land in the historical eras (tag UNC) is open to anyone and taken by marching in
   const wild = o => !!(COUNTRY_BY_TAG[o] && COUNTRY_BY_TAG[o].unclaimed);
   function canEnter(tag, prov) { const o = G.owner[prov]; return o === tag || allied(tag, o) || atWar(tag, o) || wild(o); }
@@ -6446,6 +6494,7 @@ const Sim = (function () {
     c.alive = false; c.queue = [];
     dropFromDiplomacy(tag);
     for (const o of Object.values(G.countries)) if (o.overlord === tag) o.overlord = null;
+    relDirty();
     for (const w of G.wars) { w.attackers = w.attackers.filter(t => t !== tag); w.defenders = w.defenders.filter(t => t !== tag); }
     const ended = G.wars.filter(w => !w.attackers.length || !w.defenders.length);
     G.wars = G.wars.filter(w => w.attackers.length && w.defenders.length);
@@ -6483,7 +6532,18 @@ const Sim = (function () {
     if (EC && typeof Navy !== 'undefined' && G.fleets && Economy.infra(id, 'port')) v = Math.max(v, Navy.portSupply(tag, id));
     return v;
   }
+  // armies of one nation sharing a province share the answer; it is worked out again each game hour
+  let armiesByProv = null;   // set while the daily supply pass runs
+  let reachMemo = { G: null, hour: -1, ver: -1, m: new Map() };
   function supplyReach(tag, prov) {
+    const iv = typeof Economy !== 'undefined' && Economy.infraVer ? Economy.infraVer() : 0;
+    if (reachMemo.G !== G || reachMemo.hour !== G.hour || reachMemo.ver !== G.ownVer || reachMemo.iv !== iv) reachMemo = { G, hour: G.hour, ver: G.ownVer, iv, m: new Map() };
+    const key = tag + ':' + prov;
+    let r = reachMemo.m.get(key);
+    if (r === undefined) { r = supplyReachRaw(tag, prov); reachMemo.m.set(key, r); }
+    return r;
+  }
+  function supplyReachRaw(tag, prov) {
     let best = sourceValue(tag, prov);
     if (best >= 1) return 1;
     // supply fades 12% a province, or only 6% along a railway
@@ -6521,7 +6581,7 @@ const Sim = (function () {
     const EC = typeof Economy !== 'undefined' && Economy.infra;
     const cap = 4 + (p.infra + rInf) * 4 + (p.city ? 6 : 0) + (p.capital ? 6 : 0) + (EC ? Economy.infra(a.prov, 'hub') * 12 + Economy.infra(a.prov, 'port') * 2 : 0);
     let demand = 0;
-    for (const o of G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
+    for (const o of (armiesByProv && armiesByProv.get(a.prov)) || G.armies) if (o.prov === a.prov && allied(o.owner, a.owner)) for (const u of o.units) demand += UNIT_TYPES[u.type].supply;
     const capF = Math.min(1, cap / Math.max(1, demand));
     const tm = typeof Tech !== 'undefined' ? 1 + Tech.mod(a.owner, 'supply', { prov: a.prov }) : 1;
     // enemy aircraft over the roads
@@ -6774,8 +6834,10 @@ const Sim = (function () {
       c.queue = c.queue.filter(i => i.hours > 0);
       for (const d of done) finishRecruit(c, d);
     }
-    if (G.hour % 24 === 0) dayTick();
-    else if (G.hour % 6 === 0) playerOrders();
+    // the day's work is split over the first four hours of each day, so no single frame carries all of it
+    const hd = G.hour % 24;
+    if (hd < DAY_PARTS.length) DAY_PARTS[hd]();
+    if (G.hour % 6 === 0) playerOrders();
   }
   function recoverOrg(a, f) {
     const c = G.countries[a.owner];
@@ -6783,11 +6845,15 @@ const Sim = (function () {
     for (const u of a.units) u.org = Math.min(1, u.org + rate);
   }
 
-  function dayTick() {
-    const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
-    // sea and air first: convoy losses and bomb damage feed today's economy
-    if (typeof Navy !== 'undefined' && G.fleets) Navy.daily();
+  // 1. sea and air first: convoy losses and bomb damage feed today's economy; AI landings are planned
+  // right after the AI's fleets get their orders
+  function daySeaAir() {
+    if (typeof Navy !== 'undefined' && G.fleets) { Navy.daily(); Navy.aiInvasions(); }
     if (typeof Air !== 'undefined' && G.wings) Air.daily();
+  }
+  // 2. economy and research, then each nation's daily numbers
+  function dayNations() {
+    const ECO = typeof Economy !== 'undefined', TX = typeof Tech !== 'undefined';
     if (ECO) Economy.daily();
     if (typeof Routes !== 'undefined') Routes.daily();
     if (TX) Tech.daily();
@@ -6807,6 +6873,11 @@ const Sim = (function () {
       c.stab += (stT - c.stab) * 0.005 - (war && c.ws < 0.3 ? 0.001 : 0);
       c.stab = Math.max(0, Math.min(1, c.stab)); c.ws = Math.max(0, Math.min(1, c.ws));
     }
+  }
+  // 3. supply, attrition and reinforcement for every army, then who has capitulated
+  function dayArmies() {
+    armiesByProv = new Map();
+    for (const o of G.armies) { if (!armiesByProv.has(o.prov)) armiesByProv.set(o.prov, []); armiesByProv.get(o.prov).push(o); }
     for (const a of G.armies) {
       a.supply = computeSupply(a);
       // out of supply: attrition, and organisation drains away
@@ -6822,20 +6893,27 @@ const Sim = (function () {
         }
       }
     }
+    armiesByProv = null;
     checkCapitulations();
+  }
+  // 4a. the AI nations plan their armies (every day at war, once a week in peace)
+  function dayAI() {
     const day = Math.floor(G.hour / 24);
     for (const c of Object.values(G.countries)) {
       if (!c.alive || isHuman(c.tag)) continue;
       const war = isAtWar(c.tag);
       if (war || (day + c.tag.charCodeAt(0)) % 7 === 0) aiCountry(c);
     }
+  }
+  // 4b. diplomacy, politics, peace talks, events and the autosave
+  function dayWorld() {
     if (typeof Diplo !== 'undefined') Diplo.dayTick();
     if (typeof Politics !== 'undefined') Politics.daily();
     if (typeof Peace !== 'undefined') Peace.daily();
     if (typeof Events !== 'undefined') Events.daily();
     if (typeof Save !== 'undefined') Save.tick();
-    playerOrders();
   }
+  const DAY_PARTS = [daySeaAir, dayNations, dayArmies, () => { dayAI(); dayWorld(); }];
 
   // humans: the local player plus, in a multiplayer game, every nation another person leads
   function isHuman(tag) { return tag === G.player || !!(G.humans && G.humans[tag]); }
@@ -6855,6 +6933,7 @@ const Sim = (function () {
   }
 
   return {
+    relDirty,
     init, newGame, restore, hourTick, dateStr, dateTime, hooks, mpCost,
     get G() { return G; }, set G(v) { G = v; },
     get MAP() { return MAP; },
@@ -7106,8 +7185,8 @@ const Diplo = (function () {
     let best = null, bv = 0;
     const mine = sidePower(Sim.coalition(tag));
     for (const c of Object.values(g.countries)) {
-      if (!c.alive || c.tag === tag || Sim.allied(c.tag, tag) || Sim.hasPact(c.tag, tag)) continue;
-      if (rel(tag, c.tag) > -10 || !borders(tag, c.tag)) continue;
+      if (!c.alive || c.tag === tag || !borders(tag, c.tag)) continue;   // the cheap test first: most nations are not neighbours
+      if (Sim.allied(c.tag, tag) || Sim.hasPact(c.tag, tag) || rel(tag, c.tag) > -10) continue;
       const v = power(c.tag) / Math.max(1, mine);
       if (v > 1.3 && v > bv) { bv = v; best = c.tag; }
     }
@@ -7547,7 +7626,8 @@ const Economy = (function () {
   const isInfra = k => !!INFRA[k];
   function infraKinds() { const n = INFRA_NAMES[eraId()] || INFRA_NAMES['ww2-1936']; return INFRA_KEYS.filter(k => n[k]); }
   function infra(pid, k) { const I = G().inf && G().inf[pid]; return (I && I[k]) || 0; }
-  function setInfra(pid, k, v) { const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
+  let infraVer = 0;   // bumped on every change, so other modules can keep lists of ports, radars and bases
+  function setInfra(pid, k, v) { infraVer++; const g = G(); if (!g.inf) g.inf = MAP().provs.map(() => null); if (!g.inf[pid]) g.inf[pid] = {}; g.inf[pid][k] = v; }
   const MOD_OF = { farm: 'farms', mine: 'mines', fuel: 'fuelworks', strat: 'stratworks', shop: 'workshops', arsenal: 'arsenals' };
   const FARM_TERRAIN = { plains: 1.5, forest: 0.8, hills: 0.9, mountains: 0.5, desert: 0.5, jungle: 0.7, marsh: 0.7, tundra: 0.3, urban: 0.8 };
 
@@ -7730,7 +7810,7 @@ const Economy = (function () {
   // opening harbours on every coastal city, bigger at capitals; forts where history built them
   function seedInfra() {
     const g = G(), M = MAP(), id = eraId();
-    g.inf = M.provs.map(() => null);
+    g.inf = M.provs.map(() => null); infraVer++;
     const coast = pid => typeof Seas !== 'undefined' ? Seas.isCoastal(pid) : coastal(M.provs[pid]);
     for (const p of M.provs) {
       const d = COUNTRY_BY_TAG[g.owner[p.id]];
@@ -8385,7 +8465,7 @@ const Economy = (function () {
   }
 
   return {
-    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
+    restore, GOODS, KINDS, KIND_KEYS, INFRA, INFRA_KEYS, infraKinds, infra, setInfra, infraVer: () => infraVer, isInfra, bestInfra, BASE_PRICE, ERA_ECO, setup, daily, monthly, goodName, kindName, coin, worldPrice, fairPrice, needOf, priceMul, bidAsk, priceTrend,
     slots, freeSlots, built, baseOut, provMul, canHost, dep, coastal, canBuild, build, cancelBuild, buildCost, bestProvince,
     dealsOf, dealBetween, trading, tradeSlots, routeOK, embargoed, balance, daysLeft, dependence, canDeal, answerDeal, sign, cancel,
     endDealsBetween, dropNation, embargo, liftEmbargo, aiTrade, joinsEmbargo, tradeKnowledge, recruitRate, stratUnit, anyShort, eraId, oilEra
@@ -9207,9 +9287,17 @@ const Navy = (function () {
 
   // ---------- ports ----------
   function isPort(pid) { return infra(pid, 'port') > 0; }
+  // every port on the map, gathered once per game hour rather than on each question
+  let portCache = { g: null, hour: -1, v: -1, list: [] };
+  function allPorts() {
+    const g = G();
+    const v = Economy.infraVer();
+    if (portCache.g !== g || portCache.hour !== g.hour || portCache.v !== v) portCache = { g, hour: g.hour, v, list: MAP().provs.filter(p => isPort(p.id)) };
+    return portCache.list;
+  }
   function portsOf(tag, allies) {
     const g = G(), out = [];
-    for (const p of MAP().provs) if (isPort(p.id) && (allies ? friendlyTo(tag, g.owner[p.id]) : g.owner[p.id] === tag)) out.push(p.id);
+    for (const p of allPorts()) if (allies ? friendlyTo(tag, g.owner[p.id]) : g.owner[p.id] === tag) out.push(p.id);
     return out;
   }
   // zones with a friendly port: where fleets repair and troops embark
@@ -9745,7 +9833,7 @@ const Navy = (function () {
     if (Object.keys(reachCache).length > 400) reachCache = {};
     const out = new Map();
     const start = new Set();
-    for (const p of MAP().provs) if (g.owner[p.id] === tag && p.core === tag && p.home && isPort(p.id)) for (const z of Seas.zonesOf(p.id)) start.add(z);
+    for (const p of allPorts()) if (g.owner[p.id] === tag && p.core === tag && p.home) for (const z of Seas.zonesOf(p.id)) start.add(z);
     let front = [...start];
     for (const z of front) out.set(z, 1 - lossIn(tag, z));
     while (front.length) {
@@ -9936,7 +10024,16 @@ const Navy = (function () {
       if (best >= 0 && mine2 > there * 1.3) { if (f.area !== best || f.mission !== 'hunt') setMission(f, 'hunt', best); }
       else if (f.mission !== 'patrol' || f.area !== home) setMission(f, 'patrol', home);
     }
-    if (war) aiInvade(c);
+  }
+  // AI landings are planned with the AI's army orders (Sim calls this just before them), when its armies stand idle
+  function aiInvasions() {
+    const g = G();
+    if (!g.fleets) return;
+    const day = Math.floor(g.hour / DAY);
+    for (const c of Object.values(g.countries)) {
+      if (!c.alive || c.tag === g.player) continue;
+      if ((day + c.tag.charCodeAt(1)) % 3 === 0 && Sim.isAtWar(c.tag)) aiInvade(c);
+    }
   }
   function aiInvade(c) {
     const g = G(), tag = c.tag;
@@ -9982,7 +10079,7 @@ const Navy = (function () {
     restore, ROLES, ROLE_KEYS, MISSIONS, ERA_NAVY, roles, warRoles, typeName, stat, setup, hour, daily, fleet, newFleet, removeFleet,
     fleetSpeed, fleetStats, power, comp, compLong, control, superiority, controller, enemyPower, orderMove, setMission, splitFleet, mergeFleets,
     canBuild, build, cancelBuild, docks, upkeep, convoyFactor, recordConvoy, lane, lossIn, seaReach, portSupply, portZones, homeZone, isPort,
-    freeTransports, planInvasion, invade, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,
+    freeTransports, planInvasion, invade, aiInvasions, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,
     raidPowerIn: z => raidCache.z[z] || {}, escortPower
   };
 })();
@@ -10194,19 +10291,37 @@ const Air = (function () {
     }
     // modern eras: missile batteries on the ground deny the sky as well as fighters do
     const aaK = typeof Eras !== 'undefined' && Eras.trench().aaK;
-    if (aaK) for (const a of G().armies) {
-      const mine = friendlyTo(tag, a.owner);
-      if (friendly ? !mine : !Sim.atWar(tag, a.owner)) continue;
-      const p = MAP().provs[a.prov];
-      if (!p || GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) > AREA_KM) continue;
-      for (const u of a.units) { const t = UNIT_TYPES[u.type]; if (t && t.aa) v += t.aa * u.str * aaK * 10; }
+    if (aaK) for (const b of hourly().aa) {
+      const mine = friendlyTo(tag, b.owner);
+      if (friendly ? !mine : !Sim.atWar(tag, b.owner)) continue;
+      if (GEO.haversineKm(b.lon, b.lat, pt[0], pt[1]) > AREA_KM) continue;
+      v += b.aa * aaK * 10;
     }
     return v;
   }
-  function radarBonus(tag, pt) {
+  // radar stations and air defence batteries, gathered once per game hour (superiority is cached hourly too)
+  let hourCache = { g: null, hour: -1 };
+  function hourly() {
     const g = G();
-    for (const p of MAP().provs) if (infra(p.id, 'radar') && friendlyTo(tag, g.owner[p.id]) && GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) < 600) return 1.3;
-    return 1;
+    const v = typeof Economy !== 'undefined' && Economy.infraVer ? Economy.infraVer() : 0;
+    if (hourCache.g === g && hourCache.hour === g.hour && hourCache.v === v && hourCache.armies === g.armies.length) return hourCache;
+    const radar = [], aa = [];
+    for (const p of MAP().provs) if (infra(p.id, 'radar')) radar.push(p);
+    for (const a of g.armies) {
+      let v = 0; for (const u of a.units) { const t = UNIT_TYPES[u.type]; if (t && t.aa) v += t.aa * u.str; }
+      const p = MAP().provs[a.prov];
+      if (v > 0 && p) aa.push({ owner: a.owner, lon: p.lon, lat: p.lat, aa: v });
+    }
+    return (hourCache = { g, hour: g.hour, v, armies: g.armies.length, radar, aa, rb: new Map() });
+  }
+  function radarBonus(tag, pt) {
+    const g = G(), H = hourly(), key = tag + ':' + Math.round(pt[0] * 2) + ':' + Math.round(pt[1] * 2);
+    let r = H.rb.get(key);
+    if (r !== undefined) return r;
+    r = 1;
+    for (const p of H.radar) if (friendlyTo(tag, g.owner[p.id]) && GEO.haversineKm(p.lon, p.lat, pt[0], pt[1]) < 600) { r = 1.3; break; }
+    H.rb.set(key, r);
+    return r;
   }
   // 0..1: this side's share of the sky over a point (0.5 when the sky is empty)
   function superiority(tag, pt) {
@@ -11862,7 +11977,7 @@ const Events = (function () {
           break;
         }
         case 'annex': if (alive(v) && v !== tag) annex(v, tag); break;
-        case 'puppet': if (alive(v) && v !== tag && !Sim.atWar(v, tag)) { const f = Sim.factionOf(v); if (f) Diplo.leaveFaction(v); g.countries[v].overlord = tag; } break;
+        case 'puppet': if (alive(v) && v !== tag && !Sim.atWar(v, tag)) { const f = Sim.factionOf(v); if (f) Diplo.leaveFaction(v); g.countries[v].overlord = tag; Sim.relDirty(); } break;
         case 'war': if (alive(v.on) && !Sim.atWar(tag, v.on)) { const w = Sim.declareWar(tag, v.on, false, { breakPact: true }); if (w && v.name) w.name = v.name; } break;
         case 'peace': if (alive(v) && Sim.atWar(tag, v)) Diplo.makePeace(tag, v, false); break;
         // a separate peace on the other side's terms: it keeps what it occupies (Brest-Litovsk, the 1918 armistices)
@@ -11891,7 +12006,7 @@ const Events = (function () {
     const c = g.countries[tag];
     g.countries[by].equipment += c.equipment; g.countries[by].manpower += c.manpower;
     c.alive = false; c.queue = [];
-    for (const o of Object.values(g.countries)) if (o.overlord === tag) o.overlord = by;
+    for (const o of Object.values(g.countries)) if (o.overlord === tag) o.overlord = by; Sim.relDirty();
     Sim.dropNation(tag);
     g.ownVer++; Diplo.evacuate();
   }
@@ -12080,6 +12195,7 @@ const Peace = (function () {
     c.queue = [];
     Sim.dropNation(loser);
     for (const o of Object.values(g.countries)) if (o.overlord === loser) o.overlord = null;
+    Sim.relDirty();
     if (conf.winners.some(w => Sim.isHuman(w.tag))) {
       g.peace = conf;
       aiTurns(conf);
@@ -12173,7 +12289,7 @@ const Peace = (function () {
   // ---------- the treaty ----------
   function revive(tag, provs) {
     const g = G(), c = g.countries[tag];
-    c.alive = true; c.queue = [];
+    c.alive = true; c.queue = []; Sim.relDirty();
     const cap = provs.find(id => MAP().provs[id].capital && MAP().provs[id].cityTag === tag) ?? provs.slice().sort((a, b) => value(b) - value(a))[0];
     c.capital = cap;
     const types = (typeof Eras !== 'undefined' ? Eras.unitsFor(tag) : Object.keys(UNIT_TYPES)).filter(t => !UNIT_TYPES[t].locked);
@@ -12199,13 +12315,13 @@ const Peace = (function () {
     for (const t in gained) { parts.push(nm(t) + ' takes ' + (gained[t].length > 3 ? gained[t].length + ' provinces' : gained[t].map(id => MAP().provs[id].name).join(', '))); Diplo.addRel(conf.loser, t, -10 - 5 * gained[t].length); }
     const kept = MAP().provs.filter(p => g.owner[p.id] === conf.loser).map(p => p.id);
     if (!kept.length) {
-      lc.alive = false;
+      lc.alive = false; Sim.relDirty();
       parts.push(nm(conf.loser) + ' ceases to exist');
     } else {
       if (g.owner[lc.capital] !== conf.loser) lc.capital = kept.slice().sort((a, b) => value(b) - value(a))[0];
       lc.stab = Math.max(0.2, lc.stab - 0.15); lc.ws = 0.1;
       revive(conf.loser, kept);
-      if (conf.puppet) { lc.overlord = conf.puppet; parts.push(nm(conf.loser) + ' becomes a subject of ' + nm(conf.puppet)); }
+      if (conf.puppet) { lc.overlord = conf.puppet; Sim.relDirty(); parts.push(nm(conf.loser) + ' becomes a subject of ' + nm(conf.puppet)); }
       for (const t of conf.repar) { g.repar = g.repar || []; g.repar.push({ from: conf.loser, to: t, perDay: Math.max(1, Math.round(Math.sqrt(kept.length) * 1.5)), until: g.hour + 2 * YEAR }); }
       const rp = [...new Set(conf.repar)]; if (rp.length) parts.push(nm(conf.loser) + ' pays reparations to ' + rp.map(nm).join(' and '));
       for (const w of conf.winners) if (alive(w.tag) && !Sim.atWar(w.tag, conf.loser)) g.dip.pacts[Sim.pairKey(Sim.root(w.tag), Sim.root(conf.loser))] = g.hour + 2 * YEAR;
@@ -13093,12 +13209,12 @@ const Figures = (function () {
     renderModel(g, parts, yaw, CELL / 2, CELL * 0.72 + parts.low * CE * PX * parts.fit, kind === 'plane', parts.fit);
     g.setTransform(1, 0, 0, 1, 0, 0);
   }
-  // Atlases are painted a row at a time within a small per-frame budget, so a new nation appearing on
-  // screen never stalls the game. Until a nation's atlas is finished, a neutral one stands in.
-  const atlases = new Map(); // key -> { cv, g, P, row }
-  // one row per model, plus 'fighting' poses for soldiers and guns (vehicles fight in their moving pose)
+  // Sprites are painted per nation and per model row, and only for the rows actually on screen: one nation's
+  // tanks never cost anything until its tanks are seen. Each row (8 headings x 4 poses) is painted one pose at a
+  // time inside a small per-frame budget, so a crowded new front never stalls the game. Until a row is ready
+  // the neutral grey figure stands in. Rows not drawn for a while are dropped and repainted on return.
   const FIGHTERS = ['soldiers', 'gun', 'warband', 'musket', 'rider', 'engine', 'cannon', 'archer', 'swords', 'riderbow', 'elephant'].concat(MODELED);
-  // only the models the current era's units use get rows, so an atlas stays small (about 12 rows)
+  // only the models the current era's units use get rows (about 12 to 20)
   let layout = null;
   function getLayout() {
     if (!layout) {
@@ -13110,44 +13226,72 @@ const Figures = (function () {
     return layout;
   }
   const rowsN = () => getLayout().rows.length;
-  const MAX_ATLASES = 28;   // about 2 MB each; nations off screen for a while are dropped and repainted on return
-  function newAtlas(color) {
-    const cv = document.createElement('canvas');
-    cv.width = CELL * DIRS * FRAMES; cv.height = CELL * rowsN();
-    return { cv, g: cv.getContext('2d'), P: palette(color), row: 0, used: 0 };
-  }
-  function paintRow(A) {
-    const [kind, fight] = getLayout().rows[A.row], g = A.g;
-    for (let f = 0; f < FRAMES; f++) {
-      const parts = build(kind, A.P, f, !!fight);
-      for (let d = 0; d < DIRS; d++) {
-        // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
-        const cx = (d * FRAMES + f) * CELL + CELL / 2, cy = A.row * CELL + CELL * (kind === 'plane' ? 0.78 : 0.66);
-        g.save(); g.beginPath(); g.rect((d * FRAMES + f) * CELL, A.row * CELL, CELL, CELL); g.clip();
-        renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
-        g.restore();
-      }
+  const MAX_ROWS = 320;   // painted rows kept, about 250 KB each
+  const atlases = new Map(); // tag -> { P, rows: [{ cv, g, done: bitmask of painted poses, used }] }
+  let painted = 0;
+  function newAtlas(color) { return { P: palette(color), rows: [], used: 0 }; }
+  function rowOf(A, r) {
+    let R = A.rows[r];
+    if (!R) {
+      if (painted >= MAX_ROWS) evict();
+      const cv = document.createElement('canvas');
+      cv.width = CELL * DIRS * FRAMES; cv.height = CELL;
+      R = A.rows[r] = { cv, g: cv.getContext('2d'), done: 0, used: 0, queued: false, parts: null };
+      painted++;
     }
-    A.row++;
+    return R;
   }
-  const queue = [];
+  function evict() {
+    let oldA = null, oldR = -1, ou = Infinity;
+    for (const A of atlases.values()) A.rows.forEach((R, i) => { if (R && !R.queued && R.used < ou) { ou = R.used; oldA = A; oldR = i; } });
+    if (oldA) { delete oldA.rows[oldR]; painted--; }
+  }
+  // paint one cell of a row: one pose seen from one heading (about 1 ms for a Blender model)
+  function paintCell(A, r, cell) {
+    const R = rowOf(A, r), [kind, fight] = getLayout().rows[r], g = R.g;
+    const d = Math.floor(cell / FRAMES), f = cell % FRAMES;
+    const pk = r + ':' + f;
+    let parts = R.parts && R.parts.get(pk);
+    if (!parts) { parts = build(kind, A.P, f, !!fight); (R.parts || (R.parts = new Map())).set(pk, parts); }
+    // heading d: 0 = east, counter-clockwise in 45 degree steps (map north is up)
+    const cx = cell * CELL + CELL / 2, cy = CELL * (kind === 'plane' ? 0.78 : 0.66);
+    g.save(); g.beginPath(); g.rect(cell * CELL, 0, CELL, CELL); g.clip();
+    renderModel(g, parts, d / DIRS * Math.PI * 2, cx, cy, kind === 'plane', scaleOf(kind));
+    g.restore();
+    R.done = (R.done | 1 << cell) >>> 0;
+    if (R.done === ALL) R.parts = null;
+  }
+  const ALL = 2 ** (DIRS * FRAMES) - 1;   // one bit per cell (32 cells)
+  const cellReady = (R, d, f) => (R.done >>> (d * FRAMES + f) & 1) === 1;
+  function paintRowNow(A, r) { for (let c = 0; c < DIRS * FRAMES; c++) if (!(rowOf(A, r).done >>> c & 1)) paintCell(A, r, c); }
+  const queue = [];   // [atlas, row] waiting to be painted
+  function want(A, r, first) {
+    const R = rowOf(A, r);
+    if (R.done === ALL || R.queued) return R;
+    R.queued = true; if (first) queue.unshift([A, r]); else queue.push([A, r]);
+    return R;
+  }
   let neutral = null;
   function atlasFor(tag, now) {
     let A = atlases.get(tag);
-    if (!A) {
-      if (atlases.size >= MAX_ATLASES) {
-        let old = null; for (const [t, x] of atlases) if (x.row >= rowsN() && (!old || x.used < atlases.get(old).used)) old = t;
-        if (old) atlases.delete(old);
-      }
-      A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); if (now) while (A.row < rowsN()) paintRow(A); else queue.push(A);
-    }
+    if (!A) { A = newAtlas(COUNTRY_BY_TAG[tag].color); atlases.set(tag, A); }
+    if (now) for (let r = 0; r < rowsN(); r++) paintRowNow(A, r);
     return A;
   }
   function pump(budgetMs) {
     const t0 = performance.now();
-    while (queue.length && performance.now() - t0 < budgetMs) { const A = queue[0]; paintRow(A); if (A.row >= rowsN()) queue.shift(); }
+    while (queue.length && performance.now() - t0 < budgetMs) {
+      const [A, r] = queue[0], R = A.rows[r];
+      if (!R) { queue.shift(); continue; }   // dropped meanwhile
+      let c = 0; while (c < DIRS * FRAMES && R.done >>> c & 1) c++;
+      if (c < DIRS * FRAMES) paintCell(A, r, c);
+      if (R.done === ALL) { R.queued = false; queue.shift(); }
+    }
   }
-  function ready() { if (!neutral) { neutral = newAtlas('#6b7058'); while (neutral.row < rowsN()) paintRow(neutral); } }
+  function ready() { if (!neutral) neutral = newAtlas('#6b7058'); }
+  // the grey stand-in is painted through the same budget, ahead of everything else; until even that is ready
+  // the figure is simply left out for a moment (its nation-coloured ring and counter still show)
+  function neutralRow(r) { return want(neutral, r, true); }
 
   const KIND_OF = { infantry: 'soldiers', marines: 'soldiers', paratroopers: 'soldiers', motorized: 'truck', mechanized: 'halftrack', tanks: 'tank', artillery: 'gun', recon: 'car' };
   // draw one figure with its feet at (x, y) screen px; size is the on-screen cell size in px
@@ -13168,14 +13312,26 @@ const Figures = (function () {
     if (row === undefined) row = L.index.get('soldiers');
     const ay = kind === 'plane' ? 0.78 : 0.66;
     ready();
-    const A = atlasFor(tag); A.used = t || performance.now();
-    ctx.drawImage(A.row >= L.rows.length ? A.cv : neutral.cv, (d * FRAMES + f) * CELL, row * CELL, CELL, CELL, x - size / 2, y - size * ay, size, size);
+    const A = atlasFor(tag), R = want(A, row);
+    R.used = performance.now();
+    const src = cellReady(R, d, f) ? R : neutralRow(row);
+    if (src !== R && !cellReady(src, d, f)) return;
+    ctx.drawImage(src.cv, (d * FRAMES + f) * CELL, 0, CELL, CELL, x - size / 2, y - size * ay, size, size);
   }
-  // queue nations to paint ahead of need, most important first
-  function warm(tags) { ready(); for (const t of tags) atlasFor(t); }
+  // queue nations to paint ahead of need: the rows their armies will show
+  function warm(tags) {
+    ready();
+    const L = getLayout(), G = typeof Sim !== 'undefined' && Sim.G;
+    for (const t of tags) {
+      if (!COUNTRY_BY_TAG[t]) continue;
+      const A = atlasFor(t), kinds = new Set();
+      if (G) for (const a of G.armies) if (a.owner === t) for (const u of a.units) kinds.add(kindOf(u.type));
+      for (const k of kinds) { const r = L.index.get(k); if (r !== undefined) want(A, r).used = performance.now(); }
+    }
+  }
   // forget painted atlases, e.g. after a new era recolours the nations
-  function reset() { atlases.clear(); queue.length = 0; layout = null; neutral = null; previewParts.clear(); }
-  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, _atlases: atlases };
+  function reset() { atlases.clear(); queue.length = 0; painted = 0; layout = null; neutral = null; previewParts.clear(); }
+  return { draw, warm, pump, reset, preview, KINDS, kindOf, atlasFor, pending: () => queue.length, painted: () => painted, _atlases: atlases };
 })();
 
 // Buildings as small low-poly 3D models, lit and shaded like the troop figures: industries and
@@ -14272,6 +14428,7 @@ const Render = (function () {
 
   function draw() {
     stepCamera();
+    flushText();
     if (state.dirtyOwners || !lmCountryBorders.length || (Sim.G && Sim.G.hour !== lastDeadHour && (lastDeadHour = Sim.G.hour, deadCount() !== lastDead))) recolor();
     if (!layer) buildLayer();
     const G = Sim.G;
@@ -14350,10 +14507,58 @@ const Render = (function () {
     ctx.restore();
   }
 
+  // Map lettering is painted once into small sprites and reused: outlined text is one of the dearest things a
+  // canvas draws, and the same names show every frame. Sizes snap to steps about 8% apart.
+  const textSprites = new Map();
+  let spritesMade = 0;
+  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { textSprites.clear(); TA.fresh.length = 0; TA.x = TA.y = TA.row = 0; if (TA.g) { TA.g.setTransform(1, 0, 0, 1, 0, 0); TA.g.clearRect(0, 0, TA.W, TA.H); } });   // repaint in the real fonts
+  function sprite(key, make) {
+    let sp = textSprites.get(key);
+    if (sp) { textSprites.delete(key); textSprites.set(key, sp); return sp; }   // keep recently used ones at the end
+    sp = make(); spritesMade++;
+    textSprites.set(key, sp);
+    if (textSprites.size > 700) textSprites.delete(textSprites.keys().next().value);
+    return sp;
+  }
+  const fsStep = fs => Math.pow(1.08, Math.round(Math.log(fs) / Math.log(1.08)));
+  function nationSprite(name, fs, toon) {
+    return sprite('n|' + name + '|' + fs.toFixed(2) + '|' + toon + '|' + dpr, () => {
+      const lk = name + '|' + toon + '|' + dpr; if (!labelSizes.has(lk)) labelSizes.set(lk, new Set()); labelSizes.get(lk).add(fs);
+      const g = document.createElement('canvas').getContext('2d');
+      const font = toon ? fs.toFixed(1) + 'px "Lilita One", "Barlow Semi Condensed", sans-serif' : '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
+      g.font = font;
+      const spacing = fs * (toon ? 0.07 : 0.12);
+      const widths = [...name].map(ch => g.measureText(ch).width);
+      const w = widths.reduce((a, b) => a + b, 0) + spacing * name.length;
+      const pad = Math.ceil(Math.max(2.5, fs * 0.16)) + 2, h = Math.ceil(fs * 1.3) + pad * 2;
+      g.canvas.width = Math.ceil((w + pad * 2) * dpr); g.canvas.height = Math.ceil(h * dpr);
+      g.scale(dpr, dpr); g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+      const cy = h / 2;
+      const run = fn => { let x = pad; [...name].forEach((ch, i) => { fn(ch, x + widths[i] / 2); x += widths[i] + spacing; }); };
+      if (toon) {
+        // chunky storybook lettering: white with a dark outline
+        g.lineJoin = 'round'; g.lineWidth = Math.max(2.5, fs * 0.16); g.strokeStyle = 'rgba(44,34,52,0.55)';
+        run((ch, x) => g.strokeText(ch, x, cy));
+        g.fillStyle = 'rgba(255,252,240,0.9)'; run((ch, x) => g.fillText(ch, x, cy));
+      } else { g.fillStyle = 'rgba(18,16,12,0.62)'; run((ch, x) => g.fillText(ch, x, cy)); }
+      return { cv: g.canvas, w, pad, h, alpha: toon ? 0.92 : 1 };
+    });
+  }
+  const labelSizes = new Map();   // name|look -> sizes painted
+  function nearestLabel(name, toon, fs) {
+    const set = labelSizes.get(name + '|' + toon + '|' + dpr); if (!set) return 0;
+    let best = 0;
+    for (const f of set) {
+      if (!textSprites.has('n|' + name + '|' + f.toFixed(2) + '|' + toon + '|' + dpr)) { set.delete(f); continue; }
+      if (f / fs > 0.6 && f / fs < 1.7 && (!best || Math.abs(Math.log(f / fs)) < Math.abs(Math.log(best / fs)))) best = f;
+    }
+    return best;
+  }
   function drawLabels(z) {
     if (z > 11) return;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const placed = [];
+    const zooming = cam.anim || performance.now() - lastZoomInput < 300;
+    const toon = look();
     for (const l of labels) {
       const px = l.size * z * (l.wide ? 0.34 : 0.26);
       if (px < 10 || l.n < 2 && px < 16) continue;
@@ -14361,26 +14566,88 @@ const Render = (function () {
       const [sx, sy] = worldToScreen(l.x, l.y);
       if (sx < -200 || sx > W + 200 || sy < -50 || sy > H + 50) continue;
       const name = COUNTRY_BY_TAG[l.tag].name.toUpperCase();
-      const toon = look();
-      ctx.font = toon ? fs.toFixed(1) + 'px "Lilita One", "Barlow Semi Condensed", sans-serif' : '600 ' + fs.toFixed(1) + 'px "Saira Stencil One", "Barlow Semi Condensed", sans-serif';
-      const spacing = fs * (toon ? 0.07 : 0.12);
-      const w = ctx.measureText(name).width + spacing * name.length;
+      let fsB = fsStep(fs);
+      // while the camera is zooming, reuse the nearest size already painted rather than painting every step
+      if (zooming && !textSprites.has('n|' + name + '|' + fsB.toFixed(2) + '|' + toon + '|' + dpr)) {
+        const near = nearestLabel(name, toon, fsB);
+        if (near) fsB = near;
+      }
+      const k = fs / fsB;
+      const sp = nationSprite(name, fsB, toon);
+      const w = sp.w * k;
       if (w > l.size * z * 1.6 && fs > 14) continue;
       const box = [sx - w / 2, sy - fs / 2, sx + w / 2, sy + fs / 2];
       if (placed.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
       placed.push(box);
-      ctx.globalAlpha = Math.max(0, Math.min(1, (11 - z) / 3));
-      ctx.fillStyle = 'rgba(18,16,12,0.62)';
-      let x = sx - w / 2;
-      if (toon) {
-        // chunky storybook lettering: white with a dark outline
-        ctx.globalAlpha *= 0.92; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2.5, fs * 0.16); ctx.strokeStyle = 'rgba(44,34,52,0.55)'; ctx.fillStyle = 'rgba(255,252,240,0.9)';
-        for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.strokeText(ch, x + cw / 2, sy); x += cw + spacing; }
-        x = sx - w / 2;
-      }
-      for (const ch of name) { const cw = ctx.measureText(ch).width; ctx.fillText(ch, x + cw / 2, sy); x += cw + spacing; }
+      ctx.globalAlpha = Math.max(0, Math.min(1, (11 - z) / 3)) * sp.alpha;
+      ctx.drawImage(sp.cv, sx - w / 2 - sp.pad * k, sy - sp.h * k / 2, (sp.w + sp.pad * 2) * k, sp.h * k);
       ctx.globalAlpha = 1;
     }
+  }
+  // small outlined text (division counts, building counts, sea names) from the same sprite cache
+  // Small lettering (city names, counts) shares one big canvas: drawing many pieces from a single source is far
+  // cheaper for the browser than from hundreds of little canvases. A new piece is painted on its own little canvas
+  // first and moved into the shared one at the start of the next frame, all together: changing the shared canvas
+  // between two draws from it would make the browser copy all of it each time. When it fills up it starts afresh.
+  const TA = { cv: null, g: null, x: 0, y: 0, row: 0, W: 2048, H: 2048, fresh: [] };
+  function packText(w, h, paint) {
+    const cv = document.createElement('canvas'), g = cv.getContext('2d');
+    cv.width = Math.ceil(w * dpr); cv.height = Math.ceil(h * dpr);
+    g.scale(dpr, dpr); paint(g);
+    const sp = { packed: true, cv, sx: 0, sy: 0, sw: cv.width, sh: cv.height };
+    TA.fresh.push(sp);
+    return sp;
+  }
+  function flushText() {
+    if (!TA.fresh.length) return;
+    if (!TA.cv) { TA.cv = document.createElement('canvas'); TA.cv.width = TA.W; TA.cv.height = TA.H; TA.g = TA.cv.getContext('2d'); }
+    const g = TA.g; g.setTransform(1, 0, 0, 1, 0, 0);
+    for (const sp of TA.fresh) {
+      if (!sp.cv) continue;
+      const pw = sp.sw + 2, ph = sp.sh + 2;
+      if (TA.x + pw > TA.W) { TA.x = 0; TA.y += TA.row; TA.row = 0; }
+      if (TA.y + ph > TA.H) {
+        // full: start afresh, and forget the pieces that lived there
+        g.clearRect(0, 0, TA.W, TA.H); TA.x = TA.y = TA.row = 0;
+        for (const [k, q] of textSprites) if (q.packed && !q.cv) textSprites.delete(k);
+      }
+      sp.sx = TA.x + 1; sp.sy = TA.y + 1;
+      g.drawImage(sp.cv, sp.sx, sp.sy);
+      sp.cv = null;
+      TA.x += pw; TA.row = Math.max(TA.row, ph);
+    }
+    TA.fresh.length = 0;
+  }
+  function drawPacked(sp, dx, dy) {
+    if (sp.cv) ctx.drawImage(sp.cv, dx, dy, sp.sw / dpr, sp.sh / dpr);
+    else ctx.drawImage(TA.cv, sp.sx, sp.sy, sp.sw, sp.sh, dx, dy, sp.sw / dpr, sp.sh / dpr);
+  }
+  const measurer = document.createElement('canvas').getContext('2d');
+  // small outlined text (division counts, building counts) from the same sprite cache
+  function outText(text, font, lw, stroke, fill, x, y, align) {
+    const sp = sprite('t|' + text + '|' + font + '|' + lw + '|' + stroke + '|' + fill + '|' + dpr, () => {
+      measurer.font = font;
+      const w = measurer.measureText(text).width, fs = parseFloat(font.match(/(\d+(?:\.\d+)?)px/)[1]), pad = Math.ceil(lw) + 1, h = Math.ceil(fs * 1.4) + pad * 2;
+      return Object.assign(packText(w + pad * 2, h, g => {
+        g.font = font; g.textAlign = 'left'; g.textBaseline = 'middle'; g.lineJoin = 'miter';
+        g.lineWidth = lw; g.strokeStyle = stroke; g.strokeText(text, pad, h / 2);
+        g.fillStyle = fill; g.fillText(text, pad, h / 2);
+      }), { w, pad, h });
+    });
+    const ox = align === 'center' ? sp.w / 2 : align === 'right' ? sp.w : 0;
+    drawPacked(sp, x - ox - sp.pad, y - sp.h / 2);
+  }
+  function citySprite(name, isCap, toon) {
+    return sprite('c|' + name + '|' + isCap + '|' + toon + '|' + dpr, () => {
+      const font = toon ? (isCap ? '600 14px' : '500 12.5px') + ' "Fredoka", "Barlow Semi Condensed", sans-serif' : (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
+      measurer.font = font;
+      const w = measurer.measureText(name).width, pad = 3, h = 20;
+      return Object.assign(packText(w + pad * 2, h, g => {
+        g.font = font; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.lineJoin = 'round'; g.lineWidth = toon ? 4 : 3; g.strokeStyle = toon ? 'rgba(40,30,50,0.9)' : 'rgba(16,16,12,0.85)'; g.strokeText(name, pad, h / 2);
+        g.fillStyle = toon ? '#ffffff' : '#f1ead2'; g.fillText(name, pad, h / 2);
+      }), { w, pad, h });
+    });
   }
 
   function star(x, y, r) {
@@ -14403,13 +14670,11 @@ const Render = (function () {
       if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
       (isCap ? starPts : dotPts).push(sx, sy);
       if ((isCap && z > 4.5) || z > 13) {
-        ctx.font = look() ? (isCap ? '600 14px' : '500 12.5px') + ' "Fredoka", "Barlow Semi Condensed", sans-serif' : (isCap ? '600 13px' : '500 12px') + ' "Barlow Semi Condensed", sans-serif';
-        const w = ctx.measureText(p.city).width;
+        const sp = citySprite(p.city, !!isCap, look()), w = sp.w;
         const box = [sx + 6, sy - 8, sx + 10 + w, sy + 8];
         if (placedCity.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
         placedCity.push(box);
-        ctx.lineJoin = 'round'; ctx.lineWidth = look() ? 4 : 3; ctx.strokeStyle = look() ? 'rgba(40,30,50,0.9)' : 'rgba(16,16,12,0.85)'; ctx.strokeText(p.city, sx + 8, sy);
-        ctx.fillStyle = look() ? '#ffffff' : '#f1ead2'; ctx.fillText(p.city, sx + 8, sy);
+        drawPacked(sp, sx + 8 - sp.pad, sy - sp.h / 2);
       }
     }
     ctx.beginPath();
@@ -14498,9 +14763,7 @@ const Render = (function () {
           ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.closePath(); ctx.fillStyle = '#d6b052'; ctx.fill();
         } else if (count > 1 && size >= 16) {
           const bx = x + size - 3, by = y + size - 3;
-          ctx.font = '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif';
-          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(16,16,12,0.9)'; ctx.strokeText(count, bx, by);
-          ctx.fillStyle = '#f1ead2'; ctx.fillText(count, bx, by);
+          outText(String(count), '700 ' + Math.round(Math.max(9, size * 0.36)) + 'px "Barlow Semi Condensed", sans-serif', 3, 'rgba(16,16,12,0.9)', '#f1ead2', bx, by, 'center');
         }
       };
       if (q) for (const j of q) put(j.kind, 1, j);
@@ -15054,8 +15317,7 @@ const Render = (function () {
         if (compact) {
           if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
           counterHits.push({ x: sx - fig * 0.4, y: figTop, w: fig * 0.8, h: fig * 0.75, army: a, group: grp });
-          ctx.font = '700 10px "Barlow Semi Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(String(divs), sx + fig * 0.42, figTop + 3); ctx.fillStyle = '#f0e8cc'; ctx.fillText(String(divs), sx + fig * 0.42, figTop + 3);
+          outText(String(divs), '700 10px "Barlow Semi Condensed", sans-serif', 3, 'rgba(0,0,0,0.75)', '#f0e8cc', sx + fig * 0.42, figTop + 3, 'center');
           return;
         }
         const w = 44, h = 20;
@@ -15318,7 +15580,7 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();
 
 // Interface: start screen, top bar, dossier panels, army tray, orders and input.
@@ -17052,11 +17314,20 @@ const UI = (function () {
     if (!sel.collapsed && sel.tab === 'econ') try { Buildings.spin($('#rp-body'), era, col, yaw); } catch (e) { }
     if (!$('#leftpanel').hidden) try { Buildings.spin($('#leftpanel'), era, col, yaw); } catch (e) { }
   }
+  // the turning models in the Train list: about 25 turns of the wheel a second is smooth enough, and only the
+  // cards scrolled into view are drawn
+  let spinAt = 0;
   function spinModels(now) {
     if (sel.tab !== 'recruit' || !$('#drawer').classList.contains('open')) return;
+    if (now - spinAt < 40) return;
+    spinAt = now;
     const yaw = (now % SPIN_MS) / SPIN_MS * Math.PI * 2;
-    const tag = Sim.G.player;
-    $('#rp-body').querySelectorAll('canvas[data-spin]').forEach(cv => { try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { } });
+    const tag = Sim.G.player, body = $('#rp-body'), box = body.getBoundingClientRect();
+    body.querySelectorAll('canvas[data-spin]').forEach(cv => {
+      const r = cv.getBoundingClientRect();
+      if (r.bottom < box.top || r.top > box.bottom) return;
+      try { Figures.preview(cv, tag, cv.dataset.spin, yaw); } catch (e) { }
+    });
   }
   function frame(now) {
     const dtPan = lastPan ? Math.min(0.1, (now - lastPan) / 1000) : 0; lastPan = now;

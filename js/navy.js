@@ -81,9 +81,17 @@ const Navy = (function () {
 
   // ---------- ports ----------
   function isPort(pid) { return infra(pid, 'port') > 0; }
+  // every port on the map, gathered once per game hour rather than on each question
+  let portCache = { g: null, hour: -1, v: -1, list: [] };
+  function allPorts() {
+    const g = G();
+    const v = Economy.infraVer();
+    if (portCache.g !== g || portCache.hour !== g.hour || portCache.v !== v) portCache = { g, hour: g.hour, v, list: MAP().provs.filter(p => isPort(p.id)) };
+    return portCache.list;
+  }
   function portsOf(tag, allies) {
     const g = G(), out = [];
-    for (const p of MAP().provs) if (isPort(p.id) && (allies ? friendlyTo(tag, g.owner[p.id]) : g.owner[p.id] === tag)) out.push(p.id);
+    for (const p of allPorts()) if (allies ? friendlyTo(tag, g.owner[p.id]) : g.owner[p.id] === tag) out.push(p.id);
     return out;
   }
   // zones with a friendly port: where fleets repair and troops embark
@@ -619,7 +627,7 @@ const Navy = (function () {
     if (Object.keys(reachCache).length > 400) reachCache = {};
     const out = new Map();
     const start = new Set();
-    for (const p of MAP().provs) if (g.owner[p.id] === tag && p.core === tag && p.home && isPort(p.id)) for (const z of Seas.zonesOf(p.id)) start.add(z);
+    for (const p of allPorts()) if (g.owner[p.id] === tag && p.core === tag && p.home) for (const z of Seas.zonesOf(p.id)) start.add(z);
     let front = [...start];
     for (const z of front) out.set(z, 1 - lossIn(tag, z));
     while (front.length) {
@@ -810,7 +818,16 @@ const Navy = (function () {
       if (best >= 0 && mine2 > there * 1.3) { if (f.area !== best || f.mission !== 'hunt') setMission(f, 'hunt', best); }
       else if (f.mission !== 'patrol' || f.area !== home) setMission(f, 'patrol', home);
     }
-    if (war) aiInvade(c);
+  }
+  // AI landings are planned with the AI's army orders (Sim calls this just before them), when its armies stand idle
+  function aiInvasions() {
+    const g = G();
+    if (!g.fleets) return;
+    const day = Math.floor(g.hour / DAY);
+    for (const c of Object.values(g.countries)) {
+      if (!c.alive || c.tag === g.player) continue;
+      if ((day + c.tag.charCodeAt(1)) % 3 === 0 && Sim.isAtWar(c.tag)) aiInvade(c);
+    }
   }
   function aiInvade(c) {
     const g = G(), tag = c.tag;
@@ -856,7 +873,7 @@ const Navy = (function () {
     restore, ROLES, ROLE_KEYS, MISSIONS, ERA_NAVY, roles, warRoles, typeName, stat, setup, hour, daily, fleet, newFleet, removeFleet,
     fleetSpeed, fleetStats, power, comp, compLong, control, superiority, controller, enemyPower, orderMove, setMission, splitFleet, mergeFleets,
     canBuild, build, cancelBuild, docks, upkeep, convoyFactor, recordConvoy, lane, lossIn, seaReach, portSupply, portZones, homeZone, isPort,
-    freeTransports, planInvasion, invade, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,
+    freeTransports, planInvasion, invade, aiInvasions, cancelInvasion, progress, phaseText, stepArmy, shoreSupport, dropNation, nav, computeControl,
     raidPowerIn: z => raidCache.z[z] || {}, escortPower
   };
 })();
