@@ -8,7 +8,7 @@ const Menu = (function () {
 
   // ---------- preferences ----------
   const PREFS_KEY = 'ironmeridian.prefs', BG_KEY = 'ironmeridian.bg';
-  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
+  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
   let prefs = null, bgMemory = null;
   function load() {
     let p = {};

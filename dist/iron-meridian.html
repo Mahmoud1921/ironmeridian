@@ -238,7 +238,7 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 #mapctl { position: absolute; right: 14px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 14; display: flex; gap: 4px; }
 #mapctl .iconbtn { width: 38px; height: 38px; background: rgba(40,48,41,.95); }
 #mapctl .iconbtn svg.i { width: 19px; height: 19px; }
-#keyhint { position: absolute; left: 50%; top: calc(var(--top) + 10px); transform: translateX(-50%); display: flex; align-items: center; gap: 14px; z-index: 14; padding: 6px 8px 6px 14px; font-size: 13px; color: var(--muted); background: rgba(15,19,17,.9); border: 1px solid var(--line); white-space: nowrap; }
+#keyhint { position: absolute; left: 50%; top: calc(var(--top) + 46px); transform: translateX(-50%); display: flex; align-items: center; gap: 14px; z-index: 14; padding: 6px 8px 6px 14px; font-size: 13px; color: var(--muted); background: rgba(15,19,17,.9); border: 1px solid var(--line); white-space: nowrap; }
 #keyhint kbd { min-width: 22px; height: 22px; }
 #keyhint .iconbtn { width: 24px; height: 24px; }
 #hint { position: absolute; left: 50%; top: calc(var(--top) + 12px); transform: translateX(-50%); z-index: 25; padding: 8px 14px; background: rgba(20,24,20,.95); border: 1px solid var(--brass); font-size: 14px; }
@@ -611,6 +611,28 @@ input[type=range] { width: 180px; accent-color: var(--brass); }
 /* turning unit models in the Train list */
 canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px; background: radial-gradient(circle at 50% 66%, rgba(214,196,150,.28), rgba(214,196,150,.08) 45%, rgba(0,0,0,0) 72%); }
 
+/* ---------- goals and the first-game tutorial ---------- */
+#goalpill { position: absolute; left: 50%; transform: translateX(-50%); top: calc(var(--top) + 8px); z-index: 13; display: flex; align-items: center; gap: 10px; padding: 5px 12px; font-size: 13px; color: var(--paper); background: rgba(15,19,17,.92); border: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+#goalpill .bar { width: 90px; height: 5px; background: rgba(255,255,255,.1); }
+#goalpill .bar i { display: block; height: 100%; background: var(--brass); }
+#goalpill .sub { color: var(--muted); }
+#goalpill.done { border-color: var(--brass); }
+@media (max-width: 820px) { #goalpill { display: none; } }
+.goal { display: grid; grid-template-columns: 22px 1fr auto; gap: 4px 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); }
+.goal:first-of-type { border-top: 0; }
+.goal .mark { width: 18px; height: 18px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--muted); }
+.goal.on .mark { border-color: var(--brass); color: var(--brass); }
+.goal b { font-weight: 600; }
+.goal .sub { grid-column: 2 / 4; color: var(--muted); font-size: 12.5px; }
+.goal .bar { grid-column: 2 / 4; height: 5px; background: rgba(255,255,255,.1); }
+.goal .bar i { display: block; height: 100%; background: var(--brass); }
+.goal .num { color: var(--muted); font-size: 12.5px; }
+#coach { pointer-events: none; position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 40; width: min(420px, calc(100vw - 32px)); padding: 14px 16px; background: rgba(15,19,17,.96); border: 1px solid var(--brass); display: flex; flex-direction: column; gap: 10px; }
+#coach .ct { font-size: 14px; line-height: 1.45; }
+#coach .ct b { color: var(--brass); }
+#coach .cb { pointer-events: auto; display: flex; justify-content: space-between; gap: 8px; }
+.coachlit { position: relative; z-index: 41; box-shadow: 0 0 0 2px var(--brass), 0 0 18px rgba(201,165,90,.5); }
+
 </style>
 </head>
 <body>
@@ -644,6 +666,7 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
     <symbol id="i-merge" viewBox="0 0 24 24"><path d="M12 3v7.5M12 10.5 5.5 19M12 10.5l6.5 8.5M12 3 9 6M12 3l3 3"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4.5 4.5L19 7"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
@@ -676,6 +699,7 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
         <div id="tb-date" class="num"></div>
         <div id="tb-speed" aria-label="Game speed"></div>
       </div>
+      <button class="iconbtn" id="tb-goals" aria-label="Goals"><svg class="i"><use href="#i-flagp"/></svg></button>
       <button id="tb-net" aria-label="Online players"></button>
       <button class="iconbtn" id="tb-menu" aria-label="Menu"><svg class="i"><use href="#i-menu"/></svg></button>
     </header>
@@ -699,6 +723,7 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
     <aside id="leftpanel" class="panel" hidden></aside>
     <div id="ucard" class="panel" hidden></div>
 
+    <div id="coach" hidden><div class="ct"></div><div class="cb"><button class="btn sm ghost" id="co-skip">Skip the tutorial</button><button class="btn sm primary" id="co-next">Next</button></div></div>
     <div id="keyhint" hidden><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move the map</span><span class="keys">Drag to select armies</span><button class="iconbtn x" id="kh-x" aria-label="Hide hint"><svg class="i"><use href="#i-x"/></svg></button></div>
 
     <div id="mapctl">
@@ -6917,6 +6942,7 @@ const Sim = (function () {
     if (typeof Politics !== 'undefined') Politics.daily();
     if (typeof Peace !== 'undefined') Peace.daily();
     if (typeof Events !== 'undefined') Events.daily();
+    if (typeof Goals !== 'undefined') Goals.daily();
     if (typeof Save !== 'undefined') Save.tick();
   }
   const DAY_PARTS = [daySeaAir, dayNations, dayArmies, () => { dayAI(); dayWorld(); }];
@@ -15767,6 +15793,9 @@ const UI = (function () {
     $('#tb-slower').onclick = () => setSpeed(Sim.G.speed - 1);
     $('#tb-faster').onclick = () => setSpeed(Sim.G.speed + 1);
     $('#tb-menu').onclick = openMenu;
+    $('#tb-goals').onclick = () => openGoals();
+    $('#co-next').onclick = () => coachNext();
+    $('#co-skip').onclick = () => coachEnd(true);
     $('#tb-nation').onclick = () => { const G = Sim.G; if (!G) return; selectProvince(G.countries[G.player].capital, true); };
     // clicking the open tab folds the panel away; any tab opens it again
     document.querySelectorAll('#rail .tab').forEach(t => t.onclick = () => openTab(t.dataset.tab, true));
@@ -15786,6 +15815,13 @@ const UI = (function () {
     netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
+    Goals.hooks.goal = (kind, goal, p, days) => {
+      if (kind === 'side') toast('Goal reached: ' + goal.name + '.', -1, 'win');
+      else toast(days >= 365 ? 'One year left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.' : 'Three months left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.', -1, 'loss');
+      refreshGoals();
+    };
+    Goals.hooks.won = () => { refreshGoals(); gameWon(); };
+    Goals.hooks.lost = (s, p) => { refreshGoals(); timeUp(p); };
     Events.hooks.show = () => { if ($('#modal').hidden) showEvent(); };
     Peace.hooks.show = () => showPeace();
     const saveOnLeave = () => { if (typeof Save !== 'undefined') Save.autosaveNow(); };
@@ -15925,6 +15961,9 @@ const UI = (function () {
     sel.collapsed = true; // the side bar starts closed: the map is clear until a tab is opened
     renderTrays(); renderRight(); refreshTop(); renderLeft();
     if (!Net.isClient()) toast(loaded ? 'Game loaded: ' + Sim.G.countries[tag].name + ', ' + Sim.dateStr(Sim.G.hour) + '. Press Space to continue.' : 'You lead ' + Sim.G.countries[tag].name + '. Press Space or the play button to start the clock.', cap ? cap.id : -1, 'info');
+    if (loaded) Goals.restore(); else Goals.begin();
+    refreshGoals();
+    if (!loaded) coachStart();
     if (Sim.G.peace) showPeace(); else if (Events.open().length) showEvent();
     if (!loaded && Menu.takeHost()) hostGame();
   }
@@ -15932,6 +15971,7 @@ const UI = (function () {
   // ---------- top bar ----------
   function refreshTop() {
     const G = Sim.G; if (!G) return;
+    if (G.goals && $('#goalpill')) refreshGoals();
     const c = G.countries[G.player];
     const nb = $('#tb-net');
     if (nb) { const on = Net.active(); nb.classList.toggle('on', on); if (on) { const n = Net.playerList().length; const t = (Net.role === 'host' ? 'Code ' + Net.code : 'Online') + ' · ' + n + ' player' + (n === 1 ? '' : 's'); if (nb.textContent !== t) nb.textContent = t; } }
@@ -17218,6 +17258,7 @@ const UI = (function () {
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);
+    coachEnd(false); if ($('#goalpill')) $('#goalpill').hidden = true;
     Menu.show();
   }
   function gameOver(won) {
@@ -17226,6 +17267,104 @@ const UI = (function () {
     modal(`<h2 class="display" style="font-size:28px">${won ? 'Victory' : esc(G.countries[G.player].name) + ' has fallen'}</h2>
       <p class="note">Your government capitulated on ${Sim.dateStr(G.hour)} after ${days} days. Battles won: ${G.stats.battlesWon}, lost: ${G.stats.battlesLost}. Provinces captured: ${G.stats.captured}.</p>
       <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="new">Choose a new nation</button></div>`, () => backToStart());
+  }
+
+  // ---------- goals: what this era asks of the player ----------
+  function goalRow(g) {
+    const p = Goals.progress(g);
+    return `<div class="goal ${p.done ? 'on' : ''}">
+      <span class="mark">${p.done ? '<svg class="i"><use href="#i-check"/></svg>' : ''}</span>
+      <b>${esc(g.name)}</b><span class="num">${g.kind === 'gold' ? Math.min(p.now, p.target).toLocaleString() : p.now} / ${g.kind === 'gold' ? p.target.toLocaleString() : p.target}</span>
+      <span class="sub">${esc(g.main || !g.note ? p.text : g.note)}</span>
+      <span class="bar"><i style="width:${Math.round(p.share * 100)}%"></i></span></div>`;
+  }
+  function goalsHTML() {
+    const G = Sim.G, s = Goals.info();
+    if (!s) return '';
+    const m = Goals.progress(s.main), days = Goals.daysLeft();
+    return `<h2 class="display" style="font-size:24px">Your goals</h2>
+      <p class="note">${esc(G.countries[G.player].name)} · ${esc(s.note)}</p>
+      <div class="label">Main goal${s.won ? ' · reached' : ''}</div>${goalRow(s.main)}
+      <div class="label">Side goals</div>${s.sides.map(goalRow).join('')}
+      <p class="note">${s.won ? 'You have already won this era. Play on as long as you like.'
+        : s.lost ? 'The date has passed. You can play on freely.'
+        : 'By ' + esc(Goals.deadlineText()) + ' · ' + (days > 730 ? Math.round(days / 365) + ' years left' : days > 60 ? Math.round(days / 30) + ' months left' : days + ' days left') + '. Losing your last province, or your capital falling with no land left, ends the game.'}</p>`;
+  }
+  function openGoals() {
+    if (!Sim.G || !Goals.info()) return;
+    modal(goalsHTML() + '<div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="ok">Close</button></div>');
+  }
+  function refreshGoals() {
+    const s = Sim.G && Goals.info();
+    let el = $('#goalpill');
+    if (!s) { if (el) el.hidden = true; return; }
+    if (!el) { el = document.createElement('button'); el.id = 'goalpill'; el.type = 'button'; el.onclick = () => openGoals(); $('#keyhint').before(el); }
+    const p = Goals.progress(s.main), days = Goals.daysLeft();
+    el.hidden = false;
+    el.classList.toggle('done', p.done);
+    const html = `<b>${esc(s.main.name)}</b><span class="bar"><i style="width:${Math.round(p.share * 100)}%"></i></span>` +
+      `<span class="sub">${p.now} / ${p.target}${s.won ? ' · won' : s.lost ? '' : ' · by ' + esc(String(s.until <= 0 ? (1 - s.until) + ' BC' : s.until))}</span>`;
+    if (el._html !== html) { el.innerHTML = html; el._html = html; }
+    if (!$('#modal').hidden && $('#modal .panel') && /Your goals/.test($('#modal').textContent)) openGoals();
+  }
+  function gameWon() {
+    const G = Sim.G, s = Goals.info();
+    if (typeof Sound !== 'undefined') Sound.notice('win');
+    G.paused = true; refreshTop();
+    modal(`<h2 class="display" style="font-size:28px">${esc(s.main.name)}</h2>
+      <p class="note">${esc(G.countries[G.player].name)} reached its goal on ${Sim.dateStr(G.hour)}. Battles won: ${G.stats.battlesWon}. Provinces captured: ${G.stats.captured}.</p>
+      ${goalsHTML().replace(/^<h2[\s\S]*?<\/p>/, '')}
+      <div style="display:flex;justify-content:space-between;gap:8px"><button class="btn" data-x="new">Choose a new nation</button><button class="btn primary" data-x="ok">Keep playing</button></div>`,
+      x => { if (x === 'new') backToStart(); });
+  }
+  function timeUp(p) {
+    const G = Sim.G;
+    if (typeof Sound !== 'undefined') Sound.notice('loss');
+    G.paused = true; refreshTop();
+    modal(`<h2 class="display" style="font-size:26px">The years ran out</h2>
+      <p class="note">${esc(Goals.info().main.name)} was not reached by ${esc(Goals.deadlineText())}: ${p.now} of ${p.target}. Your nation stands, and you may play on for as long as you like.</p>
+      <div style="display:flex;justify-content:space-between;gap:8px"><button class="btn" data-x="new">Choose a new nation</button><button class="btn primary" data-x="ok">Play on</button></div>`,
+      x => { if (x === 'new') backToStart(); });
+  }
+
+  // ---------- the first game: a short tutorial that follows what the player does ----------
+  const STEPS = [
+    { t: 'Welcome to <b>Iron Meridian</b>. You lead a nation through its era, province by province. Press <b>Space</b> or the play button to start the clock, and again to pause.', lit: '#tb-play', on: () => !Sim.G.paused },
+    { t: 'This is your goal for the era. Click it at any time to see the side goals and the date you have to reach them by.', lit: '#goalpill' },
+    { t: 'Click one of your armies on the map to select it. Drag across several to take them all.', lit: null, on: () => sel.armies.length > 0 },
+    { t: 'Now <b>right-click</b> a neighbouring province to march there. Right-click an enemy to attack instead.', lit: null, on: () => Sim.G.armies.some(a => a.owner === Sim.G.player && a.path && a.path.length) },
+    { t: 'The side bar holds everything else. <b>Train</b> raises new divisions; keys <b>1</b> to <b>9</b> open the tabs.', lit: '[data-tab="recruit"]', on: () => sel.tab === 'recruit' && !sel.collapsed },
+    { t: '<b>Economy</b> builds farms, mines and factories in your provinces, which pay for the army.', lit: '[data-tab="econ"]', on: () => sel.tab === 'econ' && !sel.collapsed },
+    { t: '<b>Nations</b> is where you make friends, guarantee neighbours and declare war.', lit: '[data-tab="diplo"]', on: () => sel.tab === 'diplo' && !sel.collapsed },
+    { t: 'That is everything you need. <b>Esc</b> opens the menu, where you can save, change the sound, or turn these hints off. Good luck.', lit: null }
+  ];
+  let coach = -1, coachTimer = 0;
+  function coachShow() {
+    const st = STEPS[coach], el = $('#coach');
+    document.querySelectorAll('.coachlit').forEach(e => e.classList.remove('coachlit'));
+    if (!st) { el.hidden = true; return; }
+    el.hidden = false;
+    el.querySelector('.ct').innerHTML = st.t;
+    $('#co-next').textContent = coach === STEPS.length - 1 ? 'Finish' : 'Next';
+    if (st.lit) { const t = document.querySelector(st.lit); if (t) t.classList.add('coachlit'); }
+  }
+  function coachNext() { coach++; if (coach >= STEPS.length) coachEnd(true); else coachShow(); }
+  function coachEnd(done) {
+    coach = -1; clearInterval(coachTimer); coachTimer = 0;
+    document.querySelectorAll('.coachlit').forEach(e => e.classList.remove('coachlit'));
+    $('#coach').hidden = true;
+    if (done) Menu.setPref('taught', true);
+  }
+  function coachStart() {
+    if (Menu.prefs().taught || innerWidth <= 820 || Net.isClient()) return;
+    coach = 0; coachShow();
+    coachTimer = setInterval(() => {
+      if (!Sim.G) return coachEnd(false);
+      const st = STEPS[coach];
+      const busy = !$('#modal').hidden || !$('#evside').hidden || !$('#offer').hidden;
+      $('#coach').hidden = busy || coach < 0;   // step aside while a card or the menu is open
+      if (!busy && st && st.on && st.on()) coachNext();
+    }, 600);
   }
 
   // ---------- map input ----------
@@ -17467,7 +17606,7 @@ const UI = (function () {
   }
 
   return { init, showStart, chooseNation, loadGame, openSaves, curEra, frame, openTab, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _showEvent: () => showEvent(), _showPeace: () => showPeace(), _openSaves: g => openSaves(g), _loadGame: d => loadGame(d), _selected: () => sel.armies.slice(),
-    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }) };
+    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }), _goals: () => openGoals(), _coach: () => coach };
 })();
 
 // Menu background: an original painting drawn in code (a dusk battlefield where soldiers of all six eras charge each other), with rising embers.
@@ -17715,7 +17854,7 @@ const Menu = (function () {
 
   // ---------- preferences ----------
   const PREFS_KEY = 'ironmeridian.prefs', BG_KEY = 'ironmeridian.bg';
-  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
+  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
   let prefs = null, bgMemory = null;
   function load() {
     let p = {};
@@ -18241,6 +18380,158 @@ const Sound = (() => {
     document.addEventListener('click', e => { if (e.target.closest && e.target.closest('button, .row.click, [data-tab], label.check, a.lnk')) click(); }, true);
   }
   return { init, unlock, apply, fire, click, alarm, notice, get ctx() { return ac; }, get _out() { return master; }, _song: song };
+})();
+
+// Each era gives the player one main goal and a couple of side goals, with a date to reach them by.
+// The targets grow out of the nation the player picked, so a small country is not asked to do a great
+// power's work. Reaching the main goal wins the game; the date passing without it loses it. Either way the
+// player may carry on afterwards, and the game says so.
+const Goals = (() => {
+  const G = () => Sim.G;
+  const start = () => (G() && G().goals) || null;
+
+  // ---------- what a goal can ask for ----------
+  // Each kind reads the game and returns how far along the player is, as a number against a target.
+  const KIND = {
+    provinces: {
+      now: () => G().owner.reduce((n, t) => n + (t === G().player), 0),
+      text: t => 'Hold ' + t + ' provinces'
+    },
+    capitals: {
+      now: () => {
+        const g = G(), me = g.player; let n = 0;
+        for (const tag in g.countries) { const c = g.countries[tag]; if (tag !== me && c.capital >= 0 && g.owner[c.capital] === me) n++; }
+        return n;
+      },
+      text: t => 'Take ' + t + ' enemy capital' + (t === 1 ? '' : 's')
+    },
+    battles: { now: () => G().stats.battlesWon, text: t => 'Win ' + t + ' battles' },
+    techs: { now: () => (G().countries[G().player].techs || []).length, text: (t, more) => more ? 'Research ' + t + ' more technologies' : 'Research ' + t + ' technologies' },
+    allies: {
+      now: () => { const g = G(); let n = 0; for (const tag in g.countries) if (tag !== g.player && g.countries[tag].alive && Sim.allied(tag, g.player)) n++; return n; },
+      text: (t, more) => more ? 'Win over ' + t + ' new all' + (t === 1 ? 'y' : 'ies') : 'Stand with ' + t + ' all' + (t === 1 ? 'y' : 'ies')
+    },
+    gold: {
+      now: () => { const e = G().countries[G().player].eco; return Math.max(0, Math.round(e ? e.gold : 0)); },
+      text: (t, more) => more ? 'Put aside ' + t.toLocaleString() + ' gold more than you began with' : 'Put ' + t.toLocaleString() + ' gold in the treasury'
+    },
+    industry: {
+      now: () => { const g = G(), me = g.player; let n = 0; for (let p = 0; p < g.owner.length; p++) { if (g.owner[p] !== me) continue; const I = g.ind[p]; if (I) for (const k of Economy.KIND_KEYS) n += I[k] || 0; } return n; },
+      text: (t, more) => more ? 'Build ' + t + ' new works and factories' : 'Build ' + t + ' works and factories'
+    }
+  };
+
+  // ---------- the eras ----------
+  // grow: how much bigger the player's lands must become; plus: provinces on top of that.
+  // A side goal with `of` scales with the starting size too, within its own floor and ceiling.
+  const ERAS = {
+    'greece-431bc': {
+      until: -403, name: 'Hegemon of Greece',
+      note: 'The long war between Athens and Sparta decides who leads the Greek world. Make it you.',
+      main: { kind: 'provinces', grow: 2, plus: 2 },
+      sides: [{ kind: 'capitals', n: 1, name: 'Humble a rival', note: 'Take the home city of another power.' },
+              { kind: 'battles', n: 8, name: 'Proven in the phalanx', note: 'Win eight battles in the field.' }]
+    },
+    'rome-117': {
+      until: 180, name: 'Guard the Eagles',
+      note: 'Rome stands at its greatest reach. Hold what Trajan won, and push the frontier further.',
+      main: { kind: 'provinces', grow: 1.35, plus: 4 },
+      sides: [{ kind: 'techs', n: 6, name: 'Roads, law and engines', note: 'Finish six technologies.' },
+              { kind: 'battles', n: 12, name: 'The legions hold', note: 'Win twelve battles.' }]
+    },
+    'medieval-1200': {
+      until: 1300, name: 'Crown a Kingdom',
+      note: 'Knights, castles and oaths. Gather enough land, and a crown follows.',
+      main: { kind: 'provinces', grow: 2, plus: 3 },
+      sides: [{ kind: 'capitals', n: 2, name: 'Two crowns broken', note: 'Hold the seats of two other rulers.' },
+              { kind: 'gold', n: 4000, name: 'A full treasury', note: 'Gold buys both mercenaries and loyalty.' }]
+    },
+    'napoleonic-1805': {
+      until: 1820, name: 'Master of Europe',
+      note: 'The age of grand armies. Beat the coalitions, or be beaten by them.',
+      main: { kind: 'provinces', grow: 2, plus: 4 },
+      sides: [{ kind: 'capitals', n: 3, name: 'Three capitals entered', note: 'March into three enemy capitals.' },
+              { kind: 'battles', n: 15, name: 'A soldier\'s reputation', note: 'Win fifteen battles.' }]
+    },
+    'greatwar-1917': {
+      until: 1921, name: 'Win the Great War',
+      note: 'The trenches have not moved in two years. Break them, and end the war on your terms.',
+      main: { kind: 'provinces', grow: 1.4, plus: 6 },
+      sides: [{ kind: 'battles', n: 18, name: 'Through the wire', note: 'Win eighteen battles.' },
+              { kind: 'techs', n: 8, name: 'The new weapons', note: 'Finish eight technologies.' }]
+    },
+    'ww2-1936': {
+      until: 1950, name: 'A New Order',
+      note: 'The storm is gathering. Come out of it as the power the others answer to.',
+      main: { kind: 'provinces', grow: 2.2, plus: 5 },
+      sides: [{ kind: 'capitals', n: 3, name: 'Three capitals taken', note: 'Hold three enemy capitals.' },
+              { kind: 'industry', n: 14, name: 'The arsenal', note: 'Build fourteen works and factories.' }]
+    },
+    'modern-2026': {
+      until: 2040, name: 'Hold the Line',
+      note: 'Drones, chips and alliances. Keep what is yours, and take back what is not.',
+      main: { kind: 'provinces', grow: 1.25, plus: 5 },
+      sides: [{ kind: 'allies', n: 3, name: 'Friends who answer', note: 'Keep three allies at your side.' },
+              { kind: 'techs', n: 10, name: 'The edge in chips', note: 'Finish ten technologies.' }]
+    }
+  };
+  const eraId = () => (typeof Eras !== 'undefined' && Eras.info() ? Eras.info().id : 'ww2-1936');
+  const def = () => ERAS[eraId()] || ERAS['ww2-1936'];
+
+  // the hour the deadline falls on, counted from the era's own start
+  function deadlineHour(untilYear) {
+    const d = new Date(Sim.dateTime());
+    const start0 = Sim.dateTime() - G().hour * 3600e3;
+    const end = Date.UTC(untilYear, 0, 1);
+    return Math.max(24 * 365, Math.round((end - start0) / 3600e3));
+  }
+
+  // ---------- set up, once, when a game begins ----------
+  // what the nation already has when it starts: those goals count only what the player adds
+  const FROM_START = { industry: 1, techs: 1, gold: 1, allies: 1 };
+  function begin() {
+    const g = G(); if (!g || g.goals) return;
+    const D = def(), own = g.owner.reduce((n, t) => n + (t === g.player), 0);
+    const mainTarget = Math.max(own + 2, Math.round(own * D.main.grow) + (D.main.plus || 0));
+    g.goals = {
+      era: eraId(), name: D.name, note: D.note, until: D.until, deadline: deadlineHour(D.until),
+      startProvs: own, won: false, lost: false, told: {},
+      main: { kind: D.main.kind, target: mainTarget, name: D.name, note: D.note, main: true },
+      sides: D.sides.map(s => ({ kind: s.kind, target: s.n, base: FROM_START[s.kind] ? KIND[s.kind].now() : 0, name: s.name, note: s.note }))
+    };
+  }
+  // an older save gets its goals the same way, from where it stands now
+  function restore() { const g = G(); if (g && !g.goals) begin(); }
+
+  function all() { const s = start(); return s ? [s.main].concat(s.sides) : []; }
+  function progress(goal) {
+    const K = KIND[goal.kind];
+    const now = Math.max(0, (K ? K.now() : 0) - (goal.base || 0));
+    return { now, target: goal.target, done: now >= goal.target, text: K ? K.text(goal.target, !!goal.base) : goal.kind, share: Math.max(0, Math.min(1, now / goal.target)) };
+  }
+  function daysLeft() { const s = start(); return s ? Math.max(0, Math.round((s.deadline - G().hour) / 24)) : 0; }
+  function deadlineText() { const s = start(); return s ? Sim.dateStr(s.deadline) : ''; }
+
+  // ---------- checked once a day ----------
+  // hooks.goal(kind, goal) lets the interface cheer, warn, or end the game.
+  const hooks = { goal: () => {}, won: () => {}, lost: () => {} };
+  function daily() {
+    const g = G(), s = start(); if (!s || g.over) return;
+    for (const goal of all()) {
+      const p = progress(goal);
+      const key = goal.name;
+      if (p.done && !s.told[key]) { s.told[key] = true; if (!goal.main) hooks.goal('side', goal, p); }
+      else if (!p.done && s.told[key] && !goal.main) s.told[key] = false;   // an ally lost, a capital retaken
+    }
+    const m = progress(s.main);
+    if (m.done && !s.won) { s.won = true; hooks.won(s, m); return; }
+    const left = s.deadline - g.hour;
+    if (!s.won && !s.lost) {
+      for (const [d, k] of [[365, 'y1'], [90, 'd90']]) if (left <= d * 24 && left > 0 && !s.told[k]) { s.told[k] = true; hooks.goal('time', s.main, m, d); }
+      if (left <= 0) { s.lost = true; hooks.lost(s, m); }
+    }
+  }
+  return { begin, restore, daily, all, progress, daysLeft, deadlineText, hooks, info: start, KIND, ERAS };
 })();
 
 // Boot: generate the map, then run the render/simulation loop.

@@ -1211,6 +1211,7 @@ const Sim = (function () {
     if (typeof Politics !== 'undefined') Politics.daily();
     if (typeof Peace !== 'undefined') Peace.daily();
     if (typeof Events !== 'undefined') Events.daily();
+    if (typeof Goals !== 'undefined') Goals.daily();
     if (typeof Save !== 'undefined') Save.tick();
   }
   const DAY_PARTS = [daySeaAir, dayNations, dayArmies, () => { dayAI(); dayWorld(); }];

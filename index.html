@@ -42,6 +42,7 @@
     <symbol id="i-merge" viewBox="0 0 24 24"><path d="M12 3v7.5M12 10.5 5.5 19M12 10.5l6.5 8.5M12 3 9 6M12 3l3 3"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4.5 4.5L19 7"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
@@ -74,6 +75,7 @@
         <div id="tb-date" class="num"></div>
         <div id="tb-speed" aria-label="Game speed"></div>
       </div>
+      <button class="iconbtn" id="tb-goals" aria-label="Goals"><svg class="i"><use href="#i-flagp"/></svg></button>
       <button id="tb-net" aria-label="Online players"></button>
       <button class="iconbtn" id="tb-menu" aria-label="Menu"><svg class="i"><use href="#i-menu"/></svg></button>
     </header>
@@ -97,6 +99,7 @@
     <aside id="leftpanel" class="panel" hidden></aside>
     <div id="ucard" class="panel" hidden></div>
 
+    <div id="coach" hidden><div class="ct"></div><div class="cb"><button class="btn sm ghost" id="co-skip">Skip the tutorial</button><button class="btn sm primary" id="co-next">Next</button></div></div>
     <div id="keyhint" hidden><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move the map</span><span class="keys">Drag to select armies</span><button class="iconbtn x" id="kh-x" aria-label="Hide hint"><svg class="i"><use href="#i-x"/></svg></button></div>
 
     <div id="mapctl">
@@ -215,6 +218,7 @@
 <script src="js/menu-art.js"></script>
 <script src="js/menu.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/goals.js"></script>
 <script src="js/main.js"></script>
 <!--/BUILD:SCRIPTS-->
 </body>
