@@ -215,7 +215,7 @@ kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; 
 #ucard .multi { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 9px; max-height: 58px; overflow-y: auto; }
 #ucard .multi span { font-size: 12px; padding: 2px 7px; border: 1px solid var(--brass-dim); background: #2a2616; }
 #ucard .note { margin: 4px 0 8px; font-size: 12.5px; }
-#ucard .orders { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0; }
+#ucard .orders { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 0; }
 .ord { min-width: 0; overflow: hidden; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 4px; background: var(--panel-3); border: 1px solid var(--line); cursor: pointer; color: var(--paper); }
 .ord svg.i { width: 18px; height: 18px; }
 .ord span { white-space: nowrap; font-size: 9px; letter-spacing: 0; text-transform: uppercase; font-weight: 600; color: var(--muted); }
@@ -634,3 +634,24 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
 #reports .vsline { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 #reports .vsline svg { width: 20px; height: 13px; flex: none; }
 #reports .sub { color: var(--muted); font-size: 12.5px; }
+
+/* commander row on the army card */
+#ucard .cmdr { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px; font-size: 12px; color: var(--muted); }
+#ucard .cmdr .nm { color: var(--paper); font-weight: 600; }
+#ucard .cmdr .stars { color: var(--brass); letter-spacing: 1px; font-size: 11px; }
+#ucard .cmdr .stars i { font-style: normal; color: #4a4636; }
+#ucard .cmdr .trait { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 0 5px; border: 1px solid var(--brass-dim); background: #2a2616; color: #f0e2b6; }
+#ucard .cmdr .xp { flex: 1 0 40px; height: 3px; background: #141916; border: 1px solid var(--line-soft); position: relative; }
+#ucard .cmdr .xp i { position: absolute; inset: 0 auto 0 0; background: var(--brass); }
+/* battle close-up: letterbox bars over the map, the clock keeps running underneath */
+#cine { position: fixed; inset: 0; z-index: 35; cursor: pointer; pointer-events: auto; }
+#cine .bar { position: absolute; left: 0; right: 0; height: 0; background: #070807; transition: height .45s ease; overflow: hidden; }
+#cine .bar.top { top: 0; } #cine .bar.bot { bottom: 0; }
+#cine.on .bar { height: 11vh; }
+#cine .ttl { position: absolute; left: 5vw; bottom: 2.2vh; display: flex; flex-direction: column; gap: 2px; color: var(--paper); opacity: 0; transform: translateY(8px); transition: opacity .5s .35s, transform .5s .35s; }
+#cine.on .ttl { opacity: 1; transform: none; }
+#cine .ttl small { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+#cine .ttl b { font-family: var(--display, serif); font-size: clamp(20px, 3.4vh, 34px); font-weight: 600; letter-spacing: .02em; }
+#cine .ttl span { font-size: 13px; color: var(--muted); } #cine .ttl span b { font-size: 13px; font-family: inherit; color: var(--paper); }
+#cine em { position: absolute; right: 5vw; bottom: 2.6vh; font-style: normal; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity .5s .6s; }
+#cine.on em { opacity: .85; }

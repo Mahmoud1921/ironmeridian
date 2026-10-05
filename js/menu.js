@@ -8,7 +8,7 @@ const Menu = (function () {
 
   // ---------- preferences ----------
   const PREFS_KEY = 'ironmeridian.prefs', BG_KEY = 'ironmeridian.bg';
-  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, effects: true, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
+  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, effects: true, closeups: true, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
   let prefs = null, bgMemory = null;
   function load() {
     let p = {};
@@ -161,7 +161,8 @@ const Menu = (function () {
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ${hasImage() ? '' : 'primary'}" id="opt-paint">Battle film</button><label class="btn sm upload ${hasImage() ? 'primary' : ''}">Use my image<input type="file" id="opt-bg" accept="image/*"></label></div>
         <div class="k">Interface size<small>${p.uiSize}%</small></div><input type="range" id="opt-ui" min="85" max="125" step="5" value="${p.uiSize}" aria-label="Interface size">
         <div class="k">3D troop figures<small>Off shows plain counters, which is faster on old computers</small></div>${seg('figures', 'On', 'Off')}
-        <div class="k">Battle and map effects<small>Shells in flight, blasts, falling soldiers, and the busy map. Light keeps only the gunfire, for slower computers</small></div>${seg('effects', 'Full', 'Light')}`,
+        <div class="k">Battle and map effects<small>Shells in flight, blasts, falling soldiers, and the busy map. Light keeps only the gunfire, for slower computers</small></div>${seg('effects', 'Full', 'Light')}
+        <div class="k">Battle close-ups<small>The camera flies in when one of your big battles begins, then flies back. Click, Esc or Space skips it</small></div>${seg('closeups', 'On', 'Off')}`,
       sound: soundPane(p),
       game: `<div class="k">Autosave<small>Once a game month, and when you leave the page</small></div>${seg('autosave', 'On', 'Off')}
         <div class="k">Pause when an event needs an answer</div>${seg('pauseEvent', 'Yes', 'No')}

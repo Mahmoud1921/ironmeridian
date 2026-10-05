@@ -4,7 +4,7 @@ const Sim = (function () {
   let MAP = null;   // generated map
   let G = null;     // game state (serialisable)
   let nbDist = [];  // km between adjacent provinces
-  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {}, battleEnd: () => {}, captured: () => {} };
+  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {}, battleEnd: () => {}, battleStart: () => {}, captured: () => {}, promoted: () => {} };
 
   let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -103,7 +103,44 @@ const Sim = (function () {
     const pool = NAME_POOLS[c.culture] || NAME_POOLS.oth;
     const initial = 'ABCDEFGHJKLMNOPRSTVW'[Math.floor(rng() * 20)];
     const rank = typeof Eras !== 'undefined' ? Eras.rankFor(c.culture) : 'Gen.';
-    return { name: rank + ' ' + initial + '. ' + pool[Math.floor(rng() * pool.length)], skill: 1 + Math.floor(rng() * 4) };
+    return { name: rank + ' ' + initial + '. ' + pool[Math.floor(rng() * pool.length)], skill: 1 + Math.floor(rng() * 4), xp: 0, traits: [] };
+  }
+  // ---------- commanders learn ----------
+  // Every hour in battle teaches a commander something, a win teaches more. Enough of it and they rise a
+  // grade (skill, up to 5) and pick up a habit from how they won: Offensive, Defensive or Swift.
+  const TRAITS = {
+    offensive: { name: 'Offensive', desc: 'Attacks hit 10% harder' },
+    defensive: { name: 'Defensive', desc: 'Defends 10% better' },
+    swift: { name: 'Swift', desc: 'Marches 10% faster' }
+  };
+  const MAX_SKILL = 5;
+  const xpNeed = c => 80 * c.skill;
+  const hasTrait = (a, t) => !!(a.commander.traits && a.commander.traits.includes(t));
+  function gainXp(a, n, role) {
+    const c = a.commander;
+    if (!c.traits) c.traits = [];
+    c.xp = (c.xp || 0) + n;
+    if (c.skill >= MAX_SKILL) { c.xp = Math.min(c.xp, xpNeed(c)); return; }
+    if (c.xp < xpNeed(c)) return;
+    c.xp -= xpNeed(c); c.skill++;
+    let trait = null;
+    if (c.traits.length < 2) {
+      const want = role === 'atk' ? 'offensive' : role === 'def' ? 'defensive' : 'swift';
+      trait = !c.traits.includes(want) ? want : ['offensive', 'defensive', 'swift'].find(t => !c.traits.includes(t));
+      c.traits.push(trait);
+    }
+    if (isHuman(a.owner)) tell(a.owner, c.name + ' of the ' + a.name + ' has been promoted (skill ' + c.skill + ')' + (trait ? ' and is now known as ' + TRAITS[trait].name + '.' : '.'), a.prov, 'win', false);
+    try { hooks.promoted(a, trait); } catch (e) { console.error(e); }
+  }
+  // an ambush needs cover: woods, hills, mountains, marsh, jungle or streets
+  const AMBUSH_GROUND = { forest: 1, hills: 1, mountains: 1, jungle: 1, marsh: 1, urban: 1 };
+  function canAmbush(a) {
+    return !a.sea && !a.battle && a.units.length > 0 && !!AMBUSH_GROUND[MAP.provs[a.prov].terrain] && (G.owner[a.prov] === a.owner || allied(a.owner, G.owner[a.prov]));
+  }
+  function orderAmbush(a) {
+    if (!canAmbush(a)) return false;
+    orderHold(a); a.order = 'ambush';
+    return true;
   }
   function makeUnit(type, str) { return { type, str: str === undefined ? 1 : str, org: 1 }; }
   function newArmy(tag, prov, units) {
@@ -351,6 +388,8 @@ const Sim = (function () {
     const eco = G.countries[a.owner].eco;
     if (slow && eco && eco.sat && typeof Economy !== 'undefined' && Economy.oilEra() && (Tech.unitClass(slow) === 'motorised' || UNIT_TYPES[slow].armor)) s *= 0.5 + 0.5 * eco.sat.fuel;
     if (a.order === 'redeploy') s *= 2.5;
+    if (a.order === 'forced') s *= 1.5;
+    if (hasTrait(a, 'swift')) s *= 1.1;
     if (a.retreating) s *= 1.3;
     return s;
   }
@@ -381,6 +420,7 @@ const Sim = (function () {
     const lvl = TX ? Tech.level(a.owner) : c.tech, wt = typeof Eras !== 'undefined' ? Eras.techWeight() : 1;
     v *= (wt === 1 ? lvl : Math.pow(lvl, wt)) * (1 + 0.05 * skill) * (0.5 + 0.5 * a.supply);
     if (role === 'def') v *= 1 + (a.entrench + fortBonus(a.owner, a.prov)) * (1 - (opt.breach || 0));
+    if (a.commander.traits && a.commander.traits.length) v *= 1 + (hasTrait(a, role === 'atk' ? 'offensive' : 'defensive') ? 0.1 : 0);
     return v;
   }
   function fortBonus(tag, prov) {
@@ -517,7 +557,17 @@ const Sim = (function () {
       for (const pl of humans()) if (allied(a.owner, pl) || defs.some(d => allied(d.owner, pl))) {
         tell(pl, 'Battle of ' + MAP.provs[prov].name + ' has begun.', prov, 'battle', G.settings.pauseBattle && (a.owner === pl || defs.some(d => d.owner === pl)));
       }
+      // an army lying in wait springs its ambush: the attackers are caught strung out on the march
+      const lying = defs.filter(d => d.order === 'ambush');
+      if (lying.length) {
+        b.ambush = lying.length;
+        for (const d of lying) d.order = 'hold';
+        for (const pl of humans()) if (allied(a.owner, pl) || lying.some(d => allied(d.owner, pl)))
+          tell(pl, (lying.some(d => allied(d.owner, pl)) ? 'Our ambush at ' : 'Ambushed at ') + MAP.provs[prov].name + '!', prov, lying.some(d => allied(d.owner, pl)) ? 'win' : 'loss', false);
+      }
     }
+    if (b.ambush && G.hour - b.start < 24 && !b.attackers.includes(a.id)) for (const u of a.units) u.org = Math.max(0, u.org - 0.15);
+    if (!b.attackers.length) { b.attackers.push(a.id); b.from[a.id] = a.prov; try { hooks.battleStart(b); } catch (e) { console.error(e); } }
     if (!b.attackers.includes(a.id)) { b.attackers.push(a.id); b.from[a.id] = a.prov; }
     a.battle = b.id; a.entrench = 0;
   }
@@ -554,6 +604,10 @@ const Sim = (function () {
     const fw = frontageMul(atts, defs);
     A *= flank * recon * fw; B *= fw;
     for (const d of defs) { D += armyPower(d, 'def', prov.terrain, { breach: kitA.breach }); F += armyPower(d, 'atk', 'plains', { drone: droneD }) * 0.9; }
+    const amb = b.ambush && G.hour - b.start < 24 ? 1.35 : 1;
+    D *= amb; F *= amb;
+    for (const a of atts) gainXp(a, 1, 'atk');
+    for (const d of defs) gainXp(d, 1, 'def');
     // aircraft overhead and warships off the coast; air defence on the ground blunts the enemy's planes
     const airA = typeof Air !== 'undefined' ? Air.battleBonus(b.atkTag, b.prov) : { mul: 1 }, airD = typeof Air !== 'undefined' ? Air.battleBonus(b.defTag, b.prov) : { mul: 1 };
     if (airA.mul > 1) airA.mul = 1 + (airA.mul - 1) * (1 - kitD.aa);
@@ -597,6 +651,7 @@ const Sim = (function () {
     if (fronts > 1) b.mods.push(['Attack from ' + fronts + ' sides', flank - 1]);
     if (recon > 1) b.mods.push(['Reconnaissance', recon - 1]);
     if (fort) b.mods.push(['Fortifications', -fort]);
+    if (amb > 1) b.mods.push(['Ambush', -(amb - 1)]);
     if (landing) b.mods.push(['Amphibious landing', -0.5]);
     if (airA.supB || airD.supB) b.mods.push(['Air superiority', (airA.supB || 0) - (airD.supB || 0)]);
     if (airA.cas || airD.cas) b.mods.push(['Close air support', (airA.cas || 0) - (airD.cas || 0)]);
@@ -615,6 +670,7 @@ const Sim = (function () {
     if (!defs.some(d => d.units.length) || dOrg < 0.06) {
       // attackers win; the beaten defenders are destroyed where they stand (no running away)
       for (const d of defs) if (G.armies.includes(d)) destroyBeaten(d, b.prov);
+      for (const a of atts) if (G.armies.includes(a)) gainXp(a, 30, 'atk');
       if (allied(b.atkTag, pl)) G.stats.battlesWon++;
       if (allied(b.defTag, pl)) G.stats.battlesLost++;
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
@@ -624,6 +680,7 @@ const Sim = (function () {
     } else if (aOrg < 0.12) {
       // the attack broke down: the beaten attackers are destroyed too
       for (const a of atts) if (G.armies.includes(a)) destroyBeaten(a, b.prov);
+      for (const d of defs) if (G.armies.includes(d)) gainXp(d, 30, 'def');
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
         tell(h, 'The attack on ' + prov.name + ' was beaten off.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
       endBattle(b, 'def');
@@ -1077,7 +1134,7 @@ const Sim = (function () {
         const path = findPath(a.owner, a.prov, a.target, 'move');
         if (path) a.path = path; else a.order = 'hold';
       }
-      if ((a.order === 'attack' || a.order === 'move' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length && !a.chase) { a.order = 'hold'; a.target = -1; }
+      if ((a.order === 'attack' || a.order === 'move' || a.order === 'forced' || a.order === 'redeploy' || a.order === 'retreat') && a.prov === a.target && !a.path.length && !a.chase) { a.order = 'hold'; a.target = -1; }
     }
   }
 
@@ -1118,6 +1175,8 @@ const Sim = (function () {
       a.progress += a.rate;
       recoverOrg(a, 0.3);
       if (a.order === 'redeploy') for (const u of a.units) u.org = Math.max(0.2, u.org - 0.01);
+      // forced march: the men get there faster, and tired (the 0.3 recovered this hour is taken back, and more)
+      else if (a.order === 'forced') for (const u of a.units) u.org = Math.max(0.3, u.org - 0.006 - 0.006 * 0.3);
       if (a.progress >= distKm(a.prov, next)) {
         // carry the leftover distance into the next leg, so marching never stalls at a province centre
         const over = a.progress - distKm(a.prov, next);
@@ -1245,7 +1304,7 @@ const Sim = (function () {
     factionOf, coalition, hasPact, pairKey, sideOf, endBattle: b => endBattle(b), removeArmy: a => removeArmy(a), newArmy, notify: (...x) => notify(...x), rng: () => rng(),
     startBattle: (a, prov) => startBattle(a, prov), capture: (p, t) => capture(p, t), fortBonus, supplyReach, sourceValue,
     isHuman, humans, tell, army, armiesAt, hostilesAt, armyStats, armyPower, armySpeed, manpowerOf, battleAt, distKm,
-    orderMove, orderHold, orderDefend, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit, spawnProv,
+    orderMove, orderHold, orderDefend, orderAmbush, canAmbush, TRAITS, gainXp, orderRetreat, orderChase, mergeArmies, splitArmy, recruit, canRecruit, spawnProv,
     computeSupply, dropNation: t => dropFromDiplomacy(t)
   };
 })();

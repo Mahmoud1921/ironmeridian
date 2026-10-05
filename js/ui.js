@@ -125,6 +125,7 @@ const UI = (function () {
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
     Sim.hooks.battleEnd = b => battleReport(b);
+    Sim.hooks.battleStart = b => closeUp(b);
     Sim.hooks.captured = prov => Render.burn(prov);
     Goals.hooks.goal = (kind, goal, p, days) => {
       if (kind === 'side') toast('Goal reached: ' + goal.name + '.', -1, 'win');
@@ -678,7 +679,7 @@ const UI = (function () {
     if (setHTML(body, html)) bindRight();
   }
   function meter(label, v, cls) { return `<div class="meter"><span>${label}</span><div class="bar ${cls}"><i style="width:${Math.round(v * 100)}%"></i></div><span>${pct(v)}</span></div>`; }
-  const ORDER_TEXT = { hold: 'Holding position', move: 'Moving', attack: 'Offensive', defend: 'Defending front', retreat: 'Retreating', redeploy: 'Strategic redeployment' };
+  const ORDER_TEXT = { hold: 'Holding position', ambush: 'Lying in ambush', forced: 'Forced march', move: 'Moving', attack: 'Offensive', defend: 'Defending front', retreat: 'Retreating', redeploy: 'Strategic redeployment' };
   function orderText(a) {
     const G = Sim.G;
     if (a.sea) return Navy.phaseText(a);
@@ -688,7 +689,7 @@ const UI = (function () {
     if (a.order === 'defend') t += a.frontTag ? ' vs ' + G.countries[a.frontTag].name : ' (all enemies)';
     const prey = a.chase && Sim.army(a.chase);
     if (prey) t = 'Hunting ' + prey.name + (prey.prov >= 0 ? ' at ' + MAP.provs[prey.prov].name : '');
-    else if ((a.order === 'move' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
+    else if ((a.order === 'move' || a.order === 'forced' || a.order === 'attack' || a.order === 'redeploy') && a.target >= 0) t += ' → ' + MAP.provs[a.target].name;
     if (a.path.length) { const km = a.path.reduce((s, id, i) => s + Sim.distKm(i ? a.path[i - 1] : a.prov, id), 0) - a.progress; t += ' · ~' + Math.max(1, Math.round(km / Math.max(0.5, Sim.armySpeed(a)) / 24)) + ' days'; }
     return t;
   }
@@ -702,10 +703,18 @@ const UI = (function () {
   }
   // ---------- compact army card ----------
   const ORDERS = [['move', 'Move', 'move'], ['attack', 'Attack', 'attack', 'atk'], ['front', 'Defend', 'shield'], ['hold', 'Hold', 'hold'], ['retreat', 'Retreat', 'retreat'],
-    ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Recruit', 'plus'], ['invade', 'By sea', 'anchor']];
+    ['forced', 'Forced', 'forced'], ['ambush', 'Ambush', 'ambush'], ['redeploy', 'Redeploy', 'rail'], ['split', 'Split', 'split'], ['merge', 'Merge', 'merge'], ['recruit', 'Recruit', 'plus'], ['invade', 'By sea', 'anchor']];
   const ORDER_TIPS = { move: 'Pick a destination', attack: 'Pick an enemy province, or an enemy army to hunt until it is destroyed', front: 'Pick an enemy province: the army guards that border and shifts to weak spots',
-    hold: 'Stop and hold here', retreat: 'Fall back to friendly land', redeploy: 'Fast move through friendly land; organisation drops', split: 'Split the army in two', merge: 'Armies must share a province',
+    hold: 'Stop and hold here', forced: 'Pick a destination: marches half again as fast, but the troops arrive tired',
+    ambush: 'Lie in wait in woods, hills, marsh or a city on your own land: the first enemy to attack here walks into it', retreat: 'Fall back to friendly land', redeploy: 'Fast move through friendly land; organisation drops', split: 'Split the army in two', merge: 'Armies must share a province',
     recruit: 'Train new divisions for this army', invade: 'Ship this army across the sea: pick a coastal province' };
+  // the commander: grade in stars, habits picked up in battle, and how close the next promotion is
+  function cmdrHTML(a) {
+    const c = a.commander, tr = (c.traits || []).map(t => Sim.TRAITS[t]).filter(Boolean);
+    const need = 80 * c.skill, xp = c.skill >= 5 ? need : Math.min(need, c.xp || 0);
+    const tip = c.skill >= 5 ? 'Highest grade reached' : 'Experience ' + Math.floor(xp) + ' of ' + need + ' to the next grade. Battles teach: every hour of fighting, and more for a win';
+    return `<div class="cmdr"><span class="nm">${esc(c.name)}</span><span class="stars" title="Skill ${c.skill} of 5">${'★'.repeat(c.skill)}<i>${'★'.repeat(5 - c.skill)}</i></span>${tr.map(t => `<span class="trait" title="${esc(t.desc)}">${esc(t.name)}</span>`).join('')}<span class="xp" title="${esc(tip)}"><i style="width:${Math.round(xp / need * 100)}%"></i></span></div>`;
+  }
   function renderCard() {
     const el = $('#ucard'), G = Sim.G;
     const list = G ? selectedArmies() : [];
@@ -718,7 +727,7 @@ const UI = (function () {
     const str = avg(x => Sim.armyStats(x).str), org = avg(x => Sim.armyStats(x).org), sup = avg(x => x.supply);
     const x = '<button class="iconbtn" data-desel aria-label="Clear selection"><svg class="i"><use href="#i-x"/></svg></button>';
     let html = one
-      ? `<div class="hd">${flagSVG(a.owner)}<b>${esc(a.name)}<small>${esc(MAP.provs[a.prov].name)} · ${esc(orderText(a))} · ${esc(a.commander.name)} ${'★'.repeat(a.commander.skill)}</small></b>${x}</div>`
+      ? `<div class="hd">${flagSVG(a.owner)}<b>${esc(a.name)}<small>${esc(MAP.provs[a.prov].name)} · ${esc(orderText(a))}</small></b>${x}</div>${cmdrHTML(a)}`
       : `<div class="hd">${flagSVG(a.owner)}<b>${list.length} armies selected<small>${divs} divisions · orders go to all of them</small></b>${x}</div><div class="multi">${list.map(y => `<span>${esc(y.name)}</span>`).join('')}</div>`;
     const m = (label, v, col) => `<div>${label} <b>${pct(v)}</b><span class="bar"><i style="width:${Math.round(v * 100)}%;background:${col}"></i></span></div>`;
     html += `<div class="meters">${m('Strength', str, 'var(--good)')}${m('Org', org, 'var(--info)')}${m('Supply', sup, 'var(--warn)')}</div>`;
@@ -1192,12 +1201,17 @@ const UI = (function () {
     const list = myArmiesSel();
     if (!list.length) return;
     if (kind === 'cancelsea') { list.forEach(a => Navy.cancelInvasion(a)); renderRight(); return; }
-    if (kind === 'move' || kind === 'attack' || kind === 'redeploy' || kind === 'front' || kind === 'invade') {
+    if (kind === 'move' || kind === 'forced' || kind === 'attack' || kind === 'redeploy' || kind === 'front' || kind === 'invade') {
       pending = pending && pending.kind === kind ? null : { kind };
       showHint(); renderRight(); return;
     }
     pending = null; showHint();
     if (kind === 'hold') list.forEach(Sim.orderHold);
+    if (kind === 'ambush') {
+      const ok = list.filter(a => Sim.orderAmbush(a)).length;
+      toast(ok ? (ok > 1 ? ok + ' armies are' : list[0].name + ' is') + ' lying in wait. The first enemy to attack walks into the ambush.' + (ok < list.length ? ' ' + (list.length - ok) + ' had no cover where they stand.' : '')
+        : 'An ambush needs cover on your own or allied land: forest, hills, mountains, marsh, jungle or a city.', -1, 'info');
+    }
     if (kind === 'retreat') list.forEach(a => Sim.orderRetreat(a));
     if (kind === 'split') { const b = Sim.splitArmy(list[0]); if (b) selectArmies([list[0].id, b.id], false); }
     if (kind === 'merge') { const m = Sim.mergeArmies(list); if (m) selectArmies([m.id], false); }
@@ -1206,7 +1220,7 @@ const UI = (function () {
   }
   function showHint() {
     const h = $('#hint');
-    const txt = { move: 'Choose a destination province', attack: 'Choose an enemy province, or an enemy army to hunt down', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
+    const txt = { move: 'Choose a destination province', forced: 'Choose where to force-march to', attack: 'Choose an enemy province, or an enemy army to hunt down', redeploy: 'Choose a friendly province to redeploy to', front: 'Choose an enemy province to set the front against',
       invade: 'Choose a coastal province to land in', fleet: 'Choose a sea zone to sail to', rebase: 'Choose a province with a friendly airbase',
       wing: pending && pending.mission === 'naval' ? 'Choose a sea zone to strike' : pending && pending.mission === 'bomb' ? 'Choose an enemy province to bomb' : 'Choose where the wing should fly' };
     if (!pending) { h.hidden = true; $('#map').classList.remove('targeting'); return; }
@@ -1583,6 +1597,39 @@ const UI = (function () {
   // ---------- battle reports: a short card when one of the player's fights ends; the clock keeps running ----------
   // reports wait in a short queue and come out one at a time, so a busy front at top speed never floods the screen
   const repQ = []; let repT = 0;
+  // ---------- battle close-up ----------
+  // A big battle of the player's (12 divisions or more, or the first since the game was opened) gets the
+  // camera: letterbox bars, the battle's name, a slow fly-in, and back to where the player was. The clock keeps
+  // running, at most one every three minutes, and a click, Esc or Space ends it at once.
+  let cine = null, lastCine = -1e9, cineSeen = false;
+  function closeUp(b, force) {
+    const G = Sim.G; if (!G) return;
+    const pl = G.player;
+    if (!force) {
+      if (Menu.prefs().closeups === false || cine || !$('#modal').hidden || G.paused) return;
+      if (!Sim.allied(b.atkTag, pl) && !Sim.allied(b.defTag, pl)) return;
+      if (b.atkTag !== pl && b.defTag !== pl) return;
+      if (performance.now() - lastCine < 180000) return;
+      const divs = b.attackers.reduce((s, id) => s + ((Sim.army(id) || {}).units || []).length, 0) + Sim.hostilesAt(b.atkTag, b.prov).reduce((s, a) => s + a.units.length, 0);
+      if (divs < 12 && cineSeen) return;
+    }
+    cineSeen = true; lastCine = performance.now();
+    const p = MAP.provs[b.prov], cam = Render.cam;
+    const back = { x: cam.tx !== undefined && cam.anim ? cam.tx : cam.x, y: cam.anim ? cam.ty : cam.y, z: cam.anim ? cam.tz : cam.z };
+    const side = t => { const n = (t === b.atkTag ? b.attackers.map(Sim.army).filter(Boolean) : Sim.hostilesAt(b.atkTag, b.prov)).reduce((s, a) => s + a.units.length, 0); return esc(G.countries[t].name) + ' <b>' + n + '</b>'; };
+    const el = $('#cine') || (() => { const d = document.createElement('div'); d.id = 'cine'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Battle close-up'); document.body.appendChild(d); d.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); endCloseUp(); }); return d; })();
+    el.innerHTML = `<div class="bar top"></div><div class="bar bot"><div class="ttl"><small>${esc(Sim.dateStr(G.hour))}</small><b>Battle of ${esc(p.name)}</b><span>${side(b.atkTag)} divisions against ${side(b.defTag)}</span></div><em>Click, Esc or Space to skip</em></div>`;
+    el.hidden = false; requestAnimationFrame(() => el.classList.add('on'));
+    Render.flyTo(p.x, p.y, Math.max(65, back.z));
+    cine = { back, t: setTimeout(endCloseUp, 4600) };
+  }
+  function endCloseUp() {
+    if (!cine) return;
+    clearTimeout(cine.t);
+    const back = cine.back; cine = null;
+    const el = $('#cine'); if (el) { el.classList.remove('on'); setTimeout(() => { if (!cine) el.hidden = true; }, 450); }
+    if (Sim.G) Render.flyTo(back.x, back.y, back.z);
+  }
   function battleReport(b) {
     const G = Sim.G, pl = G.player;
     if (b.atkTag !== pl && b.defTag !== pl) return;
@@ -1853,6 +1900,9 @@ const UI = (function () {
       if (dx || dy) Render.pan(dx * v, dy * v);
     };
     window.addEventListener('keydown', e => {
+      if (cine && (e.key === 'Escape' || e.code === 'Space')) { e.preventDefault(); e.stopImmediatePropagation(); endCloseUp(); }
+    }, true);
+    window.addEventListener('keydown', e => {
       if (typing(e)) return;
       const G = Sim.G; if (!G) return;
       if (e.code === 'Space') { e.preventDefault(); togglePause(); }
@@ -1952,5 +2002,5 @@ const UI = (function () {
   }
 
   return { init, showStart, chooseNation, loadGame, openSaves, curEra, frame, openTab, HPS, toast, flagSVG, refreshTop, _select: ids => selectArmies(ids, false), _showEvent: () => showEvent(), _showPeace: () => showPeace(), _openSaves: g => openSaves(g), _loadGame: d => loadGame(d), _selected: () => sel.armies.slice(),
-    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }), _goals: () => openGoals(), _coach: () => coach };
+    _selectFleet: id => selectFleet(id), _selectWing: id => selectWing(id), _sel: () => ({ fleet: sel.fleet, wing: sel.wing, zone: sel.zone, tab: sel.tab }), _goals: () => openGoals(), _coach: () => coach, _closeUp: b => closeUp(b, true), _cine: () => !!cine };
 })();

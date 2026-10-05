@@ -220,7 +220,7 @@ async function desktopRun(browser) {
     if (want < 0) continue;
     await page.keyboard.press('Escape');
     await page.mouse.click(sx, sy);
-    if (!(await waitFor(page, w => Render.state.selProv === w, want))) dead++;
+    if (!(await waitFor(page, w => Render.state.selProv === w, want))) { dead++; console.log('dead click', JSON.stringify(await page.evaluate(() => ({ cine: UI._cine(), sel: Render.state.selProv, modal: !document.getElementById('modal').hidden })))); }
     await page.waitForTimeout(100);
   }
   check('map: provinces select on first click', dead === 0, dead + ' dead clicks');
@@ -256,13 +256,15 @@ async function desktopRun(browser) {
     const p = Sim.MAP.provs[a.prov]; Render.flyTo(p.x, p.y, 10); return a.id;
   });
   await page.waitForTimeout(900);
+  await waitFor(page, () => !Render.cam.anim, null, 4000);   // on a slow machine the camera may still be gliding
   const hit = await page.evaluate(id => { Render.draw(); const h = Render._hits().find(h => h.group.some(a => a.id === id)); return h ? [h.x + h.w / 2, h.y + h.h / 2] : null; }, cnt);
   if (hit) {
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await page.mouse.click(hit[0], hit[1]);
-    check('map: army counter selects on first click', await waitFor(page, id => UI._selected().includes(id), cnt));
+    const csel = await waitFor(page, id => UI._selected().includes(id), cnt);
+    check('map: army counter selects on first click', csel, csel ? '' : await page.evaluate(([x, y, id]) => { const e = document.elementFromPoint(x, y); const h = Render._hits().find(h => h.group.some(a => a.id === id)); return JSON.stringify({ under: e && (e.id || e.className), at: [x, y], now: h && [h.x, h.y, h.w, h.h], sel: UI._selected(), selProv: Render.state.selProv, cnt: !!Render.counterAt(x, y) }); }, [hit[0], hit[1], cnt]));
     const card = await page.evaluate(() => { const r = document.getElementById('ucard').getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), orders: document.querySelectorAll('#ucard .ord').length }; });
-    check('army card: compact, with icon orders', card.w <= 320 && card.h <= 300 && card.orders === 10, JSON.stringify(card));
+    check('army card: compact, with icon orders', card.w <= 320 && card.h <= 345 && card.orders === 12, JSON.stringify(card));
   } else check('map: army counter visible at close zoom', false);
 
   // --- declare war through the UI, then attack by right-click ---
@@ -1320,6 +1322,10 @@ async function menuRun(browser) {
   await page.evaluate(() => { const r = document.getElementById('opt-ui'); r.value = 115; r.dispatchEvent(new Event('change')); });
   check('menu: interface size is kept', await page.evaluate(() => Menu.prefs().uiSize === 115 && document.getElementById('hud').style.zoom === '1.15' && JSON.parse(localStorage.getItem('ironmeridian.prefs')).uiSize === 115));
   await page.evaluate(() => Menu.setPref('uiSize', 100));
+  await clickEl(page, '[data-pref="closeups"][data-v="1"]');
+  const cuOn = await page.evaluate(() => Menu.prefs().closeups === true);
+  await clickEl(page, '[data-pref="closeups"][data-v="0"]');
+  check('options: battle close-ups can be turned off', cuOn && await page.evaluate(() => Menu.prefs().closeups === false && JSON.parse(localStorage.getItem('ironmeridian.prefs')).closeups === false));
   check('sound: starts after the first click, menu tune playing', await waitFor(page, () => Sound.ctx && Sound.ctx.state === 'running' && Sound._song.key === 'menu', null, 3000), await page.evaluate(() => JSON.stringify({ st: Sound.ctx && Sound.ctx.state, key: Sound._song.key })));
   await clickEl(page, '[data-otab="sound"]');
   await page.evaluate(() => { const r = document.querySelector('[data-vol="volMusic"]'); r.value = 30; r.dispatchEvent(new Event('change')); });
@@ -1358,6 +1364,32 @@ async function menuRun(browser) {
     return new Promise(res => setTimeout(() => { const el = document.querySelector('#reports .report'); const r = { shown: !!el, text: el ? el.innerText : '', running: !G.paused }; G.paused = wasPaused; res(r); }, 900)); });
   check('battle: a report card shows when your battle ends, and the clock keeps running', rep.shown && rep.running && /Victory/i.test(rep.text) && /5\.4K|5,400|5400/.test(rep.text), JSON.stringify(rep).slice(0, 160));
   check('map: ships sail the seas and a fallen province burns', await page.evaluate(() => { const G = Sim.G, p = Sim.MAP.provs[G.countries[G.player].capital]; const before = Render._life().burns; Sim.hooks.captured(p.nb[0]); const L = Render._life(); return L.ships > 5 && L.burns === before + 1; }), await page.evaluate(() => JSON.stringify(Render._life())));
+  const cmd = await page.evaluate(() => {
+    const G = Sim.G, a = G.armies.find(x => x.owner === G.player && !x.battle && !x.sea && x.units.length); if (!a) return { none: true };
+    const keep = { order: a.order, prov: a.prov, path: a.path.slice(), target: a.target, c: JSON.parse(JSON.stringify(a.commander)), org: a.units.map(u => u.org) };
+    a.path = []; a.order = 'hold'; const s0 = Sim.armySpeed(a); a.order = 'forced'; const s1 = Sim.armySpeed(a);
+    const cover = Sim.MAP.provs.find(p => G.owner[p.id] === G.player && (p.terrain === 'forest' || p.terrain === 'hills' || p.terrain === 'mountains'));
+    const open = Sim.MAP.provs.find(p => G.owner[p.id] === G.player && p.terrain === 'plains');
+    a.prov = open.id; const noCover = Sim.orderAmbush(a);
+    a.prov = cover.id; const amb = Sim.orderAmbush(a) && a.order === 'ambush';
+    a.commander.skill = 1; a.commander.xp = 0; a.commander.traits = []; Sim.gainXp(a, 85, 'atk');
+    const promo = { skill: a.commander.skill, traits: a.commander.traits.slice() };
+    UI._select([a.id]);
+    return { a: a.id, keep, ratio: s1 / s0, noCover, amb, promo };
+  });
+  await page.waitForTimeout(400);
+  const card = await page.evaluate(() => { const el = document.getElementById('ucard'); return { cmdr: !!el.querySelector('.cmdr .xp'), trait: (el.querySelector('.cmdr .trait') || {}).textContent || '', forced: !!el.querySelector('[data-o="forced"]'), ambush: !!el.querySelector('[data-o="ambush"]'), lying: /ambush/i.test(el.textContent) }; });
+  await page.evaluate(k => { const a = Sim.army(k.a); if (!a) return; a.order = k.keep.order; a.prov = k.keep.prov; a.path = k.keep.path; a.target = k.keep.target; a.commander = k.keep.c; a.units.forEach((u, i) => u.org = k.keep.org[i]); UI._select([]); }, cmd);
+  check('orders: forced march is half again as fast', Math.abs(cmd.ratio - 1.5) < 0.01, JSON.stringify(cmd).slice(0, 160));
+  check('orders: an ambush needs cover and then lies in wait', cmd.noCover === false && cmd.amb === true);
+  check('commanders: battle experience earns a grade and a habit', cmd.promo.skill === 2 && cmd.promo.traits[0] === 'offensive', JSON.stringify(cmd.promo));
+  check('commanders: the army card shows the commander, experience and orders', card.cmdr && card.trait === 'Offensive' && card.forced && card.ambush && card.lying, JSON.stringify(card));
+  const cine = await page.evaluate(() => { const G = Sim.G, foe = Object.keys(G.countries).find(t => t !== G.player && G.countries[t].alive); const wasPaused = G.paused; G.paused = false;
+    const z0 = Render.cam.z, p = G.countries[G.player].capital; UI._closeUp({ atkTag: G.player, defTag: foe, prov: p, attackers: [], start: G.hour });
+    return new Promise(res => setTimeout(() => { const el = document.getElementById('cine'); const r = { on: UI._cine() && !el.hidden, text: el.innerText, running: !G.paused, zoomIn: Render.cam.tz >= 60, z0 }; G.paused = wasPaused; res(r); }, 600)); });
+  check('battle: a big battle gets a close-up while the clock runs', cine.on && /Battle of/.test(cine.text) && cine.running && cine.zoomIn, JSON.stringify(cine).slice(0, 160));
+  await page.keyboard.press('Escape');
+  check('battle: Esc skips the close-up and the camera goes back', await waitFor(page, z0 => !UI._cine() && Math.abs(Render.cam.tz - z0) < 0.01, cine.z0, 1500) && await waitFor(page, () => document.getElementById('cine').hidden, null, 1500));
   check('sound: the era tune follows into the game', await waitFor(page, () => Sound._song.key === 'ww2-1936' && Sound._song.next > 0, null, 3000), await page.evaluate(() => Sound._song.key));
   await clickEl(page, '#tb-menu');
   check('sound: the Esc menu has the sound controls', await waitFor(page, () => document.querySelectorAll('#menu-sound [data-vol]').length === 3, null, 1500));
@@ -1433,8 +1465,11 @@ async function parallelRun() {
   try { browser = await launcher.launch(); } catch (e) { console.error('Cannot launch ' + BROWSER + ': ' + e.message.split('\n')[0]); process.exit(2); }
   // every page gets the economy invariant checker
   const np = browser.newPage.bind(browser), nc = browser.newContext.bind(browser);
-  browser.newPage = async o => { const p = await np(o); await p.addInitScript(ECO_INVARIANTS); return p; };
-  browser.newContext = async o => { const c = await nc(o); await c.addInitScript(ECO_INVARIANTS); return c; };
+  // battle close-ups take the screen (and the next click) for a few seconds: off in the runs that click
+  // around the map; the menu run turns the switch and calls a close-up itself
+  const NO_CLOSEUPS = `try { if (!localStorage.getItem('ironmeridian.prefs')) localStorage.setItem('ironmeridian.prefs', '{"closeups":false}'); } catch (e) {}`;
+  browser.newPage = async o => { const p = await np(o); await p.addInitScript(ECO_INVARIANTS); await p.addInitScript(NO_CLOSEUPS); return p; };
+  browser.newContext = async o => { const c = await nc(o); await c.addInitScript(ECO_INVARIANTS); await c.addInitScript(NO_CLOSEUPS); return c; };
   console.log(`Playtest (${BROWSER}, seed ${SEED}${QUICK ? ', quick' : ''})`);
   const runs = { menu: menuRun, desktop: desktopRun, economy: economyRun, navy: navyRun, diplomacy: diplomacyRun, politics: politicsRun, eras: erasRun, mobile: mobileRun };
   try { for (const [k, fn] of Object.entries(runs)) if (!ONLY || ONLY.split(',').includes(k)) await fn(browser); }
