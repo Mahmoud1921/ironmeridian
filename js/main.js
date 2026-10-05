@@ -9,6 +9,7 @@
     Render.fitWorld();
     document.getElementById('loading').hidden = true;
     Menu.init();
+    Sound.init();
     Menu.show();
     let last = performance.now(), acc = 0;
     function loop(now) {

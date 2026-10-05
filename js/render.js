@@ -1448,6 +1448,7 @@ const Render = (function () {
     for (const [fx0, fy0, ty0] of figs) {
       const st = fightStyle(ty0);
       if (Math.random() > FX_RATE[st] * dt) continue;
+      if (typeof Sound !== 'undefined') Sound.fire(st, ty0, fx0);
       const x0 = fx0 - ox, y0 = fy0 - oy - fig * 0.35;          // from the figure's hands, relative to the army
       const aimX = ex * reach + (Math.random() - 0.5) * fig * 0.9, aimY = ey * reach + (Math.random() - 0.5) * fig * 0.5 - fig * 0.1;
       const base = { wx, wy, t0: now };

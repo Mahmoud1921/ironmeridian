@@ -8,7 +8,7 @@ const Menu = (function () {
 
   // ---------- preferences ----------
   const PREFS_KEY = 'ironmeridian.prefs', BG_KEY = 'ironmeridian.bg';
-  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false };
+  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
   let prefs = null, bgMemory = null;
   function load() {
     let p = {};
@@ -25,6 +25,7 @@ const Menu = (function () {
     if (typeof Render !== 'undefined' && Render.state) Render.state.figures = p.figures;
     const G = typeof Sim !== 'undefined' && Sim.G;
     if (G) { G.settings.autosave = p.autosave; G.settings.pauseEvent = p.pauseEvent; G.settings.pauseWar = p.pauseWar; }
+    if (typeof Sound !== 'undefined') Sound.apply();
   }
 
   // ---------- background: the painting, or the player's own picture ----------
@@ -160,12 +161,13 @@ const Menu = (function () {
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ${hasImage() ? '' : 'primary'}" id="opt-paint">Battle film</button><label class="btn sm upload ${hasImage() ? 'primary' : ''}">Use my image<input type="file" id="opt-bg" accept="image/*"></label></div>
         <div class="k">Interface size<small>${p.uiSize}%</small></div><input type="range" id="opt-ui" min="85" max="125" step="5" value="${p.uiSize}" aria-label="Interface size">
         <div class="k">3D troop figures<small>Off shows plain counters, which is faster on old computers</small></div>${seg('figures', 'On', 'Off')}`,
+      sound: soundPane(p),
       game: `<div class="k">Autosave<small>Once a game month, and when you leave the page</small></div>${seg('autosave', 'On', 'Off')}
         <div class="k">Pause when an event needs an answer</div>${seg('pauseEvent', 'Yes', 'No')}
         <div class="k">Pause when a war starts</div>${seg('pauseWar', 'Yes', 'No')}`
     };
     $('#sheet').innerHTML = `${X}<h2>Options</h2>
-      <div class="tabs" role="tablist">${[['controls', 'Controls'], ['graphics', 'Graphics'], ['game', 'Game']].map(([k, n]) => `<button data-otab="${k}" class="${optTab === k ? 'on' : ''}" role="tab" aria-selected="${optTab === k}">${n}</button>`).join('')}</div>
+      <div class="tabs" role="tablist">${[['controls', 'Controls'], ['graphics', 'Graphics'], ['sound', 'Sound'], ['game', 'Game']].map(([k, n]) => `<button data-otab="${k}" class="${optTab === k ? 'on' : ''}" role="tab" aria-selected="${optTab === k}">${n}</button>`).join('')}</div>
       <div class="opts">${panes[optTab]}</div>`;
     const sh = $('#sheet');
     sh.querySelectorAll('[data-otab]').forEach(b => b.onclick = () => { optTab = b.dataset.otab; renderOptions(); });
@@ -174,6 +176,19 @@ const Menu = (function () {
     const ui = $('#opt-ui'); if (ui) { ui.oninput = e => { prefs.uiSize = +e.target.value; ui.previousElementSibling.querySelector('small').textContent = prefs.uiSize + '%'; }; ui.onchange = e => setPref('uiSize', +e.target.value); }
     const bg = $('#opt-bg'); if (bg) bg.onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useImage(f); };
     const pt = $('#opt-paint'); if (pt) pt.onclick = usePainting;
+    soundHooks(sh);
+  }
+  // ---------- sound: shared by Options and the in-game menu ----------
+  function soundPane(p) {
+    p = p || getPrefs();
+    const seg = (k, a, b) => `<div class="seg"><button class="chip ${p[k] ? 'on' : ''}" data-pref="${k}" data-v="1">${a}</button><button class="chip ${!p[k] ? 'on' : ''}" data-pref="${k}" data-v="0">${b}</button></div>`;
+    const sl = (k, n, sub) => `<div class="k">${n}<small>${sub}</small></div><input type="range" data-vol="${k}" min="0" max="100" step="5" value="${p[k]}" aria-label="${n}">`;
+    return `<div class="k">Sound<small>Music and effects are made by the game itself. M turns sound on or off.</small></div>${seg('soundOn', 'On', 'Off')}
+        ${sl('volMaster', 'Overall volume', 'Everything together')}${sl('volMusic', 'Music', 'A tune for each era')}${sl('volSfx', 'Effects', 'Battle, alerts and clicks')}`;
+  }
+  function soundHooks(root, rerender) {
+    if (rerender) root.querySelectorAll('[data-pref="soundOn"]').forEach(b => b.onclick = () => { setPref('soundOn', b.dataset.v === '1'); rerender(); });
+    root.querySelectorAll('[data-vol]').forEach(r => { r.oninput = e => { prefs[r.dataset.vol] = +e.target.value; apply(); }; r.onchange = e => setPref(r.dataset.vol, +e.target.value); });
   }
   // ---------- online play: join a friend's game with a code, or host one ----------
   const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
@@ -233,7 +248,7 @@ const Menu = (function () {
   function renderCredits() {
     $('#sheet').innerHTML = `${X}<h2>Credits</h2>
       <p>Designed by mahmoud. Built with Claude.</p>
-      <p>Every map, flag, painting and troop figure is original and drawn in code. Six eras, from the Peloponnesian War in 431 BC to the eve of the Second World War in 1936.</p>`;
+      <p>Every map, flag, painting and troop figure is original and drawn in code. Seven eras, from the Peloponnesian War in 431 BC to the drone wars of 2026. Every sound and tune is made by the game itself.</p>`;
   }
 
   function init() {
@@ -253,5 +268,5 @@ const Menu = (function () {
     window.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#menu').hidden && current) { e.preventDefault(); open(null); } });
     apply();
   }
-  return { init, show, hide, open, flash, takeHost, prefs: getPrefs, setPref, apply, isOpen: () => !$('#menu').hidden };
+  return { init, show, hide, open, flash, takeHost, prefs: getPrefs, setPref, apply, soundPane, soundHooks, isOpen: () => !$('#menu').hidden };
 })();

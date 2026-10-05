@@ -1299,6 +1299,7 @@ async function menuRun(browser) {
   await page.goto(FILE);
   await waitFor(page, () => document.getElementById('loading').hidden, null, 15000);
   await page.evaluate(() => { try { localStorage.clear(); } catch (e) { } });
+  check('sound: stays silent until the first click', await page.evaluate(() => !Sound.ctx));
   check('menu: the painting is drawn behind the menu', await page.evaluate(() => { const c = document.getElementById('bg-paint'), d = c.getContext('2d').getImageData(960, 700, 1, 1).data; return !c.hidden && d[3] > 0; }));
   check('menu: the battle film plays behind the menu', await waitFor(page, () => { const v = document.getElementById('bg-video'); return !v.hidden && !v.paused && v.currentTime > 0.2 && v.classList.contains('on'); }, null, 8000), await page.evaluate(() => { const v = document.getElementById('bg-video'); return JSON.stringify({ hidden: v.hidden, paused: v.paused, t: v.currentTime, src: v.currentSrc, err: v.error && v.error.code, ready: v.readyState }); }));
   await page.screenshot({ path: path.resolve(__dirname, 'shots/menu-film.png') });
@@ -1319,6 +1320,12 @@ async function menuRun(browser) {
   await page.evaluate(() => { const r = document.getElementById('opt-ui'); r.value = 115; r.dispatchEvent(new Event('change')); });
   check('menu: interface size is kept', await page.evaluate(() => Menu.prefs().uiSize === 115 && document.getElementById('hud').style.zoom === '1.15' && JSON.parse(localStorage.getItem('ironmeridian.prefs')).uiSize === 115));
   await page.evaluate(() => Menu.setPref('uiSize', 100));
+  check('sound: starts after the first click, menu tune playing', await waitFor(page, () => Sound.ctx && Sound.ctx.state === 'running' && Sound._song.key === 'menu', null, 3000), await page.evaluate(() => JSON.stringify({ st: Sound.ctx && Sound.ctx.state, key: Sound._song.key })));
+  await clickEl(page, '[data-otab="sound"]');
+  await page.evaluate(() => { const r = document.querySelector('[data-vol="volMusic"]'); r.value = 30; r.dispatchEvent(new Event('change')); });
+  await clickEl(page, '[data-pref="soundOn"][data-v="0"]');
+  check('sound: Options has volume and mute, and they are kept', await page.evaluate(() => { const p = JSON.parse(localStorage.getItem('ironmeridian.prefs')); return document.querySelectorAll('[data-vol]').length === 3 && p.volMusic === 30 && p.soundOn === false; }));
+  await clickEl(page, '[data-pref="soundOn"][data-v="1"]');
   await clickEl(page, '[data-otab="game"]');
   await clickEl(page, '[data-pref="pauseWar"][data-v="0"]');
   await clickEl(page, '#mm-credits');
@@ -1333,6 +1340,10 @@ async function menuRun(browser) {
   await clickEl(page, '#st-play');
   check('menu: a new game takes the Game options', await waitFor(page, () => Sim.G && Sim.G.settings.pauseWar === false && Eras.isBase(), null, 2000));
   await page.screenshot({ path: path.resolve(__dirname, 'shots/hud.png') });
+  check('sound: the era tune follows into the game', await waitFor(page, () => Sound._song.key === 'ww2-1936' && Sound._song.next > 0, null, 3000), await page.evaluate(() => Sound._song.key));
+  await clickEl(page, '#tb-menu');
+  check('sound: the Esc menu has the sound controls', await waitFor(page, () => document.querySelectorAll('#menu-sound [data-vol]').length === 3, null, 1500));
+  await page.evaluate(() => { document.getElementById('modal').hidden = true; });
   check('menu: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await page.close();
 }

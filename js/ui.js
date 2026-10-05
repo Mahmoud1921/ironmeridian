@@ -340,6 +340,7 @@ const UI = (function () {
     box.prepend(el);
     while (box.children.length > 4) box.lastChild.remove();
     setTimeout(() => el.remove(), 7000);
+    if (typeof Sound !== 'undefined' && kind && kind !== 'info') Sound.notice(kind);
     if (sel.tab === 'gov') renderRight();
   }
 
@@ -360,6 +361,7 @@ const UI = (function () {
     el.innerHTML = `<svg class="i"><use href="#i-swords"/></svg><span><b>${esc(what)}</b><small>Taken by ${esc(who)} · ${esc(Sim.dateStr(G.hour))} · click to look</small></span>`;
     el.hidden = false;
     el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
+    if (typeof Sound !== 'undefined') Sound.alarm();
     el.onclick = () => { const p = MAP.provs[lost.provs[lost.provs.length - 1]]; Render.flyTo(p.x, p.y, Math.max(Render.cam.z, Render.minZoom() * 3)); selectProvince(p.id); el.hidden = true; };
     clearTimeout(lost.timer);
     lost.timer = setTimeout(() => { el.hidden = true; }, 8000);
@@ -1305,6 +1307,7 @@ const UI = (function () {
       <div class="label">Time</div>${chk('autoPause', 'Pause automatically on important events')}
       <div style="padding-left:24px;display:flex;flex-direction:column;gap:4px">${chk('pauseWar', 'War declared on me')}${chk('pauseLoss', 'My capital falls')}${chk('pauseCities', 'Any of my cities falls (once a day at most)')}${chk('pauseBattle', 'Battles involving my armies')}${chk('pauseMinor', 'Everyday events (big historical events always pause)')}</div>
       ${chk('autosave', 'Autosave every month')}${chk('pauseEvent', 'Pause when an event needs my answer')}
+      <hr class="sep"><div class="label">Sound</div><div class="opts" id="menu-sound">${Menu.soundPane()}</div>
       ${netSection()}
       <hr class="sep"><div class="label">Saved games</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-x="saves">Save or load</button></div>
@@ -1324,6 +1327,8 @@ const UI = (function () {
     ['autoPause', 'pauseWar', 'pauseLoss', 'pauseCities', 'pauseBattle', 'pauseMinor', 'autosave', 'pauseEvent'].forEach(k => { $('#set-' + k).onchange = e => { s[k] = e.target.checked; }; });
     Net.setPaused(true); refreshTop();
     const cp = $('#modal [data-copy]'); if (cp) cp.onclick = () => copyInvite();
+    const snd = () => { const box = $('#menu-sound'); if (!box) return; box.innerHTML = Menu.soundPane(); Menu.soundHooks(box, snd); };
+    snd();
   }
   // ---------- multiplayer ----------
   const PAGES_URL = 'https://mahmoud1921.github.io/ironmeridian/';
@@ -1703,6 +1708,7 @@ const UI = (function () {
       if (e.code === 'Space') { e.preventDefault(); togglePause(); }
       else if (e.key === '+' || e.key === '=') setSpeed(G.speed + 1);
       else if (e.key === '-' || e.key === '_') setSpeed(G.speed - 1);
+      else if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) { Menu.setPref('soundOn', Menu.prefs().soundOn === false); toast(Menu.prefs().soundOn ? 'Sound on.' : 'Sound off.', -1, 'info'); }
       else if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && $('#modal').hidden) openTab(TABS[+e.key - 1][0], true);
       else if (e.key === 'Escape') {
         if (pending) { pending = null; showHint(); renderRight(); }
