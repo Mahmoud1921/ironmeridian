@@ -669,7 +669,9 @@ const Render = (function () {
   // Viewport cache for close zoom: a raster of the view plus margin, reused while panning.
   const vc = { canvas: null, g: null, valid: false, z: 0, x0: 0, y0: 0, x1: 0, y1: 0, s: 1 };
   let lastZoomInput = 0;
+  const perf = { views: 0, viewMs: 0 };   // read by the playtest and profiling
   function buildView(vx0, vy0, vx1, vy1) {
+    const t0 = performance.now();
     const mx = (vx1 - vx0) * 0.35, my = (vy1 - vy0) * 0.35;
     vc.x0 = vx0 - mx; vc.y0 = vy0 - my; vc.x1 = vx1 + mx; vc.y1 = vy1 + my;
     vc.z = cam.z; vc.s = cam.z * dpr;
@@ -678,6 +680,7 @@ const Render = (function () {
     vc.g.setTransform(vc.s, 0, 0, vc.s, -vc.x0 * vc.s, -vc.y0 * vc.s);
     paintWorld(vc.g, vc.z, vc.x0, vc.y0, vc.x1, vc.y1);
     vc.valid = true;
+    perf.views++; perf.viewMs += performance.now() - t0;
   }
   function patchView(i) {
     if (!vc.valid) return;
@@ -694,6 +697,7 @@ const Render = (function () {
   function draw() {
     stepCamera();
     flushText();
+    if (typeof Buildings !== 'undefined' && Buildings.flush) Buildings.flush();
     if (state.dirtyOwners || !lmCountryBorders.length || (Sim.G && Sim.G.hour !== lastDeadHour && (lastDeadHour = Sim.G.hour, deadCount() !== lastDead))) recolor();
     if (!layer) buildLayer();
     const G = Sim.G;
@@ -743,10 +747,9 @@ const Render = (function () {
     if (look()) drawClouds(z);
     drawLabels(z, vx0, vy0, vx1, vy1);
     if (G && G.routes && G.routes.length) drawRoutes(z, vx0, vy0, vx1, vy1);
-    if (G && G.ind) drawBuildings(z, vx0, vy0, vx1, vy1);
-    drawCities(z, vx0, vy0, vx1, vy1);
+    drawStatic(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
-    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(4); }
+    if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(cam.anim || cam.zt || performance.now() - lastZoomInput < 220 ? 1.5 : 4); }
   }
 
   // trade map mode: arcs between trading capitals, coloured by good, thicker for bigger deals; cut deals dashed red
@@ -776,7 +779,7 @@ const Render = (function () {
   // canvas draws, and the same names show every frame. Sizes snap to steps about 8% apart.
   const textSprites = new Map();
   let spritesMade = 0;
-  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { textSprites.clear(); TA.fresh.length = 0; TA.x = TA.y = TA.row = 0; if (TA.g) { TA.g.setTransform(1, 0, 0, 1, 0, 0); TA.g.clearRect(0, 0, TA.W, TA.H); } });   // repaint in the real fonts
+  if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', () => { textSprites.clear(); TA.fresh.length = 0; TA.pages.length = 0; bc.sig = ''; });   // repaint in the real fonts
   function sprite(key, make) {
     let sp = textSprites.get(key);
     if (sp) { textSprites.delete(key); textSprites.set(key, sp); return sp; }   // keep recently used ones at the end
@@ -854,38 +857,43 @@ const Render = (function () {
   // cheaper for the browser than from hundreds of little canvases. A new piece is painted on its own little canvas
   // first and moved into the shared one at the start of the next frame, all together: changing the shared canvas
   // between two draws from it would make the browser copy all of it each time. When it fills up it starts afresh.
-  const TA = { cv: null, g: null, x: 0, y: 0, row: 0, W: 2048, H: 2048, fresh: [] };
+  // pages of 512 px: the browser re-copies a whole page when it changes, so small pages keep that copy cheap
+  const TA = { pages: [], W: 512, H: 512, fresh: [] };
   function packText(w, h, paint) {
     const cv = document.createElement('canvas'), g = cv.getContext('2d');
     cv.width = Math.ceil(w * dpr); cv.height = Math.ceil(h * dpr);
     g.scale(dpr, dpr); paint(g);
-    const sp = { packed: true, cv, sx: 0, sy: 0, sw: cv.width, sh: cv.height };
+    const sp = { packed: true, cv, sx: 0, sy: 0, sw: cv.width, sh: cv.height, page: null };
     TA.fresh.push(sp);
     return sp;
   }
+  function newPage() { const cv = document.createElement('canvas'); cv.width = TA.W; cv.height = TA.H; const P = { cv, g: cv.getContext('2d'), x: 0, y: 0, row: 0 }; TA.pages.push(P); return P; }
   function flushText() {
     if (!TA.fresh.length) return;
-    if (!TA.cv) { TA.cv = document.createElement('canvas'); TA.cv.width = TA.W; TA.cv.height = TA.H; TA.g = TA.cv.getContext('2d'); }
-    const g = TA.g; g.setTransform(1, 0, 0, 1, 0, 0);
     for (const sp of TA.fresh) {
       if (!sp.cv) continue;
       const pw = sp.sw + 2, ph = sp.sh + 2;
-      if (TA.x + pw > TA.W) { TA.x = 0; TA.y += TA.row; TA.row = 0; }
-      if (TA.y + ph > TA.H) {
-        // full: start afresh, and forget the pieces that lived there
-        g.clearRect(0, 0, TA.W, TA.H); TA.x = TA.y = TA.row = 0;
-        for (const [k, q] of textSprites) if (q.packed && !q.cv) textSprites.delete(k);
+      if (pw > TA.W || ph > TA.H) continue;   // too big to share a page: keeps its own canvas
+      let P = TA.pages[TA.pages.length - 1] || newPage();
+      if (P.x + pw > TA.W) { P.x = 0; P.y += P.row; P.row = 0; }
+      if (P.y + ph > TA.H) {
+        if (TA.pages.length >= 24) {
+          // all pages full: start afresh, and forget the pieces that lived there
+          TA.pages.length = 0;
+          for (const [k, q] of textSprites) if (q.packed && !q.cv) textSprites.delete(k);
+        }
+        P = newPage();
       }
-      sp.sx = TA.x + 1; sp.sy = TA.y + 1;
-      g.drawImage(sp.cv, sp.sx, sp.sy);
-      sp.cv = null;
-      TA.x += pw; TA.row = Math.max(TA.row, ph);
+      sp.sx = P.x + 1; sp.sy = P.y + 1;
+      P.g.drawImage(sp.cv, sp.sx, sp.sy);
+      sp.cv = null; sp.page = P.cv;
+      P.x += pw; P.row = Math.max(P.row, ph);
     }
     TA.fresh.length = 0;
   }
   function drawPacked(sp, dx, dy) {
     if (sp.cv) ctx.drawImage(sp.cv, dx, dy, sp.sw / dpr, sp.sh / dpr);
-    else ctx.drawImage(TA.cv, sp.sx, sp.sy, sp.sw, sp.sh, dx, dy, sp.sw / dpr, sp.sh / dpr);
+    else ctx.drawImage(sp.page, sp.sx, sp.sy, sp.sw, sp.sh, dx, dy, sp.sw / dpr, sp.sh / dpr);
   }
   const measurer = document.createElement('canvas').getContext('2d');
   // small outlined text (division counts, building counts) from the same sprite cache
@@ -920,7 +928,7 @@ const Render = (function () {
     for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
     ctx.closePath();
   }
-  function drawCities(z) {
+  function paintCities(z, mx, my) {
     const G = Sim.G;
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     const caps = G ? new Set(Object.values(G.countries).filter(c => c.alive).map(c => c.capital)) : null;
@@ -932,7 +940,7 @@ const Render = (function () {
       if (!isCap && z < 9) continue;
       if (isCap && z < 2.2) continue;
       const [sx, sy] = worldToScreen(p.x, p.y);
-      if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
+      if (sx < -40 - mx || sx > W + 40 + mx || sy < -20 - my || sy > H + 20 + my) continue;
       (isCap ? starPts : dotPts).push(sx, sy);
       if ((isCap && z > 4.5) || z > 13) {
         const sp = citySprite(p.city, !!isCap, look()), w = sp.w;
@@ -957,7 +965,7 @@ const Render = (function () {
       for (const p of MAP.provs) {
         if (p.city) continue;
         const [sx, sy] = worldToScreen(p.x, p.y);
-        if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 20) continue;
+        if (sx < -40 - mx || sx > W + 40 + mx || sy < -20 - my || sy > H + 20 + my) continue;
         ctx.fillStyle = 'rgba(20,18,12,0.55)'; ctx.fillText(p.name, sx, sy + 16);
       }
     }
@@ -988,9 +996,40 @@ const Render = (function () {
     return out;
   }
   let bDrawn = 0;
-  function drawBuildings(z, vx0, vy0, vx1, vy1) {
-    bDrawn = 0;
-    if (typeof Buildings === 'undefined' || typeof Economy === 'undefined') return;
+  // Finished buildings, city dots, capital stars and city names are painted onto one canvas (the screen plus
+  // a margin) and that picture is reused, moved and scaled with the camera, while zooming or panning. It is
+  // repainted once the camera settles, when it no longer covers the screen or has been stretched too far, or
+  // when something is built, changes hands or a capital moves. Work in progress is drawn live on top.
+  const BM = 0.3;   // margin around the screen, as a share of its size
+  const bc = { cv: null, g: null, z: 0, x: 0, y: 0, sig: '', n: 0, gaps: false };
+  function drawStatic(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G, hasB = !!(G && G.ind && typeof Buildings !== 'undefined' && typeof Economy !== 'undefined');
+    const me = G && G.countries[G.player], Q = (hasB && me && me.eco && me.eco.queue) || [];
+    const caps = G ? Object.values(G.countries).filter(c => c.alive).map(c => c.capital).join(',') : '';
+    const sig = (hasB ? Economy.infraVer() + '|' + G.ownVer + '|' + Economy.eraId() + '|' + Q.map(q => q.prov).join(',') : '-') + '|' + caps + '|' + dpr + '|' + W + 'x' + H + '|' + look();
+    const moving = cam.anim || !!cam.zt || performance.now() - lastZoomInput < 220;
+    const mx = W * BM, my = H * BM;
+    let k = z / bc.z, ox = (-mx - W / 2) * k + W / 2 + (bc.x - cam.x) * z, oy = (-my - H / 2) * k + H / 2 + (bc.y - cam.y) * z;
+    const covers = bc.cv && ox <= 0.5 && oy <= 0.5 && ox + (W + 2 * mx) * k >= W - 0.5 && oy + (H + 2 * my) * k >= H - 0.5;
+    if (!bc.cv || bc.sig !== sig || !covers || k > 1.5 || k < 0.67 || (!moving && (bc.z !== z || bc.gaps))) {
+      if (!bc.cv) { bc.cv = document.createElement('canvas'); bc.g = bc.cv.getContext('2d'); }
+      const cw = Math.ceil((W + 2 * mx) * dpr), ch = Math.ceil((H + 2 * my) * dpr);
+      if (bc.cv.width !== cw || bc.cv.height !== ch) { bc.cv.width = cw; bc.cv.height = ch; } else { bc.g.setTransform(1, 0, 0, 1, 0, 0); bc.g.clearRect(0, 0, cw, ch); }
+      bc.g.setTransform(dpr, 0, 0, dpr, mx * dpr, my * dpr);
+      const main = ctx; ctx = bc.g;
+      bc.gaps = false;
+      bc.n = hasB ? paintBuildings(z, vx0 - mx / z, vy0 - my / z, vx1 + mx / z, vy1 + my / z, 'still', mx, my) : 0;
+      paintCities(z, mx, my);
+      ctx = main;
+      Object.assign(bc, { z, x: cam.x, y: cam.y, sig });
+      k = 1; ox = -mx; oy = -my;
+    }
+    ctx.drawImage(bc.cv, ox, oy, (W + 2 * mx) * k, (H + 2 * my) * k);
+    bDrawn = bc.n + (Q.length ? paintBuildings(z, vx0, vy0, vx1, vy1, 'jobs', 0, 0) : 0);
+  }
+  // mode 'still': finished buildings only; 'jobs': building sites only. Returns how many were drawn.
+  function paintBuildings(z, vx0, vy0, vx1, vy1, mode, mx, my) {
+    let drawn = 0;
     const G = Sim.G, era = Economy.eraId();
     const me = G.countries[G.player];
     const pend = new Map();
@@ -998,6 +1037,7 @@ const Render = (function () {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const p of MAP.provs) {
       if (p.x < vx0 - 3 || p.x > vx1 + 3 || p.y < vy0 - 3 || p.y > vy1 + 3) continue;
+      if (mode === 'jobs' && !pend.has(p.id)) continue;
       const px = (p.spacing || 1) * z;
       if (px < 30) continue;
       const list = buildingsIn(p.id), q = pend.get(p.id);
@@ -1009,14 +1049,16 @@ const Render = (function () {
       const put = (kind, count, job) => {
         if (n >= spots.length) return;
         const [wx, wy] = spots[n++];
+        if (mode === 'still' ? job : !job) return;   // the other pass draws it
         const [sx, sy] = worldToScreen(wx, wy);
-        if (sx < -size || sx > W + size || sy < -size || sy > H + size) return;
+        if (sx < -size - mx || sx > W + size + mx || sy < -size - my || sy > H + size + my) return;
         const x = sx - size / 2, y = sy - size * 0.8;
         const img = Buildings.icon(kind, era, col, size * dpr, (p.id + n) % 4);
+        if (!img || img.s < size * dpr * 0.99) bc.gaps = true;   // not painted at this size yet: repaint soon
         if (!img) return;
         if (job) ctx.globalAlpha = 0.5;
-        bDrawn++;
-        ctx.drawImage(img, x, y, size, size);
+        drawn++;
+        ctx.drawImage(img.cv, img.sx, img.sy, img.s, img.s, x, y, size, size);
         ctx.globalAlpha = 1;
         if (job) {
           // scaffolding and a ring that fills as the work goes on
@@ -1034,6 +1076,7 @@ const Render = (function () {
       if (q) for (const j of q) put(j.kind, 1, j);
       for (const [k, c] of list) put(k, c, null);
     }
+    return drawn;
   }
 
   // ---------- roads and railways: drawn under the buildings, with era traffic and a laying animation ----------
@@ -1845,5 +1888,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _perf: perf, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

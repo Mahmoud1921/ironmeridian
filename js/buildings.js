@@ -355,23 +355,53 @@ const Buildings = (function () {
   }
   const YAW0 = -0.55;   // a three-quarter view
   // a cached sprite for the map: px square (device pixels), four slightly different angles
-  const cache = new Map();
+  // Map icons come in a few fixed sizes and live on shared sheets, one per size: zooming then reuses the same
+  // pictures (drawn a little larger or smaller) instead of painting new ones at every step, and the browser draws
+  // hundreds of icons from one source canvas cheaply. A new icon is painted on its own small canvas and moved onto
+  // its sheet at the start of the next frame (flush), since changing a sheet between draws from it is costly.
+  const SIZES = [16, 24, 32, 48, 64, 96], SHEET = 512;   // small sheets: the browser re-copies a sheet when it changes
+  const cache = new Map();          // kind|era|color|turn|size -> { cv, sx, sy, s }
+  const sheets = new Map();         // size -> { cv, g, next }
+  const fresh = [];
   let paintedThisFrame = 0, frameMark = 0;
   function icon(kind, era, color, px, turn) {
-    px = Math.max(12, Math.round(px / 4) * 4);
-    const key = kind + '|' + era + '|' + color + '|' + px + '|' + (turn || 0);
-    let cv = cache.get(key);
-    if (cv) return cv;
-    // new sprites are painted a few per frame so zooming into a busy region never stalls
+    const base = kind + '|' + era + '|' + color + '|' + (turn || 0) + '|';
+    const size = SIZES.find(b => b >= px) || SIZES[SIZES.length - 1];
+    let e = cache.get(base + size);
+    if (e) return e;
+    // new pictures are painted a few per frame so zooming into a busy region never stalls;
+    // meanwhile the nearest size already painted stands in
     const now = performance.now();
     if (now - frameMark > 12) { frameMark = now; paintedThisFrame = 0; }
-    if (paintedThisFrame++ > 24) return null;
-    cv = document.createElement('canvas'); cv.width = cv.height = px;
-    const g = cv.getContext('2d');
-    render(g, model(kind, era, color), YAW0 + (turn || 0) * 0.5, px / 2, px * 0.66, px * 0.92);
-    if (cache.size > 900) cache.clear();
-    cache.set(key, cv);
-    return cv;
+    if (paintedThisFrame++ > 12) {
+      const i = SIZES.indexOf(size);
+      for (let d = 1; d < SIZES.length; d++) for (const j of [i - d, i + d]) { const q = SIZES[j] && cache.get(base + SIZES[j]); if (q) return q; }
+      return null;
+    }
+    const cv = document.createElement('canvas'); cv.width = cv.height = size;
+    render(cv.getContext('2d'), model(kind, era, color), YAW0 + (turn || 0) * 0.5, size / 2, size * 0.66, size * 0.92);
+    e = { cv, sx: 0, sy: 0, s: size, key: base + size };
+    cache.set(e.key, e); fresh.push(e);
+    return e;
+  }
+  function flush() {
+    for (const e of fresh) {
+      if (cache.get(e.key) !== e) continue;
+      let list = sheets.get(e.s); if (!list) sheets.set(e.s, list = []);
+      const per = Math.floor(SHEET / e.s);
+      let sh = list[list.length - 1];
+      if (!sh || sh.next >= per * per) {
+        if (list.length >= 12) {   // this size is full: start afresh and forget what was on its sheets
+          for (const old of list) for (const [k, q] of cache) if (q.cv === old.cv) cache.delete(k);
+          list.length = 0; cache.set(e.key, e);
+        }
+        sh = { cv: document.createElement('canvas'), g: null, next: 0 }; sh.cv.width = sh.cv.height = SHEET; sh.g = sh.cv.getContext('2d'); list.push(sh);
+      }
+      const sx = (sh.next % per) * e.s, sy = Math.floor(sh.next / per) * e.s; sh.next++;
+      sh.g.drawImage(e.cv, sx, sy);
+      e.cv = sh.cv; e.sx = sx; e.sy = sy;
+    }
+    fresh.length = 0;
   }
   // a live drawing at any angle, for the slowly turning icons in the build lists
   function paint(ctx, kind, era, color, x, y, px, yaw) {
@@ -386,5 +416,5 @@ const Buildings = (function () {
       cv.dataset.done = '1';
     });
   }
-  return { icon, paint, spin, styleOf, KINDS: Object.keys(ART) };
+  return { icon, flush, paint, spin, styleOf, KINDS: Object.keys(ART) };
 })();

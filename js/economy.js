@@ -134,7 +134,7 @@ const Economy = (function () {
   function slots(p) { return Math.min(12, 2 + (p.infra || 1) + (p.city ? 1 : 0) + (p.capital ? 2 : 0)); }
   function built(pid) { const I = G().ind[pid]; return I ? KIND_KEYS.reduce((s, k) => s + (I[k] || 0), 0) : 0; }
   function freeSlots(pid) { return Math.max(0, slots(MAP().provs[pid]) - built(pid)); }
-  function ind(pid) { const g = G(); return g.ind[pid] || (g.ind[pid] = {}); }
+  function ind(pid) { infraVer++; const g = G(); return g.ind[pid] || (g.ind[pid] = {}); }   // callers change it, so the map's buildings repaint
 
   // output of one industry of a kind in a province, before shortages and modifiers
   function baseOut(kind, p) {
