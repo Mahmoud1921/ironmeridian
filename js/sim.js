@@ -4,7 +4,7 @@ const Sim = (function () {
   let MAP = null;   // generated map
   let G = null;     // game state (serialisable)
   let nbDist = [];  // km between adjacent provinces
-  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {}, battleEnd: () => {} };
+  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {}, battleEnd: () => {}, captured: () => {} };
 
   let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -732,6 +732,7 @@ const Sim = (function () {
     if (core !== tag && G.countries[core] && G.countries[core].alive && allied(core, tag) && core !== prev) newOwner = core; // liberation
     G.owner[prov] = newOwner;
     G.ownVer++;
+    if (prev !== newOwner) hooks.captured(prov, prev, newOwner);
     if (newOwner === G.player) G.stats.captured++;
     if (isHuman(prev)) {
       if (prev === G.player) { G.stats.lost++; hooks.lost(prov, newOwner); }   // the red banner and map flash, for every province

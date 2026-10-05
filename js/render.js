@@ -748,6 +748,7 @@ const Render = (function () {
     drawLabels(z, vx0, vy0, vx1, vy1);
     if (G && G.routes && G.routes.length) drawRoutes(z, vx0, vy0, vx1, vy1);
     drawStatic(z, vx0, vy0, vx1, vy1);
+    if (G && state.effects !== false) drawLife(z, vx0, vy0, vx1, vy1);
     if (G && state.mode === 'sea' && typeof Seas !== 'undefined') drawZoneLabels(z);
     if (G) { drawPaths(z); if (G.fleets) { drawInvasions(z); drawWings(z, vx0, vy0, vx1, vy1); } drawArmies(z, vx0, vy0, vx1, vy1); drawFx(); if (G.fleets) drawFleets(z, vx0, vy0, vx1, vy1); drawBattles(z); Figures.pump(cam.anim || cam.zt || performance.now() - lastZoomInput < 220 ? 1.5 : 4); }
   }
@@ -968,6 +969,180 @@ const Render = (function () {
         if (sx < -40 - mx || sx > W + 40 + mx || sy < -20 - my || sy > H + 20 + my) continue;
         ctx.fillStyle = 'rgba(20,18,12,0.55)'; ctx.fillText(p.name, sx, sy + 16);
       }
+    }
+  }
+
+  // ---------- the living map: hearth smoke over towns, ships and aircraft crossing, land burning after it falls ----------
+  // Nothing here is saved or simulated: it is scenery, cheap to draw, skipped off screen, and capped in number.
+  const life = { ships: [], planes: [], burns: [], last: 0, era: '' };
+  let puff = null;
+  function puffSprite() {
+    if (puff) return puff;
+    const c = document.createElement('canvas'); c.width = c.height = 32;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gr.addColorStop(0, 'rgba(235,232,225,0.9)'); gr.addColorStop(0.6, 'rgba(200,196,188,0.45)'); gr.addColorStop(1, 'rgba(180,176,170,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+    return (puff = c);
+  }
+  function burnStart(prov) {
+    if (!Sim.G) return;
+    life.burns = life.burns.filter(b => b.prov !== prov);
+    life.burns.push({ prov, hour: Sim.G.hour, seed: Math.random() * 10 });
+    if (life.burns.length > 60) life.burns.shift();
+  }
+  const SHIP_ERA = { 'greece-431bc': 'galley', 'rome-117': 'galley', 'medieval-1200': 'cog', 'napoleonic-1805': 'sail', 'greatwar-1917': 'steam', 'ww2-1936': 'steam', 'modern-2026': 'box' };
+  const PLANE_ERA = { 'greatwar-1917': 'bi', 'ww2-1936': 'prop', 'modern-2026': 'jet' };
+  function seaStep(z0) {
+    // the next sea zone along: one whose meeting point with this one is open water
+    const zs = Seas.all(), a = zs[z0];
+    const opts = a.nb.filter(n => { const b = zs[n]; return Seas.zoneAt((a.x + b.x) / 2, (a.y + b.y) / 2) >= 0; });
+    return opts.length ? opts[Math.floor(Math.random() * opts.length)] : -1;
+  }
+  function lifeInit() {
+    const era = Economy.eraId();
+    life.era = era; life.ships.length = 0; life.planes.length = 0; life.burns.length = 0;
+    if (typeof Seas === 'undefined' || !Seas.all().length) return;
+    const zs = Seas.all();
+    for (let i = 0; i < 26; i++) {
+      const z0 = Math.floor(Math.random() * zs.length), z1 = seaStep(z0);
+      if (z1 < 0) continue;
+      life.ships.push({ a: z0, b: z1, u: Math.random(), v: 0.35 + Math.random() * 0.25 });
+    }
+  }
+  function planeNew() {
+    const G = Sim.G, caps = Object.values(G.countries).filter(c => c.alive && c.capital >= 0);
+    if (caps.length < 2) return null;
+    const A = caps[Math.floor(Math.random() * caps.length)], B = caps[Math.floor(Math.random() * caps.length)];
+    if (A === B || Sim.atWar(A.tag, B.tag)) return null;
+    const pa = MAP.provs[A.capital], pb = MAP.provs[B.capital], d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    if (d < 6 || d > 60) return null;
+    return { x0: pa.x, y0: pa.y, x1: pb.x, y1: pb.y, u: 0, v: 2.4 / d };
+  }
+  function shipIcon(kind, s) {
+    // drawn facing +x around (0, 0)
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0, s * 0.18, s * 0.6, s * 0.16, 0, 0, 7); ctx.fill();
+    if (kind === 'box') {
+      ctx.fillStyle = '#2f3a44'; ctx.beginPath(); ctx.moveTo(-s * 0.55, -s * 0.1); ctx.lineTo(s * 0.45, -s * 0.1); ctx.lineTo(s * 0.62, 0); ctx.lineTo(s * 0.45, s * 0.12); ctx.lineTo(-s * 0.55, s * 0.12); ctx.closePath(); ctx.fill();
+      const cols = ['#c0442e', '#2e6fb0', '#d9a43a', '#4f8a4c'];
+      for (let i = 0; i < 4; i++) { ctx.fillStyle = cols[i]; ctx.fillRect(-s * 0.38 + i * s * 0.18, -s * 0.2, s * 0.16, s * 0.1); }
+      ctx.fillStyle = '#eef0f0'; ctx.fillRect(-s * 0.52, -s * 0.28, s * 0.1, s * 0.18);
+    } else if (kind === 'steam') {
+      ctx.fillStyle = '#3b3530'; ctx.beginPath(); ctx.moveTo(-s * 0.5, -s * 0.08); ctx.lineTo(s * 0.45, -s * 0.08); ctx.lineTo(s * 0.6, 0); ctx.lineTo(s * 0.45, s * 0.1); ctx.lineTo(-s * 0.5, s * 0.1); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#d8d2c2'; ctx.fillRect(-s * 0.15, -s * 0.2, s * 0.3, s * 0.12);
+      ctx.fillStyle = '#9e3a2a'; ctx.fillRect(-s * 0.04, -s * 0.34, s * 0.08, s * 0.14);
+    } else {
+      // wooden hulls: a galley with oars, a round cog, or a three-masted ship under sail
+      ctx.fillStyle = '#6a4a2c'; ctx.beginPath(); ctx.moveTo(-s * 0.5, -s * 0.04); ctx.quadraticCurveTo(0, s * 0.16, s * 0.55, -s * 0.06); ctx.lineTo(s * 0.4, s * 0.08); ctx.quadraticCurveTo(0, s * 0.2, -s * 0.42, s * 0.08); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#efe6cf';
+      const masts = kind === 'sail' ? [-0.25, 0.05, 0.3] : kind === 'cog' ? [0] : [0.05];
+      for (const m of masts) { ctx.beginPath(); ctx.moveTo(s * m, -s * 0.05); ctx.quadraticCurveTo(s * (m + 0.14), -s * 0.28, s * m, -s * (kind === 'sail' ? 0.52 : 0.45)); ctx.closePath(); ctx.fill(); }
+      if (kind === 'galley') { ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = 0.8; ctx.beginPath(); for (let i = 0; i < 5; i++) { const x = -s * 0.35 + i * s * 0.16; ctx.moveTo(x, s * 0.08); ctx.lineTo(x - s * 0.06, s * 0.26); } ctx.stroke(); }
+    }
+  }
+  function planeIcon(kind, s) {
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(-s * 0.3, s * 0.9, s * 0.35, s * 0.1, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = kind === 'jet' ? '#e9edf0' : kind === 'bi' ? '#b8a77a' : '#c9ccc8';
+    ctx.strokeStyle = 'rgba(30,30,30,0.6)'; ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(s * 0.5, 0); ctx.lineTo(-s * 0.45, -s * 0.06); ctx.lineTo(-s * 0.45, s * 0.06); ctx.closePath();
+    const sw = kind === 'jet' ? 0.12 : 0;
+    ctx.moveTo(s * (0.08 + sw), 0); ctx.lineTo(-s * (0.1 + sw), -s * 0.5); ctx.lineTo(-s * (0.2 + sw), -s * 0.5); ctx.lineTo(-s * 0.06, 0); ctx.lineTo(-s * (0.2 + sw), s * 0.5); ctx.lineTo(-s * (0.1 + sw), s * 0.5); ctx.closePath();
+    ctx.moveTo(-s * 0.32, 0); ctx.lineTo(-s * 0.45, -s * 0.18); ctx.lineTo(-s * 0.5, -s * 0.18); ctx.lineTo(-s * 0.45, 0); ctx.lineTo(-s * 0.5, s * 0.18); ctx.lineTo(-s * 0.45, s * 0.18); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    if (kind === 'bi') { ctx.fillRect(-s * 0.02, -s * 0.48, s * 0.08, s * 0.96); }
+  }
+  function drawLife(z, vx0, vy0, vx1, vy1) {
+    const G = Sim.G; if (!G) return;
+    const era = Economy.eraId();
+    if (era !== life.era) lifeInit();
+    const now = performance.now(), dt = Math.min(0.1, (now - (life.last || now)) / 1000); life.last = now;
+    const rel = z / minZoom(), mx = 30 / z;
+    const inView = (x, y) => x > vx0 - mx && x < vx1 + mx && y > vy0 - mx && y < vy1 + mx;
+    // ships: zone to zone at sea; drawn from a middling zoom in
+    if (typeof Seas !== 'undefined' && Seas.all().length) {
+      const zs = Seas.all(), kind = SHIP_ERA[era] || 'steam', s = Math.max(9, Math.min(22, z * 0.55));
+      for (const sh of life.ships) {
+        const a = zs[sh.a], b = zs[sh.b], len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        sh.u += sh.v * dt / len;
+        if (sh.u >= 1) { const n = seaStep(sh.b); sh.a = sh.b; sh.b = n >= 0 && n !== sh.a ? n : sh.a; sh.u = 0; if (sh.b === sh.a) { sh.b = seaStep(sh.a); if (sh.b < 0) sh.b = sh.a; } continue; }
+        if (rel < 2) continue;
+        const x = a.x + (b.x - a.x) * sh.u, y = a.y + (b.y - a.y) * sh.u;
+        if (!inView(x, y)) continue;
+        const [sx, sy] = worldToScreen(x, y);
+        ctx.save(); ctx.translate(sx, sy);
+        const h = Math.atan2(b.y - a.y, b.x - a.x), flip = Math.cos(h) < 0;
+        // a wake behind, then the hull seen from the side, turned only a little toward its heading
+        ctx.globalAlpha = 0.5; ctx.strokeStyle = '#eaf6ff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(-Math.cos(h) * s * 0.6, -Math.sin(h) * s * 0.6 + s * 0.1); ctx.lineTo(-Math.cos(h) * s * 1.4, -Math.sin(h) * s * 1.4 + s * 0.1); ctx.stroke();
+        ctx.globalAlpha = 1;
+        if (flip) ctx.scale(-1, 1);
+        ctx.rotate((flip ? -1 : 1) * Math.max(-0.35, Math.min(0.35, Math.sin(h) * 0.35)));
+        shipIcon(kind, s);
+        ctx.restore();
+      }
+    }
+    // aircraft: from capital to capital between nations at peace, in eras that fly
+    const pk = PLANE_ERA[era];
+    if (pk) {
+      if (life.planes.length < 7 && Math.random() < dt * 0.6) { const p = planeNew(); if (p) life.planes.push(p); }
+      const s = Math.max(8, Math.min(18, z * 0.45));
+      let w = 0;
+      for (const p of life.planes) {
+        p.u += p.v * dt;
+        if (p.u >= 1) continue;
+        life.planes[w++] = p;
+        if (rel < 1.6) continue;
+        const x = p.x0 + (p.x1 - p.x0) * p.u, y = p.y0 + (p.y1 - p.y0) * p.u;
+        if (!inView(x, y)) continue;
+        const [sx, sy] = worldToScreen(x, y);
+        const h = Math.atan2(p.y1 - p.y0, p.x1 - p.x0);
+        if (pk === 'jet') { ctx.globalAlpha = 0.45; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(sx, sy - s * 0.9); ctx.lineTo(sx - Math.cos(h) * s * 4, sy - s * 0.9 - Math.sin(h) * s * 4); ctx.stroke(); ctx.globalAlpha = 1; }
+        ctx.save(); ctx.translate(sx, sy - s * 0.9); ctx.rotate(h); planeIcon(pk, s); ctx.restore();
+      }
+      life.planes.length = w;
+    }
+    // hearth and chimney smoke over the bigger towns (left out while the camera zooms, when nobody watches it)
+    const zooming = cam.anim || !!cam.zt || now - lastZoomInput < 220;
+    if (rel >= 3 && cityOrder && !zooming) {
+      const sp = puffSprite(), t = now / 1000, ps = Math.max(5, Math.min(12, z * 0.28));
+      let n = 0;
+      for (const p of cityOrder) {
+        if (n >= 30) break;
+        if (!inView(p.x, p.y)) continue;
+        n++;
+        const [sx, sy] = worldToScreen(p.x, p.y);
+        const seed = p.id * 0.37;
+        for (let i = 0; i < 2; i++) {
+          const ph = (t / 3.2 + i / 2 + seed) % 1;
+          const r = ps * (0.5 + ph * 1.1);
+          ctx.globalAlpha = 0.5 * (1 - ph) * Math.min(1, ph * 6);
+          ctx.drawImage(sp, sx - 6 + Math.sin(seed + ph * 2) * 2 + ph * ps * 1.2 - r, sy - 6 - ph * ps * 3.2 - r, r * 2, r * 2);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    // provinces that just fell burn for a few days
+    if (life.burns.length && rel >= 1.6) {
+      const fs = fireSprite(), sp = puffSprite(), t = now / 1000;
+      life.burns = life.burns.filter(b => G.hour - b.hour < 120);
+      for (const b of life.burns) {
+        const p = MAP.provs[b.prov];
+        if (!inView(p.x, p.y)) continue;
+        const k = 1 - (G.hour - b.hour) / 120;
+        const spots = spotsFor(p).slice(0, rel > 6 ? 3 : 1);
+        for (let j = 0; j < spots.length; j++) {
+          const [sx, sy] = worldToScreen(spots[j][0], spots[j][1]);
+          const fr = Math.max(4, Math.min(11, z * 0.25)) * (0.6 + 0.4 * k), fl = 0.8 + 0.25 * Math.sin(t * 9 + b.seed + j * 2);
+          if (!zooming) for (let i = 0; i < 3; i++) {
+            const ph = (t / 2.4 + i / 3 + b.seed + j * 0.3) % 1, r = fr * (0.8 + ph * 1.8);
+            ctx.globalAlpha = 0.55 * k * (1 - ph);
+            ctx.drawImage(sp, sx - r + ph * fr, sy - fr - ph * fr * 4 - r, r * 2, r * 2);
+          }
+          ctx.globalAlpha = 0.9 * k;
+          ctx.drawImage(fs, sx - fr * fl, sy - fr * 1.5 * fl, fr * 2 * fl, fr * 1.8 * fl);
+        }
+      }
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -1963,5 +2138,5 @@ const Render = (function () {
 
   // repaint every province, e.g. after an era change recolours nations that keep their tags
   function refreshAll() { lastOwn = null; cityOrder = null; state.dirtyOwners = true; }
-  return { setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _perf: perf, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
+  return { burn: burnStart, _life: () => ({ ships: life.ships.length, planes: life.planes.length, burns: life.burns.length }), setLook, armiesInRect, init, draw, refreshAll, cam, state, resize, screenToWorld, worldToScreen, zoomAt, zoomSmooth, pan, flyTo, fitWorld, provinceAt, counterAt, stackAt, battleAtScreen, fleetAt, wingAt, fleetPos, setFrontEdges, minZoom, _hits: () => counterHits, _figs: () => figCount, _sprites: () => [textSprites.size, spritesMade], _perf: perf, _fx: () => fx.length, _bld: () => bDrawn, _routes: () => rDrawn, dispPos: a => disp.get(a.id), get size() { return [W, H]; } };
 })();

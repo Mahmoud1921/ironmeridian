@@ -125,6 +125,7 @@ const UI = (function () {
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
     Sim.hooks.battleEnd = b => battleReport(b);
+    Sim.hooks.captured = prov => Render.burn(prov);
     Goals.hooks.goal = (kind, goal, p, days) => {
       if (kind === 'side') toast('Goal reached: ' + goal.name + '.', -1, 'win');
       else toast(days >= 365 ? 'One year left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.' : 'Three months left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.', -1, 'loss');

@@ -1357,6 +1357,7 @@ async function menuRun(browser) {
     Sim.hooks.battleEnd({ atkTag: G.player, defTag: foe, winner: 'atk', casA: 1200, casD: 5400, start: G.hour - 72, prov: G.countries[foe].capital });
     return new Promise(res => setTimeout(() => { const el = document.querySelector('#reports .report'); const r = { shown: !!el, text: el ? el.innerText : '', running: !G.paused }; G.paused = wasPaused; res(r); }, 900)); });
   check('battle: a report card shows when your battle ends, and the clock keeps running', rep.shown && rep.running && /Victory/i.test(rep.text) && /5\.4K|5,400|5400/.test(rep.text), JSON.stringify(rep).slice(0, 160));
+  check('map: ships sail the seas and a fallen province burns', await page.evaluate(() => { const G = Sim.G, p = Sim.MAP.provs[G.countries[G.player].capital]; const before = Render._life().burns; Sim.hooks.captured(p.nb[0]); const L = Render._life(); return L.ships > 5 && L.burns === before + 1; }), await page.evaluate(() => JSON.stringify(Render._life())));
   check('sound: the era tune follows into the game', await waitFor(page, () => Sound._song.key === 'ww2-1936' && Sound._song.next > 0, null, 3000), await page.evaluate(() => Sound._song.key));
   await clickEl(page, '#tb-menu');
   check('sound: the Esc menu has the sound controls', await waitFor(page, () => document.querySelectorAll('#menu-sound [data-vol]').length === 3, null, 1500));
