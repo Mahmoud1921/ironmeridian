@@ -1353,6 +1353,10 @@ async function menuRun(browser) {
   check('goals: reaching the main goal wins the era and the game can go on', wonUI.won && wonUI.paused && /reached its goal/.test(wonUI.says), JSON.stringify(wonUI).slice(0, 120));
   await clickEl(page, '#modal [data-x="ok"]');
   check('goals: Keep playing carries on', await waitFor(page, () => document.getElementById('modal').hidden && !!Sim.G && !document.getElementById('hud').hidden, null, 1500));
+  const rep = await page.evaluate(() => { const G = Sim.G, wasPaused = G.paused; G.paused = false; const foe = Object.keys(G.countries).find(t => t !== G.player && G.countries[t].alive);
+    Sim.hooks.battleEnd({ atkTag: G.player, defTag: foe, winner: 'atk', casA: 1200, casD: 5400, start: G.hour - 72, prov: G.countries[foe].capital });
+    return new Promise(res => setTimeout(() => { const el = document.querySelector('#reports .report'); const r = { shown: !!el, text: el ? el.innerText : '', running: !G.paused }; G.paused = wasPaused; res(r); }, 900)); });
+  check('battle: a report card shows when your battle ends, and the clock keeps running', rep.shown && rep.running && /Victory/i.test(rep.text) && /5\.4K|5,400|5400/.test(rep.text), JSON.stringify(rep).slice(0, 160));
   check('sound: the era tune follows into the game', await waitFor(page, () => Sound._song.key === 'ww2-1936' && Sound._song.next > 0, null, 3000), await page.evaluate(() => Sound._song.key));
   await clickEl(page, '#tb-menu');
   check('sound: the Esc menu has the sound controls', await waitFor(page, () => document.querySelectorAll('#menu-sound [data-vol]').length === 3, null, 1500));

@@ -4,7 +4,7 @@ const Sim = (function () {
   let MAP = null;   // generated map
   let G = null;     // game state (serialisable)
   let nbDist = [];  // km between adjacent provinces
-  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {} };
+  const hooks = { notify: () => {}, pause: () => {}, gameOver: () => {}, lost: () => {}, battleEnd: () => {} };
 
   let START = Date.UTC(1936, 0, 1, 0, 0, 0);  // reset per era in newGame
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -526,8 +526,10 @@ const Sim = (function () {
     if (b) b.attackers = b.attackers.filter(id => id !== a.id);
     a.battle = 0; a.landing = false;
   }
-  function endBattle(b) {
+  // winner: 'atk' or 'def' when the fight was decided, nothing when it simply broke off
+  function endBattle(b, winner) {
     G.battles = G.battles.filter(x => x !== b);
+    if (winner) { b.end = G.hour; b.winner = winner; try { hooks.battleEnd(b); } catch (e) { console.error(e); } }
     for (const id of b.attackers) { const a = army(id); if (a && a.battle === b.id) { a.battle = 0; a.landing = false; } }
   }
 
@@ -618,13 +620,13 @@ const Sim = (function () {
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
         tell(h, (b.atkTag === h ? 'Victory' : 'Defeat') + ' at ' + prov.name + '.', b.prov, b.atkTag === h ? 'win' : 'loss', false);
       for (const c of [b.atkTag, b.defTag]) { const cc = G.countries[c]; if (cc) cc.ws = Math.max(0, Math.min(1, cc.ws + (c === b.atkTag ? 0.004 : -0.004))); }
-      endBattle(b);
+      endBattle(b, 'atk');
     } else if (aOrg < 0.12) {
       // the attack broke down: the beaten attackers are destroyed too
       for (const a of atts) if (G.armies.includes(a)) destroyBeaten(a, b.prov);
       for (const h of humans()) if (b.atkTag === h || defs.some(d => d.owner === h))
         tell(h, 'The attack on ' + prov.name + ' was beaten off.', b.prov, b.atkTag === h ? 'loss' : 'win', false);
-      endBattle(b);
+      endBattle(b, 'def');
     }
   }
   // trench eras: one army rarely beats a dug-in enemy, so idle armies next to the same enemy province attack it together

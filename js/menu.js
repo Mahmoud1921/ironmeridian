@@ -8,7 +8,7 @@ const Menu = (function () {
 
   // ---------- preferences ----------
   const PREFS_KEY = 'ironmeridian.prefs', BG_KEY = 'ironmeridian.bg';
-  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
+  const DEFAULTS = { panSpeed: 6, uiSize: 100, figures: true, autosave: true, pauseEvent: true, pauseWar: true, hintSeen: false, taught: false, effects: true, soundOn: true, volMaster: 70, volMusic: 45, volSfx: 70 };
   let prefs = null, bgMemory = null;
   function load() {
     let p = {};
@@ -22,7 +22,7 @@ const Menu = (function () {
     const p = getPrefs();
     const hud = $('#hud');
     if (hud) hud.style.zoom = p.uiSize === 100 ? '' : String(p.uiSize / 100);
-    if (typeof Render !== 'undefined' && Render.state) Render.state.figures = p.figures;
+    if (typeof Render !== 'undefined' && Render.state) { Render.state.figures = p.figures; Render.state.effects = p.effects !== false; }
     const G = typeof Sim !== 'undefined' && Sim.G;
     if (G) { G.settings.autosave = p.autosave; G.settings.pauseEvent = p.pauseEvent; G.settings.pauseWar = p.pauseWar; }
     if (typeof Sound !== 'undefined') Sound.apply();
@@ -160,7 +160,8 @@ const Menu = (function () {
       graphics: `<div class="k">Menu background<small>The battle film of all six eras (the painting shows while it loads), or a picture of your own</small></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ${hasImage() ? '' : 'primary'}" id="opt-paint">Battle film</button><label class="btn sm upload ${hasImage() ? 'primary' : ''}">Use my image<input type="file" id="opt-bg" accept="image/*"></label></div>
         <div class="k">Interface size<small>${p.uiSize}%</small></div><input type="range" id="opt-ui" min="85" max="125" step="5" value="${p.uiSize}" aria-label="Interface size">
-        <div class="k">3D troop figures<small>Off shows plain counters, which is faster on old computers</small></div>${seg('figures', 'On', 'Off')}`,
+        <div class="k">3D troop figures<small>Off shows plain counters, which is faster on old computers</small></div>${seg('figures', 'On', 'Off')}
+        <div class="k">Battle and map effects<small>Shells in flight, blasts, falling soldiers, and the busy map. Light keeps only the gunfire, for slower computers</small></div>${seg('effects', 'Full', 'Light')}`,
       sound: soundPane(p),
       game: `<div class="k">Autosave<small>Once a game month, and when you leave the page</small></div>${seg('autosave', 'On', 'Off')}
         <div class="k">Pause when an event needs an answer</div>${seg('pauseEvent', 'Yes', 'No')}

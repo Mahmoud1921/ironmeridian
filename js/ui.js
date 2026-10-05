@@ -124,6 +124,7 @@ const UI = (function () {
     netHooks();
     Sim.hooks.pause = () => refreshTop();
     Sim.hooks.gameOver = gameOver;
+    Sim.hooks.battleEnd = b => battleReport(b);
     Goals.hooks.goal = (kind, goal, p, days) => {
       if (kind === 'side') toast('Goal reached: ' + goal.name + '.', -1, 'win');
       else toast(days >= 365 ? 'One year left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.' : 'Three months left to ' + goal.name.toLowerCase() + ': ' + p.now + ' of ' + p.target + '.', -1, 'loss');
@@ -1567,7 +1568,7 @@ const UI = (function () {
     Render.state.selFleet = 0; Render.state.selWing = 0; Render.state.selZone = -1;
     Render.state.selArmies = new Set(); Render.state.selProv = -1; Render.state.dirtyOwners = true; Render.setFrontEdges(null);
     $('#hud').hidden = true; $('#battle').hidden = true; $('#leftpanel').hidden = true; treeOpen = false; $('#techtree').hidden = true; showTip(-1);
-    coachEnd(false); if ($('#goalpill')) $('#goalpill').hidden = true;
+    coachEnd(false); if ($('#goalpill')) $('#goalpill').hidden = true; if ($('#reports')) $('#reports').innerHTML = '';
     Menu.show();
   }
   function gameOver(won) {
@@ -1576,6 +1577,41 @@ const UI = (function () {
     modal(`<h2 class="display" style="font-size:28px">${won ? 'Victory' : esc(G.countries[G.player].name) + ' has fallen'}</h2>
       <p class="note">Your government capitulated on ${Sim.dateStr(G.hour)} after ${days} days. Battles won: ${G.stats.battlesWon}, lost: ${G.stats.battlesLost}. Provinces captured: ${G.stats.captured}.</p>
       <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-x="new">Choose a new nation</button></div>`, () => backToStart());
+  }
+
+  // ---------- battle reports: a short card when one of the player's fights ends; the clock keeps running ----------
+  // reports wait in a short queue and come out one at a time, so a busy front at top speed never floods the screen
+  const repQ = []; let repT = 0;
+  function battleReport(b) {
+    const G = Sim.G, pl = G.player;
+    if (b.atkTag !== pl && b.defTag !== pl) return;
+    repQ.push({ prov: b.prov, atkTag: b.atkTag, defTag: b.defTag, winner: b.winner, casA: b.casA, casD: b.casD, start: b.start, end: G.hour });
+    if (repQ.length > 6) repQ.splice(0, repQ.length - 6);
+    if (!repT) repT = setTimeout(showReport, 400);
+  }
+  function showReport() {
+    repT = 0;
+    const G = Sim.G; if (!G || !repQ.length) { repQ.length = 0; return; }
+    const b = repQ.pop(), more = repQ.length, pl = G.player;
+    repQ.length = 0;
+    const box = $('#reports') || (() => { const d = document.createElement('div'); d.id = 'reports'; $('#evside').before(d); return d; })();
+    const won = (b.winner === 'atk') === (b.atkTag === pl);
+    const foe = b.atkTag === pl ? b.defTag : b.atkTag;
+    const mine = b.atkTag === pl ? b.casA : b.casD, theirs = b.atkTag === pl ? b.casD : b.casA;
+    const days = Math.max(1, Math.round((b.end - b.start) / 24));
+    const p = MAP.provs[b.prov];
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'report panel ' + (won ? 'won' : 'lost');
+    el.innerHTML = `<div class="label">${won ? 'Victory' : 'Defeat'} · ${days} day${days === 1 ? '' : 's'}</div>
+      <b>Battle of ${esc(p.name)}</b>
+      <div class="vsline">${flagSVG(pl)}<span>${esc(G.countries[pl].name)}</span><span class="sub">vs</span>${flagSVG(foe)}<span>${esc(G.countries[foe] ? G.countries[foe].name : foe)}</span></div>
+      <div class="sub">Our losses <b class="num">${fmtN(mine || 0)}</b> · theirs <b class="num">${fmtN(theirs || 0)}</b>${b.atkTag === pl ? (won ? ' · ' + esc(p.name) + ' is open to us' : ' · the attack was beaten off') : (won ? ' · the line held' : ' · our army was destroyed')}</div>`
+      + (more ? `<div class="sub">and ${more} more battle${more === 1 ? '' : 's'} ended meanwhile</div>` : '');
+    el.onclick = () => { Render.flyTo(p.x, p.y, Math.max(Render.cam.z, Render.minZoom() * 4)); selectProvince(p.id); el.remove(); };
+    box.prepend(el);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, 10000);
+    repT = setTimeout(() => { repT = 0; if (repQ.length) showReport(); }, 2500);   // the next one, if any, a little later
   }
 
   // ---------- goals: what this era asks of the player ----------

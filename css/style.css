@@ -623,3 +623,14 @@ canvas.spin { width: 64px; height: 64px; flex: none; margin: -8px -2px -8px -4px
 #coach .ct b { color: var(--brass); }
 #coach .cb { pointer-events: auto; display: flex; justify-content: space-between; gap: 8px; }
 .coachlit { position: relative; z-index: 41; box-shadow: 0 0 0 2px var(--brass), 0 0 18px rgba(201,165,90,.5); }
+
+/* ---------- battle reports ---------- */
+#reports { display: flex; flex-direction: column; gap: 6px; align-self: flex-start; pointer-events: none; }
+#reports .report { pointer-events: auto; text-align: left; width: min(330px, 100%); padding: 8px 12px; border-left: 4px solid var(--brass); display: flex; flex-direction: column; gap: 3px; cursor: pointer; color: var(--paper); font: inherit; animation: tin .25s ease-out; transition: opacity .4s; }
+#reports .report.won { border-left-color: #6f9a4a; }
+#reports .report.lost { border-left-color: #b8443a; }
+#reports .report.out { opacity: 0; }
+#reports .report b { font-size: 15px; }
+#reports .vsline { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+#reports .vsline svg { width: 20px; height: 13px; flex: none; }
+#reports .sub { color: var(--muted); font-size: 12.5px; }

@@ -1427,16 +1427,31 @@ const Render = (function () {
   // volleys, siege engines lob stones, and spears, swords, horsemen and elephants clash in melee
   const fx = [];
   let fxLast = 0;
+  const styleMemo = new Map();
   function fightStyle(type) {
+    const key = type + '|' + Economy.eraId();
+    let v = styleMemo.get(key);
+    if (!v) { v = fightStyle0(type); styleMemo.set(key, v); }
+    return v;
+  }
+  function fightStyle0(type) {
     const kind = Figures.kindOf(type), look = UNIT_TYPES[type] && UNIT_TYPES[type].look;
     if (look === 'horsearcher' || look === 'chariot') return 'arrow';
-    return { soldiers: 'rifle', truck: 'rifle', halftrack: 'rifle', car: 'rifle', tank: 'shell', gun: 'shell', musket: 'musket', cannon: 'cannon',
-      archer: 'arrow', riderbow: 'arrow', engine: 'stone' }[kind] || 'melee';
+    const st = { soldiers: 'rifle', truck: 'rifle', halftrack: 'rifle', car: 'rifle', tank: 'shell', gun: 'shell', musket: 'musket', cannon: 'cannon',
+      archer: 'arrow', riderbow: 'arrow', engine: 'stone' }[kind];
+    if (st) return st;
+    // the Blender-made units of 1917 and 2026 fight with guns, not blades
+    const u = UNIT_TYPES[type];
+    if (u && /greatwar|ww2|modern/.test(Economy.eraId())) return u.armor || /spg|mlrs|gun|mbt|ifv|tank|rail/.test(u.look || '') ? 'shell' : 'rifle';
+    return 'melee';
   }
   // rates per figure per second
   const FX_RATE = { rifle: 5, shell: 0.7, musket: 0.45, cannon: 0.4, arrow: 0.6, stone: 0.3, melee: 7 };
-  function spawnFightFx(wx, wy, figs, foe, dt, fig) {
+  // soldiers of the other side fall where the shots land: about this many a second for each fighting army
+  const FALL_RATE = { rifle: 0.5, shell: 0.35, musket: 0.45, cannon: 0.3, arrow: 0.35, stone: 0.2, melee: 0.6 };
+  function spawnFightFx(wx, wy, figs, foe, dt, fig, owner) {
     if (!foe) return;
+    const full = state.effects !== false;
     const tp = MAP.provs[foe.prov];
     const [ox, oy] = worldToScreen(wx, wy), [tx, ty] = worldToScreen(tp.x, tp.y);
     const now = performance.now();
@@ -1458,7 +1473,13 @@ const Render = (function () {
       } else if (st === 'shell') {
         fx.push({ ...base, k: 'flash', x: x0 + ex * fig * 0.35, y: y0, r: (3.5) * S, dur: 110 });
         fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.35, y: y0, r: (3) * S, dur: 1400, grey: 120 });
-        fx.push({ ...base, k: 'burst', x: aimX * 1.3, y: aimY * 1.3, r: (5) * S, dur: 600, t0: now + 250 });
+        if (full) {
+          // the shell is seen in flight, then lands in a fireball with earth thrown up and a ring of blast
+          const fl = 300 + Math.random() * 150;
+          fx.push({ ...base, k: 'shell', s: S, x: x0 + ex * fig * 0.35, y: y0, x1: aimX * 1.3, y1: aimY * 1.3, dur: fl, arc: fig * 0.55 });
+          fx.push({ ...base, k: 'blast', x: aimX * 1.3, y: aimY * 1.3, r: 6 * S, dur: 900, t0: now + fl, rot: Math.random() * 6 });
+          fx.push({ ...base, k: 'smoke', x: aimX * 1.3, y: aimY * 1.3, r: 4 * S, dur: 2600, grey: 70, t0: now + fl + 120 });
+        } else fx.push({ ...base, k: 'burst', x: aimX * 1.3, y: aimY * 1.3, r: (5) * S, dur: 600, t0: now + 250 });
       } else if (st === 'musket') {
         // a volley: every man in the line fires at once
         for (let i = 0; i < 3; i++) {
@@ -1471,6 +1492,7 @@ const Render = (function () {
         fx.push({ ...base, k: 'smoke', x: x0 + ex * fig * 0.4, y: y0, r: (4) * S, dur: 2400, grey: 230 });
         fx.push({ ...base, k: 'ball', s: S, x: x0 + ex * fig * 0.4, y: y0, x1: aimX * 1.3, y1: aimY * 1.3, dur: 450, arc: fig * 0.3 });
         fx.push({ ...base, k: 'dust', x: aimX * 1.3, y: aimY * 1.3, r: (3) * S, dur: 700, t0: now + 450 });
+        if (full) fx.push({ ...base, k: 'blast', x: aimX * 1.3, y: aimY * 1.3, r: 3.5 * S, dur: 600, t0: now + 450, rot: Math.random() * 6, small: true });
       } else if (st === 'arrow') {
         // a volley of arrows (or slingstones) on a high arc
         const n = 4 + Math.floor(Math.random() * 3);
@@ -1488,11 +1510,35 @@ const Render = (function () {
         if (Math.random() < 0.25) fx.push({ ...base, k: 'dust', x: mx, y: my + fig * 0.3, r: (2.5) * S, dur: 900 });
       }
     }
+    // men of the other side go down along the enemy line
+    if (full && fallN < 30 && foe.b && figs.length && Math.random() < (FALL_RATE[fightStyle(figs[0][2])] || 0.4) * dt) {
+      const ft = Sim.allied(owner, foe.b.atkTag) ? foe.b.defTag : foe.b.atkTag;
+      const ea = Sim.G.armies.find(x => x.owner === ft && (x.prov === foe.prov || x.battle === foe.b.id) && x.units.length);
+      if (ea) {
+        const tp = MAP.provs[foe.prov], [ox, oy] = worldToScreen(wx, wy), [tx, ty] = worldToScreen(tp.x, tp.y);
+        const dist = Math.hypot(tx - ox, ty - oy) || 1, reach = Math.min(dist * 0.6, fig * 3.2);
+        const ex = (tx - ox) / dist, ey = (ty - oy) / dist;
+        fx.push({ wx, wy, t0: performance.now(), k: 'fall', tag: ft, type: figureTypes([ea])[0] || 'infantry',
+          x: ex * reach + (Math.random() - 0.5) * fig * 0.9, y: ey * reach + (Math.random() - 0.5) * fig * 0.4,
+          size: fig * 0.62, h: Math.atan2(-(oy - ty), ox - tx), side: Math.random() < 0.5 ? -1 : 1, dur: 6000 });
+      }
+    }
     if (fx.length > 600) fx.splice(0, fx.length - 600);
+  }
+  let fallN = 0;
+  // one soft fireball, painted once and stretched as needed
+  let fireball = null;
+  function fireSprite() {
+    if (fireball) return fireball;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,250,210,1)'); gr.addColorStop(0.25, 'rgba(255,200,90,0.95)'); gr.addColorStop(0.55, 'rgba(230,110,40,0.7)'); gr.addColorStop(1, 'rgba(120,40,20,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return (fireball = c);
   }
   function drawFx() {
     const now = performance.now();
-    let w = 0;
+    let w = 0; fallN = 0;
     for (let i = 0; i < fx.length; i++) {
       const e = fx[i], age = now - e.t0;
       if (age > e.dur) continue;
@@ -1526,6 +1572,34 @@ const Render = (function () {
           ctx.globalAlpha = 1; ctx.fillStyle = e.big ? '#5a5248' : '#222';
           ctx.beginPath(); ctx.arc(px, py, (e.big ? 2.6 : 1.6) * e.s, 0, 7); ctx.fill();
         }
+      } else if (e.k === 'shell') {
+        // a dark round with a short glowing trail, on a shallow arc
+        const at = v => [x + (bx + e.x1 - x) * v, y + (by + e.y1 - y) * v - Math.sin(v * Math.PI) * e.arc];
+        const [px, py] = at(u), [qx, qy] = at(Math.max(0, u - 0.12));
+        ctx.globalAlpha = 0.8; ctx.strokeStyle = '#ffcf7a'; ctx.lineWidth = 1.4 * e.s;
+        ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(px, py); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.fillStyle = '#1c1a16'; ctx.beginPath(); ctx.arc(px, py, 1.5 * e.s, 0, 7); ctx.fill();
+      } else if (e.k === 'blast') {
+        // fireball, a ring of blast running outwards, and clods of earth thrown up and falling back
+        const r = e.r;
+        if (u < 0.4) { const k = u / 0.4, R = r * (0.6 + k * 1.4); ctx.globalAlpha = 1 - k; ctx.drawImage(fireSprite(), x - R, y - R * 0.9, R * 2, R * 1.8); }
+        if (!e.small && u < 0.5) { ctx.globalAlpha = 0.6 * (1 - u / 0.5); ctx.strokeStyle = '#fff1c4'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(x, y + r * 0.2, r * (0.6 + u * 5), r * (0.25 + u * 2), 0, 0, 7); ctx.stroke(); }
+        ctx.globalAlpha = Math.min(1, 1.6 * (1 - u)); ctx.fillStyle = '#2b241b';
+        for (let j = 0; j < (e.small ? 3 : 6); j++) {
+          const a = e.rot + j * 1.7, sp = r * (1.4 + (j % 3) * 0.6);
+          ctx.fillRect(x + Math.cos(a) * sp * u * 1.6, y - Math.abs(Math.sin(a)) * sp * 2.2 * u + sp * 3.2 * u * u, 1.6, 1.6);
+        }
+      } else if (e.k === 'fall') {
+        fallN++;
+        // a soldier of the other side: hit, he topples over, lies still a while, then fades into the ground
+        const T = age;
+        const tilt = Math.min(1, Math.max(0, (T - 60) / 420));
+        const fade = u > 0.7 ? 1 - (u - 0.7) / 0.3 : 1;
+        ctx.save(); ctx.globalAlpha = fade; ctx.translate(x, y);
+        ctx.rotate(e.side * tilt * tilt * Math.PI / 2 * 0.95);
+        ctx.scale(1, 1 - tilt * 0.25);
+        Figures.draw(ctx, e.tag, e.type, false, e.h, false, 0, 0, e.size, e.t0);   // the standing pose: already painted for the army on screen
+        ctx.restore();
       } else if (e.k === 'spark') {
         ctx.globalAlpha = 1 - u; ctx.strokeStyle = '#fff4c8'; ctx.lineWidth = 1.2;
         ctx.beginPath();
@@ -1621,7 +1695,7 @@ const Render = (function () {
         ctx.fillStyle = c.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
         ctx.lineWidth = 1.2; ctx.strokeStyle = hostile ? '#e04a3a' : mine ? '#f2e3a8' : 'rgba(0,0,0,0.6)'; ctx.stroke();
         if (state.figures !== false) for (const [fx, fy, ty, f] of figs) { Figures.draw(ctx, a.owner, ty, moving, d.h, fighting, fx, fy, fig * (f ? 0.86 : 1), t + f * 97); figCount++; }
-        if (fighting && !G.paused && state.figures !== false) spawnFightFx(d.x, d.y, figs, foe, fxDt, fig);
+        if (fighting && !G.paused && state.figures !== false) spawnFightFx(d.x, d.y, figs, foe, fxDt, fig, a.owner);
         const figTop = sy + 4 - fig * 0.62;
         if (compact) {
           if (grp.some(g => state.selArmies.has(g.id))) { ctx.beginPath(); ctx.ellipse(sx, sy + 4, fig * 0.52, fig * 0.24, 0, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = '#ffe28a'; ctx.stroke(); }
