@@ -142,7 +142,8 @@ const Economy = (function () {
       case 'farm': return 4 * FARM_TERRAIN[p.terrain] * (dep(p.id, 'food') ? 2 : 1);
       case 'mine': return dep(p.id, 'metal') ? 3 : 1;
       case 'fuel': return dep(p.id, 'fuel') ? 3 : 1;
-      case 'strat': { const d = dep(p.id, 'strategic'); return d ? 2 * (1 + Math.min(d, 30) / 15) : 0; }
+      // without a deposit only a synthetic works can stand here (chip fabs, nitrates, synthetic rubber): a flat 2 a day
+      case 'strat': { const d = dep(p.id, 'strategic'); return d ? 2 * (1 + Math.min(d, 30) / 15) : 2; }
       case 'shop': return 2 * (dep(p.id, 'luxuries') ? 1.5 : 1);
       case 'arsenal': return 12;
     }
@@ -547,7 +548,7 @@ const Economy = (function () {
       if (g.owner[p.id] !== tag) continue;
       const queued = c.eco.queue.filter(q => q.prov === p.id).length;
       if (freeSlots(p.id) - queued <= 0 || !canHost(kind, p, tag)) continue;
-      const out = kind === 'strat' && !dep(p.id, 'strategic') ? 2 : baseOut(kind, p);
+      const out = baseOut(kind, p);
       const s = out * provMul(kind, p, tag) * (p.core === tag ? 1 : 0.5) * (1 + (p.infra || 1) * 0.05) - ((kind === 'arsenal' || kind === 'shop') && enemyNear(tag, p) ? 1 : 0);
       if (s > bs) { bs = s; best = p; }
     }

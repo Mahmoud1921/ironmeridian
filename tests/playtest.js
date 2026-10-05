@@ -1070,6 +1070,21 @@ async function erasRun(browser) {
           kinds: ['infantry', 'tanks', 'drones', 'airdefence'].map(t => Figures.kindOf(t)), ukr: Sim.G.wars.some(w => w.attackers.includes('RUS') && w.defenders.includes('UKR')) };
       });
       check('eras: 2026 runs on technology, drones and chips', m.weight === 2 && m.drones && m.sam && /chip/i.test(m.chips) && m.ukr && m.kinds.join() === 'modern,mbt,drone,sam', JSON.stringify(m));
+      // Domestic Chip Fabs: a fab built where there is no chip deposit must make chips
+      const chip = await page.evaluate(() => {
+        const G = Sim.G, tag = G.player, c = G.countries[tag];
+        const p = Sim.MAP.provs.find(q => G.owner[q.id] === tag && !Economy.dep(q.id, 'strategic') && Economy.freeSlots(q.id) > 0); if (!p) return { none: true };
+        const keep = c.techs.slice(), I = G.ind[p.id] || (G.ind[p.id] = {}), n0 = I.strat || 0;
+        const before = Economy.canHost('strat', p, tag);
+        if (!c.techs.includes('ind3a')) c.techs.push('ind3a');
+        Tech.invalidate(tag);
+        const can = Economy.canHost('strat', p, tag), tip = Economy.baseOut('strat', p) * Economy.provMul('strat', p, tag);
+        Economy.daily(); const b = c.eco.prod.strategic;
+        I.strat = n0 + 1; Economy.daily(); const a = c.eco.prod.strategic;
+        I.strat = n0; c.techs = keep; Tech.invalidate(tag); Economy.daily();
+        return { tag, prov: p.name, before, can, tip: +tip.toFixed(2), b: +b.toFixed(2), a: +a.toFixed(2) };
+      });
+      check('eras: Domestic Chip Fabs lets a fab without a deposit make chips', chip.can && chip.a - chip.b > 2 && chip.tip > 2, JSON.stringify(chip));
     }
     check(`eras: ${era.label} plays`, picked && started && res.days > 5 && res.armies > 0 && res.flag, `${res.date}, ${res.armies} armies`);
     if (!era.id.startsWith('greatwar') && !era.id.startsWith('modern')) check(`eras: ${era.label} has only period units`, bad.length === 0, bad.join(', '));
